@@ -33,6 +33,8 @@ class Gate:
 
     def open(self) -> None:
         """Create the lock file; until then settle() does nothing."""
+        if self._fd is not None:
+            return
         os.makedirs(os.path.dirname(self.path), mode=0o700, exist_ok=True)
         self._fd = os.open(self.path, os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o600)
 

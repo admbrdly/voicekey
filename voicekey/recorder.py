@@ -10,6 +10,7 @@ import signal
 import subprocess
 import threading
 import time
+from collections import deque
 
 import numpy as np
 
@@ -24,7 +25,10 @@ PW_RECORD = [
 
 
 class RecordingError(Exception):
-    pass
+    def __init__(self, message: str, samples=None, duration: float = 0.0):
+        super().__init__(message)
+        self.samples = samples if samples is not None else np.zeros(0, dtype=np.float32)
+        self.duration = duration
 
 
 class Recorder:
@@ -34,6 +38,11 @@ class Recorder:
         self.thread: threading.Thread | None = None
         self.frames: list[np.ndarray] = []
         self.started = 0.0
+        self.stopped_at: float | None = None
+        self._errors = deque(maxlen=8)
+        self._stderr_thread: threading.Thread | None = None
+        self._failure: str | None = None
+        self.max_samples: int | None = None
 
     @property
     def active(self) -> bool:
@@ -41,12 +50,12 @@ class Recorder:
 
     @property
     def elapsed(self) -> float:
-        return time.monotonic() - self.started if self.active else 0.0
+        return (self.stopped_at or time.monotonic()) - self.started if self.active else 0.0
 
     @property
     def finished(self) -> bool:
         """The source exited by itself: end of a replayed file, or a failure."""
-        return self.proc is not None and self.proc.poll() is not None
+        return self.proc is not None and (self.proc.poll() is not None or self._failure is not None)
 
     def start(self, on_frame) -> None:
         assert not self.active
@@ -55,6 +64,13 @@ class Recorder:
         )
         self.frames = []
         self.started = time.monotonic()
+        self.stopped_at = None
+        self._failure = None
+        self._errors.clear()
+        self._stderr_thread = threading.Thread(
+            target=self._drain_errors, args=(self.proc.stderr,), name="recorder-stderr", daemon=True,
+        )
+        self._stderr_thread.start()
         self.thread = threading.Thread(
             target=self._pump, args=(self.proc.stdout, on_frame),
             name="recorder", daemon=True,
@@ -63,38 +79,80 @@ class Recorder:
         log.info("recording")
 
     def _pump(self, stdout, on_frame) -> None:
-        while data := stdout.read(FRAME_SAMPLES * 2):
-            frame = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-            self.frames.append(frame)
+        count = 0
+        try:
+            while data := stdout.read(FRAME_SAMPLES * 2):
+                if len(data) % 2:
+                    self._failure = "audio source returned a partial PCM sample"
+                    data = data[:-1]
+                frame = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+                if self.max_samples is not None:
+                    frame = frame[:max(0, self.max_samples - count)]
+                count += len(frame)
+                self.frames.append(frame)
+                try:
+                    on_frame(frame)
+                except Exception:
+                    log.exception("live recognition failed on a frame")
+                if self.max_samples is not None and count >= self.max_samples:
+                    self._failure = "recording reached its sample limit"
+                    self.request_stop()
+                    break
+        except Exception as exc:
+            self._failure = str(exc)
+        finally:
+            stdout.close()
+
+    def _drain_errors(self, stderr) -> None:
+        try:
+            while chunk := stderr.read(512):
+                self._errors.append(chunk)
+        except (OSError, ValueError):
+            pass
+        finally:
+            stderr.close()
+
+    def request_stop(self) -> None:
+        """Signal promptly at key release; joining and decoding happen elsewhere."""
+        if self.stopped_at is None:
+            self.stopped_at = time.monotonic()
+        if self.proc is not None and self.proc.poll() is None:
             try:
-                on_frame(frame)
-            except Exception:
-                log.exception("live recognition failed on a frame")
+                self.proc.send_signal(signal.SIGINT)
+            except ProcessLookupError:
+                pass
 
     def stop(self) -> tuple[np.ndarray, float]:
         """Stop the source; return (samples, duration). Raises RecordingError
         if the source failed before we stopped it (no microphone, PipeWire down)."""
         assert self.proc is not None and self.thread is not None
-        proc, thread, frames = self.proc, self.thread, self.frames
+        proc, thread = self.proc, self.thread
         duration = self.elapsed
-        self.proc = self.thread = None
         failed = proc.poll() not in (None, 0)
-        if proc.poll() is None:
-            proc.send_signal(signal.SIGINT)
-        thread.join(3)
-        if thread.is_alive():
+        self.request_stop()
+        try:
+            proc.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
             proc.kill()
-            thread.join()
-        stderr = proc.stderr.read().decode(errors="replace").strip()[-500:]
-        proc.stdout.close()
-        proc.stderr.close()
-        proc.wait()
-        if failed:
+            proc.wait(timeout=1.0)
+        thread.join(1.0)
+        self._stderr_thread.join(1.0)
+        # Never wait on a BufferedReader's internal lock if a bad callback or
+        # inherited descriptor left its reader stuck. That reader owns closure.
+        if not thread.is_alive():
+            proc.stdout.close()
+        if not self._stderr_thread.is_alive():
+            proc.stderr.close()
+        self.proc = self.thread = None
+        stderr = b"".join(self._errors).decode(errors="replace").strip()[-500:]
+        frames = tuple(self.frames)
+        samples = np.concatenate(frames) if frames else np.zeros(0, dtype=np.float32)
+        if failed or self._failure or thread.is_alive():
             raise RecordingError(
                 f"{self.argv[0]} exited early (rc={proc.returncode}): "
-                f"{stderr or 'no stderr'}"
+                f"{self._failure or stderr or 'audio reader did not stop'}",
+                samples, duration,
             )
-        samples = np.concatenate(frames) if frames else np.zeros(0, dtype=np.float32)
         log.info("recorded %.2fs", duration)
         return samples, duration
 

@@ -2,14 +2,13 @@
 
 ## Headed Playwright MCP work steals compositor focus
 
-**Status:** open on the Playwright side (observed 2026-09-04). The voicekey
-side below was done on 2026-09-05: delivery waits, within
-`max_delay_seconds`, for the dictation's window to be focused again and
-commits into the field's new activation, replacing provisional text the
-application kept right before the cursor, leaving alone (and copying the
-final text instead) provisional text it kept elsewhere, and trusting a
-field that reports no surrounding text to have dropped it. Emacs was
-already immune (pinned buffer). What remains is on the Playwright side.
+**Status:** open on the Playwright side (observed 2026-09-04). Following
+the 2026-09-05 audit, voicekey no longer treats a new activation in the same
+window as proof of the original field. It preserves/copies the final transcript
+and leaves potentially retained provisional text alone. Emacs uses an
+acknowledged buffer pin and an expiring insertion operation. See
+[audit-2026-09-05.md](audit-2026-09-05.md) and
+[persistent-mode-architecture.md](persistent-mode-architecture.md).
 
 Background LLM tasks using Playwright MCP regularly move compositor focus to
 the headed browser even though the task does not need keyboard focus. This is
@@ -32,12 +31,10 @@ comes from browser creation, page or popup creation, or an explicit
 existing visible browser without activating its windows. A compositor rule
 that declines activation from this browser/profile may be a fallback.
 
-Voicekey should also be more defensive: key-down should pin the target for the
-lifetime of the gesture, keeping the dictation attached to it through key-up
-and final delivery regardless of intervening compositor focus changes.
-
-Likely constraint: the generic Wayland input-method path identifies the target
-by an activation generation, which becomes stale when focus leaves the field.
-Investigate whether the target can be kept alive across deactivation; if not,
-the safe fix may require a target-specific pinned insertion mechanism like the
-one already used for Emacs.
+Voicekey's defensive behavior is now implemented: an acknowledged Emacs buffer
+pin survives compositor focus changes; generic delivery stays bound to its
+original Wayland activation. A later activation cannot prove field identity,
+so generic final text is preserved/copied instead of automatically rebound.
+Emacs still uses shared Wayland previews, which can deactivate independently
+of its pinned final insertion. Preventing the original focus theft remains
+the outstanding Playwright/compositor work.

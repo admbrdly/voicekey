@@ -154,3 +154,21 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class PipelineConfigTests(unittest.TestCase):
+    def test_short_polish_default_and_pipeline_limits_are_validated(self):
+        from voicekey.config import Config, ConfigError, _validate
+        cfg = Config()
+        _validate(cfg)
+        self.assertEqual(cfg.polish.min_words, 8)
+        cfg.polish.min_words = -1
+        with self.assertRaises(ConfigError):
+            _validate(cfg)
+        cfg.polish.min_words = 0
+        cfg.pipeline.max_pending = 0
+        with self.assertRaises(ConfigError):
+            _validate(cfg)
+        cfg.pipeline.max_pending = 8
+        cfg.pipeline.max_audio_seconds = cfg.max_seconds - 1
+        with self.assertRaises(ConfigError):
+            _validate(cfg)

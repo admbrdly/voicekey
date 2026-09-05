@@ -8,6 +8,7 @@ stopping Hermes.  Prompt text enters tmux through stdin, never argv or logs.
 from __future__ import annotations
 
 import json
+import contextvars
 import logging
 import os
 import re
@@ -26,6 +27,7 @@ _EMPTY_PLACEHOLDERS = ("Ask me anything", 'Try "')
 _PROMPT_ONLY_RE = re.compile(r"^\s*(?:[A-Za-z0-9_-]+\s+)?[❯>$#›»→]\s*$")
 _READY_RE = re.compile(r"(?:^|[─\s])ready(?:\s|│|$)", re.MULTILINE)
 _POLL_SECONDS = 0.2
+_operation = contextvars.ContextVar("voicekey_agent_operation", default=(float("inf"), None))
 
 
 class AgentError(Exception):
@@ -48,6 +50,11 @@ def _run(
     input_text: str | None = None,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
+    deadline, cancelled = _operation.get()
+    remaining = deadline - time.monotonic()
+    if remaining <= 0 or (cancelled is not None and cancelled.is_set()):
+        raise AgentError("agent operation expired or cancelled")
+    timeout = min(timeout, remaining)
     try:
         result = subprocess.run(
             argv,
@@ -558,14 +565,19 @@ def _paste_prompt(cfg: AgentConfig, text: str) -> None:
     _wait_for_submission_started(cfg)
 
 
-def send_prompt(cfg: AgentConfig, text: str) -> str:
+def send_prompt(cfg: AgentConfig, text: str, *, cancelled=None, deadline=None) -> str:
     """Queue TEXT in persistent Hermes and return the user-visible target."""
     if cfg.target != "hermes":
         raise AgentError(f"unsupported agent target: {cfg.target}")
-    _ensure_session(cfg)
-    _ensure_terminal(cfg)
-    _wait_for_empty_composer(cfg)
-    _paste_prompt(cfg, text)
+    token = _operation.set((deadline if deadline is not None else time.monotonic() + cfg.ready_timeout,
+                            cancelled))
+    try:
+        _ensure_session(cfg)
+        _ensure_terminal(cfg)
+        _wait_for_empty_composer(cfg)
+        _paste_prompt(cfg, text)
+    finally:
+        _operation.reset(token)
     log.info(
         "queued agent prompt (%d chars) in Hermes session %s",
         len(text),

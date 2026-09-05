@@ -33,8 +33,8 @@ def _run(argv: list[str], text: str, timeout: float = TYPE_TIMEOUT) -> None:
             raise InjectError(f"{argv[0]} failed (rc={result.returncode}): {tail or 'no stderr'}")
 
 
-def type_text(text: str) -> None:
-    _run(["wtype", "-"], text, TYPE_TIMEOUT)
+def type_text(text: str, *, timeout: float = TYPE_TIMEOUT) -> None:
+    _run(["wtype", "-"], text, min(TYPE_TIMEOUT, timeout))
 
 
 def copy(text: str) -> None:

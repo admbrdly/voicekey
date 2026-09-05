@@ -119,3 +119,13 @@ class InputDeviceSelectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class LostEventTests(unittest.TestCase):
+    def test_dropped_events_end_hold_and_ignore_keys_until_resynchronised(self):
+        lost, key = Mock(), Mock()
+        listener = KeyboardListener({ecodes.KEY_F9}, key, lost, Mock(), Mock())
+        listener.dispatch('fake', [
+            _event(ecodes.SYN_DROPPED, 0, ecodes.EV_SYN), _event(ecodes.KEY_F9, 1),
+            _event(ecodes.SYN_REPORT, 0, ecodes.EV_SYN), _event(ecodes.KEY_F9, 0)])
+        lost.assert_called_once_with('fake')
+        key.assert_called_once_with('fake', ecodes.KEY_F9, 0)

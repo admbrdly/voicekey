@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import shutil
+import signal
 import sys
 
 
@@ -44,6 +45,9 @@ def main() -> int:
 
     from .daemon import Daemon, fix_environment
     daemon = Daemon(cfg)
+    def stop(_signum, _frame):
+        raise KeyboardInterrupt
+    previous_sigterm = signal.signal(signal.SIGTERM, stop)
     try:
         if args.replay:
             fix_environment()
@@ -58,7 +62,10 @@ def main() -> int:
         print(f"config error: {exc}", file=sys.stderr)
         return 1
     finally:
-        daemon.close()
+        try:
+            daemon.close()
+        finally:
+            signal.signal(signal.SIGTERM, previous_sigterm)
     return 0
 
 
@@ -73,7 +80,7 @@ def check(cfg) -> int:
     from .daemon import fix_environment
     from .ime import ImeUnavailable, InputMethod
     from .listener import _supports_any_key, all_event_devices
-    from .polish import PolishError, create_polisher, start_server
+    from .polish import PolishError, diagnostic_polisher
 
     fix_environment()
     key_names = (cfg.dictate_key, cfg.agent_key, cfg.dictate_toggle_key, cfg.agent_toggle_key)
@@ -189,23 +196,19 @@ def check(cfg) -> int:
     if cfg.polish.backend == "none":
         print("polish: off")
     else:
-        print(f"polish: {cfg.polish.format} via {cfg.polish.url} (model {cfg.polish.model}, "
+        endpoint = "a temporary localhost port" if cfg.polish.server.model_file else cfg.polish.url
+        print(f"polish: {cfg.polish.format} via {endpoint} (model {cfg.polish.model}, "
               f"style {cfg.polish.style}, up to {cfg.polish.max_wait_seconds:g}s)")
-        server = None
         try:
-            server = start_server(cfg.polish)
-            polisher = create_polisher(cfg.polish, server)
-            cleaned = polisher.polish("so um this is uh a test of the the polish pass", 15.0)
+            with diagnostic_polisher(cfg.polish) as polisher:
+                cleaned = polisher.polish("so um this is uh a test of the the polish pass", 15.0)
             if cleaned is None:
-                print("WARNING: polish: the model did not answer; transcripts will land "
-                      "unpolished (see the journal or polish-server.log)", file=sys.stderr)
+                print("WARNING: polish: the test model did not answer "
+                      "(see diagnostics above)", file=sys.stderr)
             else:
                 print(f"polish: OK ({cleaned!r})")
         except PolishError as exc:
             print(f"WARNING: polish unavailable: {exc}", file=sys.stderr)
-        finally:
-            if server is not None:
-                server.stop()
     if missing:
         return 1
     if not key_devices:

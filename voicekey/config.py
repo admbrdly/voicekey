@@ -96,7 +96,19 @@ class PolishConfig:
     api_key_file: str = ""  # for a server that is not voicekey's own child
     timeout_seconds: float = 10.0  # one request
     max_wait_seconds: float = 4.0  # past this the raw transcript lands
+    min_words: int = 8  # short corrections land without a language-model round trip
     server: PolishServerConfig = field(default_factory=PolishServerConfig)
+
+
+@dataclass
+class PipelineConfig:
+    max_pending: int = 8
+    max_audio_seconds: float = 180.0
+    transcription_seconds: float = 30.0
+    shutdown_seconds: float = 10.0
+    journal_seconds: float = 3.0
+    recovery_megabytes: int = 256
+    history_days: int = 7
 
 
 @dataclass
@@ -132,6 +144,7 @@ class Config:
     streaming: StreamingConfig = field(default_factory=StreamingConfig)
     dictation: DictationConfig = field(default_factory=DictationConfig)
     polish: PolishConfig = field(default_factory=PolishConfig)
+    pipeline: PipelineConfig = field(default_factory=PipelineConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
 
 
@@ -210,6 +223,7 @@ def _validate_polish(cfg: PolishConfig) -> None:
     cfg.api_key_file = _path("polish.api_key_file", cfg.api_key_file)
     cfg.timeout_seconds = _number("polish.timeout_seconds", cfg.timeout_seconds, minimum=0.1)
     cfg.max_wait_seconds = _number("polish.max_wait_seconds", cfg.max_wait_seconds, minimum=0.1)
+    cfg.min_words = _integer("polish.min_words", cfg.min_words)
     command = _string("polish.server.command", cfg.server.command)
     # A bare name is looked up on PATH; a path may start with ~.
     cfg.server.command = _path("polish.server.command", command) if "/" in command else command
@@ -276,6 +290,13 @@ def _validate(cfg: Config) -> None:
     )
 
     _validate_polish(cfg.polish)
+
+    for name in ("max_pending", "recovery_megabytes", "history_days"):
+        setattr(cfg.pipeline, name, _integer(f"pipeline.{name}", getattr(cfg.pipeline, name), minimum=1))
+    for name in ("max_audio_seconds", "transcription_seconds", "shutdown_seconds", "journal_seconds"):
+        setattr(cfg.pipeline, name, _number(f"pipeline.{name}", getattr(cfg.pipeline, name), minimum=0.1))
+    if cfg.pipeline.max_audio_seconds < cfg.max_seconds:
+        raise ConfigError("pipeline.max_audio_seconds must be at least max_seconds")
 
     cfg.agent.target = _string("agent.target", cfg.agent.target)
     if cfg.agent.target not in AGENT_TARGETS:
@@ -389,6 +410,7 @@ def load(path: str | None = None) -> Config:
         ("streaming", cfg.streaming),
         ("dictation", cfg.dictation),
         ("agent", cfg.agent),
+        ("pipeline", cfg.pipeline),
     ):
         _apply(target, _table(data, section), f"{section}.")
     polish = _table(data, "polish")

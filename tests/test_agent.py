@@ -332,3 +332,19 @@ class AgentDispatchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class CancellationTests(unittest.TestCase):
+    def test_cancelled_operation_never_starts_another_external_command(self):
+        import threading
+        import time
+        from voicekey import agent
+        cancelled = threading.Event()
+        cancelled.set()
+        token = agent._operation.set((time.monotonic() + 10, cancelled))
+        try:
+            with patch('voicekey.agent.subprocess.run') as run:
+                with self.assertRaises(agent.AgentError):
+                    agent._run(['tmux', 'send-keys', 'Enter'], timeout=1)
+            run.assert_not_called()
+        finally:
+            agent._operation.reset(token)

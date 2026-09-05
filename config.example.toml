@@ -27,8 +27,17 @@ model_dir = "~/.local/share/voicekey/sherpa-onnx-nemotron-speech-streaming-en-0.
 ime = true                 # live text and final commit through the Wayland input method
 inject = "wtype"           # when the focused app has no text-input support:
                            # "wtype" (type it) | "clipboard" (copy it and say so)
-max_delay_seconds = 10.0   # older transcripts are copied, never typed late
-require_same_window = true # copy instead if niri focus changed during transcription
+max_delay_seconds = 10.0   # insertion deadline from key release; expired text is saved/copied
+require_same_window = true # verify window before generic delivery (Emacs uses its pinned buffer)
+
+[pipeline]
+max_pending = 8            # capture/transcription/dictation limit; agent dispatch has the same separate cap
+max_audio_seconds = 180.0  # must be >= max_seconds; admission reserves a full recording
+transcription_seconds = 30.0 # native inference deadline, also within dictation's delivery budget
+shutdown_seconds = 10.0    # drain time; bounded resource cleanup follows
+journal_seconds = 3.0      # storage operation deadline; failure disables new capture
+recovery_megabytes = 256   # unresolved audio/text quota; recover or remove files when full
+history_days = 7           # successful text retention; may be shortened to make room
 
 [polish]                   # third pass: a language model cleans the transcript before it lands
 backend = "none"           # "none" | "openai" (any OpenAI-compatible chat endpoint: llama-server,
@@ -42,6 +51,7 @@ prompt_file = ""           # instruct only: replaces the built-in prompt; {style
 api_key_file = ""          # for a server that is not voicekey's own (its child gets a fresh key)
 timeout_seconds = 10.0     # one request
 max_wait_seconds = 4.0     # past this the raw transcript lands unchanged
+min_words = 8              # shorter dictations skip polish for latency; 0 always tries polish
 [polish.server]            # llama-server run by voicekey as a child process, when model_file is set
 command = "~/.local/share/voicekey/llama.cpp/llama-server"  # install.sh fetches it; or one on PATH
 model_file = ""            # e.g. "~/.local/share/voicekey/s1-mini-q4_k_m.gguf" (install.sh fetches it)

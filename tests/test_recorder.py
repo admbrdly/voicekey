@@ -71,3 +71,41 @@ class RecorderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class RecorderFailureTests(unittest.TestCase):
+    def test_closed_stdout_with_live_child_does_not_hang_stop(self):
+        source = [PYTHON, '-c', "import signal,os,time; signal.signal(signal.SIGINT, signal.SIG_IGN); os.close(1); time.sleep(30)"]
+        recorder = Recorder(source)
+        recorder.start(lambda frame: None)
+        proc = recorder.proc
+        try:
+            recorder.thread.join(2)
+            self.assertFalse(recorder.thread.is_alive())
+            began = time.monotonic()
+            recorder.stop()
+            self.assertLess(time.monotonic() - began, 3.5)
+            self.assertIsNotNone(proc.poll())
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+
+    def test_loud_stderr_cannot_block_capture_and_failure_retains_samples(self):
+        source = [PYTHON, '-c', "import os,sys; os.write(1, b'\\x00\\x01' * 1600); os.write(2, b'x' * 200000); sys.exit(1)"]
+        recorder = Recorder(source)
+        recorder.start(lambda frame: None)
+        _wait(lambda: recorder.finished)
+        with self.assertRaises(RecordingError) as error:
+            recorder.stop()
+        self.assertEqual(len(error.exception.samples), 1600)
+        self.assertLess(len(str(error.exception)), 1000)
+
+    def test_sample_limit_bounds_memory_even_when_listener_does_not_tick(self):
+        source = [PYTHON, '-c', "import os; os.write(1, b'\\x00\\x01' * 16000)"]
+        recorder = Recorder(source)
+        recorder.max_samples = 3200
+        recorder.start(lambda frame: None)
+        _wait(lambda: recorder.finished)
+        with self.assertRaises(RecordingError) as error:
+            recorder.stop()
+        self.assertEqual(len(error.exception.samples), 3200)

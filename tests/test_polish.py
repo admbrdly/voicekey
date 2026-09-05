@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
 import tempfile
 import textwrap
@@ -9,13 +10,13 @@ import threading
 import time
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from voicekey import polish
 from voicekey.config import PolishConfig, PolishServerConfig
 from voicekey.polish import (
     InstructFormat, LlamaServer, OpenAIChat, PolishError, Polisher, Reply, S1MiniFormat,
-    create_polisher, judge, max_tokens_for, words,
+    create_polisher, diagnostic_polisher, judge, max_tokens_for, words,
 )
 
 
@@ -47,7 +48,7 @@ class FormatTests(unittest.TestCase):
 
 
 class JudgeTests(unittest.TestCase):
-    def test_a_cleanup_is_accepted_however_much_it_removes(self):
+    def test_a_cleanup_can_remove_corrections_and_fillers(self):
         raw = "so um i need to like send the the report by uh friday no wait make that thursday"
         self.assertIsNone(judge(raw, Reply("I need to send the report by Thursday.", True)))
         self.assertIsNone(judge("Yes.", Reply("Yes.", True)))
@@ -55,9 +56,9 @@ class JudgeTests(unittest.TestCase):
     def test_a_reply_cut_off_at_the_token_limit_is_rejected(self):
         self.assertIn("cut off", judge("hello there", Reply("Hello there", False)))
 
-    def test_nothing_left_of_a_filler_is_fine_but_not_of_a_sentence(self):
-        self.assertIsNone(judge("um", Reply("", True)))
-        self.assertIsNone(judge("uh um hmm", Reply("  \n", True)))
+    def test_all_empty_results_fall_back_to_raw(self):
+        self.assertEqual(judge("um", Reply("", True)), "empty reply")
+        self.assertEqual(judge("uh um hmm", Reply("  \n", True)), "empty reply")
         self.assertIn("empty reply", judge("the proof is short and follows", Reply("", True)))
 
     def test_a_reply_that_grew_is_rejected(self):
@@ -110,7 +111,10 @@ class _Handler(BaseHTTPRequestHandler):
             return
         reply = {"choices": [{"message": {"content": script.get("content", "")},
                               "finish_reason": script.get("finish", "stop")}]}
-        self.wfile.write(json.dumps(reply).encode())
+        try:
+            self.wfile.write(json.dumps(reply).encode())
+        except BrokenPipeError:
+            pass  # timeout tests deliberately close the client first
 
     def log_message(self, *args):
         pass
@@ -122,6 +126,7 @@ class ChatTests(unittest.TestCase):
         _Handler.requests = []
         self.server = HTTPServer(("127.0.0.1", 0), _Handler)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
         self.url = f"http://127.0.0.1:{self.server.server_port}/v1"
         self.chat = OpenAIChat(self.url, "s1-mini", {"chat_template_kwargs": {"enable_thinking": False}},
@@ -169,6 +174,18 @@ class ChatTests(unittest.TestCase):
             self.chat.chat("s", "u", 5, 0.3)
         self.assertLess(time.monotonic() - started, 1.0)
 
+    def test_diagnostic_uses_the_external_endpoint_and_its_key(self):
+        _Handler.script = {"content": "Hello there."}
+        with tempfile.NamedTemporaryFile("w") as key:
+            key.write("external-key\n")
+            key.flush()
+            cfg = PolishConfig(backend="openai", url=self.url, api_key_file=key.name)
+            with patch.object(polish, "start_server") as start:
+                with diagnostic_polisher(cfg) as polisher:
+                    self.assertEqual(polisher.polish("um hello there", 4.0), "Hello there.")
+                start.assert_not_called()
+        self.assertEqual(_Handler.requests[0][2], "Bearer external-key")
+
 
 class PolisherTests(unittest.TestCase):
     def _polisher(self, reply=None, error=None):
@@ -194,9 +211,9 @@ class PolisherTests(unittest.TestCase):
         polisher, _ = self._polisher(Reply("Hello", False))
         self.assertIsNone(polisher.polish("hello there friend", 4.0))
 
-    def test_nothing_to_type_is_an_empty_string_not_a_failure(self):
+    def test_empty_reply_uses_raw_fallback(self):
         polisher, _ = self._polisher(Reply("", True))
-        self.assertEqual(polisher.polish("um", 4.0), "")
+        self.assertIsNone(polisher.polish("um", 4.0))
 
     def test_create_polisher_honours_the_config(self):
         self.assertIsNone(create_polisher(PolishConfig()))
@@ -229,6 +246,14 @@ FAKE_SERVER = textwrap.dedent("""\
         def do_GET(self):
             self.send_response(200); self.end_headers()
             self.wfile.write(b'{"status": "ok"}')
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            if self.headers.get("Authorization") != "Bearer " + os.environ["LLAMA_API_KEY"]:
+                self.send_response(401); self.end_headers()
+                return
+            self.send_response(200); self.end_headers()
+            self.wfile.write(json.dumps({"choices": [{"message": {"content": "Hello there."},
+                                                      "finish_reason": "stop"}]}).encode())
         def log_message(self, *a): pass
     import os
     print("model loaded", "key", os.environ.get("LLAMA_API_KEY", "none"), flush=True)
@@ -255,13 +280,17 @@ class ServerTests(unittest.TestCase):
     def _cfg(self, **server):
         server.setdefault("command", self.fake)
         server.setdefault("model_file", self.model)
-        return PolishConfig(backend="openai", url="http://127.0.0.1:18642/v1",
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        return PolishConfig(backend="openai", url=f"http://127.0.0.1:{port}/v1",
                             server=PolishServerConfig(**server))
 
     def test_argv_targets_the_configured_url_and_turns_thinking_off(self):
-        argv = LlamaServer(self._cfg(threads=3, context=2048)).argv
+        server = LlamaServer(self._cfg(threads=3, context=2048))
+        argv = server.argv
         self.assertEqual(argv[:3], [self.fake, "-m", self.model])
-        for flag, value in (("--host", "127.0.0.1"), ("--port", "18642"), ("-t", "3"), ("-c", "2048"),
+        for flag, value in (("--host", "127.0.0.1"), ("--port", str(server.port)), ("-t", "3"), ("-c", "2048"),
                             ("--chat-template-kwargs", '{"enable_thinking":false}'), ("--temp", "0")):
             self.assertEqual(argv[argv.index(flag) + 1], value)
         self.assertIn("--jinja", argv)
@@ -295,6 +324,97 @@ class ServerTests(unittest.TestCase):
         self.assertIsNone(polish.start_server(self._cfg(model_file="")))
         self.assertIsNone(polish.start_server(PolishConfig()))
 
+    def test_diagnostics_leave_the_running_server_config_and_log_alone(self):
+        cfg = self._cfg()
+        original_url = cfg.url
+        live = polish.start_server(cfg)
+        self.addCleanup(live.stop)
+        with open(live.log_path) as handle:
+            original_log = handle.read()
+        with diagnostic_polisher(cfg) as first, diagnostic_polisher(cfg) as second:
+            urls = {original_url, first.backend.url, second.backend.url}
+            self.assertEqual(len(urls), 3)
+            keys = {live.api_key, first.backend.api_key, second.backend.api_key}
+            self.assertEqual(len(keys), 3)
+            for polisher in (first, second):
+                self.assertEqual(polisher.polish("um hello there", 4.0), "Hello there.")
+        self.assertEqual(cfg.url, original_url)
+        self.assertTrue(live.alive)
+        self.assertTrue(live.ready(1.0))
+        with open(live.log_path) as handle:
+            self.assertEqual(handle.read(), original_log)
+        for polisher in (first, second):
+            with self.assertRaises(PolishError):
+                polisher.backend.chat("s", "u", 5, 1.0)
+
+    def test_failed_diagnostic_preserves_the_live_log_and_reports_its_own(self):
+        cfg = self._cfg()
+        live = polish.start_server(cfg)
+        self.addCleanup(live.stop)
+        with open(live.log_path) as handle:
+            original_log = handle.read()
+        with open(self.fake, "w") as handle:
+            handle.write(f"#!{sys.executable}\nprint('bad diagnostic model'); raise SystemExit(1)\n")
+        with self.assertRaisesRegex(PolishError, "exited: bad diagnostic model"):
+            with diagnostic_polisher(cfg):
+                self.fail("a failed diagnostic must not yield a polisher")
+        self.assertTrue(live.alive)
+        with open(live.log_path) as handle:
+            self.assertEqual(handle.read(), original_log)
+
+    def test_diagnostic_cleans_up_its_process_and_log_on_error(self):
+        started = []
+        original_start = polish.start_server
+
+        def start(*args, **kwargs):
+            server = original_start(*args, **kwargs)
+            started.append(server)
+            return server
+
+        with patch.object(polish, "start_server", side_effect=start):
+            with self.assertRaisesRegex(RuntimeError, "interrupted check"):
+                with diagnostic_polisher(self._cfg()):
+                    raise RuntimeError("interrupted check")
+        self.assertEqual(len(started), 1)
+        self.assertFalse(started[0].alive)
+        self.assertFalse(os.path.exists(os.path.dirname(started[0].log_path)))
+
+    def test_interrupted_start_stops_the_child(self):
+        with patch.object(LlamaServer, "ready", side_effect=KeyboardInterrupt):
+            with patch.object(LlamaServer, "stop", autospec=True, side_effect=LlamaServer.stop) as stop:
+                with self.assertRaises(KeyboardInterrupt):
+                    polish.start_server(self._cfg())
+        server = stop.call_args.args[0]
+        self.assertFalse(server.alive)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+class PreservationTests(unittest.TestCase):
+    def test_empty_content_and_lost_negations_are_rejected(self):
+        for text in ('I disagree.', 'Do not publish.', 'Yes.'):
+            self.assertIsNotNone(judge(text, Reply('', True)))
+        for raw, final in (("The conclusion does not follow.", "The conclusion does follow."),
+                           ("It isn't valid.", "It is valid."),
+                           ("It isn’t valid.", "It is valid."),
+                           ("Perhaps the premise holds.", "The premise holds."),
+                           ("See page 25.", "See page 52.")):
+            self.assertIsNotNone(judge(raw, Reply(final, True)))
+
+    def test_total_deadline_and_busy_slot_are_bounded(self):
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        backend = Mock()
+        def chat(*args):
+            entered.set()
+            release.wait(2)
+            return Reply('Late.', True)
+        backend.chat.side_effect = chat
+        polisher = Polisher(backend, S1MiniFormat('formal'), 1)
+        self.assertIsNone(polisher.polish('raw text', 0.03))
+        self.assertTrue(entered.is_set())
+        self.assertIsNone(polisher.polish('second', 0.03))
+        self.assertEqual(backend.chat.call_count, 1)
+        release.set()
+        polisher._slot.join(1)

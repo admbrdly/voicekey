@@ -5,10 +5,12 @@ source, 130 passing tests) and ten days of journal history (535 recordings).
 Section 1 is what the audit found; section 2 is the plan for the new mode;
 section 3 is the order of work.
 
-**Status (2026-09-05).** Sections 2 and 3 are superseded by
-[`persistent-mode-architecture.md`](persistent-mode-architecture.md), whose
-status note says what is built: the audit fixes of section 1, the polish
-pass, and the target extraction. Sections 1 and 4 still stand.
+**Status (2026-09-05): historical study.** The current implementation state,
+accepted preview policy and next steps are in
+[`persistent-mode-architecture.md`](persistent-mode-architecture.md#handoff-for-the-next-session).
+The [September 5 audit](audit-2026-09-05.md) records later findings and repairs.
+The phase order, implementation descriptions and model discussion below
+reflect the earlier study rather than the current plan.
 
 ## 1. Audit
 

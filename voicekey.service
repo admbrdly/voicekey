@@ -13,6 +13,7 @@ Environment=PYTHONUNBUFFERED=1
 UMask=0077
 Restart=on-failure
 RestartSec=15
+TimeoutStopSec=30s
 
 [Install]
 WantedBy=graphical-session.target

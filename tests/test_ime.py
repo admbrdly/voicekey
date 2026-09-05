@@ -126,7 +126,7 @@ class ActivationTests(unittest.TestCase):
         ime._on_done(None)
         self.assertEqual(ime.surrounding_text(), ("Dear all, héllo wor", "|after"))
         self.assertEqual(ime.before_cursor(), "r")
-        self.assertTrue(ime._apply(1, commit="hello world", delete_before=len("héllo wor".encode())))
+        self.assertTrue(ime._apply(1, commit="hello world", delete_before=len("héllo wor".encode()), expected=ime.snapshot()))
         self.assertEqual(ime._im.calls, [("delete", 10, 0), ("commit_string", "hello world"), ("commit", 1)])
         self.assertEqual(ime.left_showing(), "")
 
@@ -233,3 +233,74 @@ class FailureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class RevisionTests(unittest.TestCase):
+    def setUp(self):
+        self.ime = _offline_input_method()
+        self.addCleanup(self.ime._close_pipe)
+        self.ime._on_activate(None)
+        self.ime._on_done(None)
+
+    def test_surrounding_changes_are_applied_only_on_done(self):
+        self.ime._on_surrounding_text(None, 'pending', 7, 7)
+        self.assertIsNone(self.ime.surrounding_text())
+        self.ime._on_done(None)
+        self.assertEqual(self.ime.surrounding_text(), ('pending', ''))
+
+    def test_cursor_change_invalidates_checked_replacement(self):
+        self.ime._on_surrounding_text(None, 'preview', 7, 7)
+        self.ime._on_done(None)
+        expected = self.ime.snapshot()
+        self.ime._on_surrounding_text(None, 'valuable text', 13, 13)
+        self.ime._on_done(None)
+        self.assertFalse(self.ime._apply(1, commit='final', delete_before=7, expected=expected))
+        self.assertEqual(self.ime._im.calls, [])
+
+    def test_preview_history_is_kept_per_activation_across_focus_hops(self):
+        self.ime._apply(1, preedit='first live')
+        self.ime._on_deactivate(None)
+        self.ime._on_done(None)
+        self.ime._on_activate(None)
+        self.ime._on_done(None)
+        self.ime._on_deactivate(None)
+        self.ime._on_done(None)
+        self.assertEqual(self.ime.shown_for(1), 'first live')
+
+    def test_failed_flush_is_never_success(self):
+        self.ime._display.flush = lambda: -1
+        with self.assertRaises(Exception):
+            self.ime._apply(1, commit='text', deadline=time.monotonic() - 1e-6 + 0.01)
+
+    def test_a_started_exception_is_uncertain_not_a_refusal(self):
+        self.ime._post = lambda function: (function() or True)
+        with patch.object(self.ime, '_sever'):
+            with self.assertRaises(ImeHung):
+                self.ime._call(lambda: (_ for _ in ()).throw(RuntimeError('partial send')))
+
+    def test_preview_posts_are_coalesced_and_do_not_fill_command_queue(self):
+        self.ime.claim_preview('owner')
+        for index in range(20000):
+            self.ime.preedit(str(index), 1, 'owner')
+        self.assertTrue(self.ime._commands.empty())
+        self.assertEqual(self.ime._preview_pending[0], '19999')
+
+    def test_queued_preview_clear_rechecks_owner_before_applying(self):
+        self.ime.claim_preview('old')
+        result = []
+        caller = threading.Thread(target=lambda: result.append(self.ime.clear_preedit(1, 'old', timeout=1)))
+        caller.start()
+        command = self.ime._commands.get(timeout=1)
+        self.ime.claim_preview('new')
+        self.ime.preedit('new live', 1, 'new')
+        command()
+        caller.join(1)
+        self.assertFalse(caller.is_alive())
+        self.assertEqual(result, [True])
+        self.assertEqual(self.ime._preview_pending, ('new live', 1, 'new'))
+        self.assertEqual(self.ime._im.calls, [])
+
+    def test_expired_preview_clear_cannot_run_later(self):
+        self.ime.claim_preview('old')
+        self.assertFalse(self.ime.clear_preedit(1, 'old', timeout=0.01))
+        self.ime._commands.get_nowait()()
+        self.assertEqual(self.ime._im.calls, [])

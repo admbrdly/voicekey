@@ -3,7 +3,8 @@
 Hold-to-talk dictation for Wayland desktops. Hold a key and speak: the words
 appear as you say them, inline in whatever you are typing into. Release the
 key, and a second pass over the whole recording replaces them with the final
-transcript. Everything runs locally on the CPU; nothing leaves the machine.
+transcript. Speech recognition runs locally. Polish is off by default; configuring
+a remote polish endpoint or agent explicitly sends text to that endpoint.
 
 - **Live, in place.** The provisional text is drawn by the application
   itself, through the Wayland input-method protocol that CJK input uses,
@@ -13,20 +14,18 @@ transcript. Everything runs locally on the CPU; nothing leaves the machine.
   latency, so the preview comes from a streaming model and the text that
   lands comes from an offline model with full context and proper
   punctuation.
-- **Never in the wrong place.** Text goes only into the field that was
-  active when the key went down (captured within a few milliseconds of
-  the press). If something steals focus mid-dictation — an agent's browser,
-  a dialog — the text waits for that window to be focused again, up to
-  `max_delay_seconds`, and lands in the field then; if the window does not
-  come back in time, or the field is gone, the transcript is copied to the
-  clipboard and a notification says so. In Emacs the buffer itself is
-  pinned at key-down, so nothing that moves focus in the meantime can
-  redirect the text.
+- **Bound delivery.** An input-method commit uses the original field's
+  activation. If that activation ends, the transcript is saved and copied;
+  it is never automatically rebound to another field in the same window.
+  Emacs uses an acknowledged buffer pin. Applications without input-method
+  support use a window check before `wtype`, which cannot pin an individual
+  field or prevent focus from changing during typing.
 - **Optional polish pass.** A small language model can clean the transcript
   before it lands: fillers, stutters and self-corrections go, punctuation
-  and numbers are written out, nothing is added. Off by default; on a laptop
-  CPU it costs about half a second per sentence, and the raw transcript
-  lands unchanged whenever the model is late or not trusted.
+  and numbers can be written out. Dictations below eight words skip polish
+  for latency. The raw transcript is retained, and is used whenever the model
+  is late or its output fails the checks. These checks are heuristics, not a
+  guarantee that meaning is preserved.
 - **Optional agent key.** A second key sends the transcript to a persistent
   [Hermes](https://hermes-agent.nousresearch.com) agent session instead.
 
@@ -106,45 +105,55 @@ experience; anything else gets the preview in a notification and the final
 text through `wtype`. Because there is one input method per seat, voicekey
 cannot coexist with an IME such as fcitx — set `ime = false` to keep one.
 
-Emacs is a special case: committed text reaches an evil-mode buffer as
-keystrokes, so in normal or visual state it would become commands. When
-the focused window is Emacs, voicekey therefore pins the current buffer at
-key-down and, at delivery, asks Emacs through `emacsclient` to insert into
-that buffer with the gesture of its state then — at point in insert state,
-after the cursor in normal state (`a`), in place of the selection in visual
-state (`c`), to the process in a terminal buffer — and leaves the state as
-it found it: normal and visual state end back in normal, as Escape would.
-Focus is not checked: an agent's `emacsclient`, a dialog or another frame
-may have moved it, and the text still lands where it was meant to,
-following point within that buffer but never following focus out of it.
-Emacs refuses, and voicekey
-copies instead, only when the buffer is gone or read-only, an operator is
-pending or the selection is blockwise. If Emacs cannot answer within what
-is left of `max_delay_seconds` (a GTK dialog blocks its command loop), the
-transcript is saved for recovery rather than copied: the insertion still
-runs once the dialog is dismissed, and a paste on top of it would double
-the text. The live preview is still the preedit; Emacs also reports the
-character before point, so spacing there is exact.
+Emacs is a special case: committed keystrokes in Evil normal or visual
+state can become commands. Voicekey instead requests a buffer pin through
+`emacsclient`. Emacs must acknowledge it within 250 ms; a late or failed pin
+cannot authorize insertion. The pin identifies the buffer when Emacs handles
+that request, rather than claiming an atomic snapshot at physical key-down.
+Once pinned, delivery follows point within that buffer and ignores compositor
+focus. Insert state inserts at point; normal state appends after the cursor;
+visual state replaces the selection; terminal buffers receive process input.
+Normal and visual state finish in normal state. Spacing is computed at the
+actual insertion position inside the editor transaction.
 
-When focus leaves a field that is showing provisional text, the
-application decides what becomes of that text and tells the input method
-nothing: GTK applications and every terminal drop it, Chromium keeps it as
-real text. So when the window is focused again voicekey looks at what the
-field reports around the cursor. The provisional text right before the
-cursor is replaced by the final text in one step; provisional text kept
-somewhere else is left alone and the final text copied, never typed on top;
-and a field that reports nothing (a terminal) is trusted to have dropped
-it.
+The packaged `voicekey/voicekey.el` provides those transactions. It is loaded
+on demand and installs no hooks by default. Emacs uses the same Wayland
+preedit preview as other supported applications, with notifications as the
+fallback when an input-method activation is unavailable. The preview clear
+request is flushed before the separate editor insertion is submitted, within
+the delivery deadline. This orders the requests locally; the two channels
+do not provide an atomic application-level transaction. Losing preview focus
+does not invalidate an acknowledged buffer pin for final insertion.
 
-Spacing between dictations is automatic: a dictation that continues text
-gets a leading space, one that starts a line or follows an opening bracket
-does not. The character before the cursor decides when the application
-reports it (GTK fields, Firefox); terminals and Emacs report nothing, so
-there voicekey adds a space only when it was itself the last thing to type
-in that window — a keystroke on any keyboard in between leaves spacing to
-you (mouse clicks are not observed; a modifier on its own does not count,
-so a dictation key that reports phantom modifiers, as the Copilot key does,
-is fine).
+Shared Wayland previews are also the default for the planned persistent mode.
+Start with dictation at one position and let pending text finish before moving
+point; Emacs overlays and per-utterance insertion markers can be revisited if
+actual use needs them. To bind the last buffer used through Emacs's command
+loop, even when an agent changes the selected buffer, load the library in your
+Emacs configuration and explicitly
+enable `(voicekey-tracking-mode 1)`. This tracking behavior is tested against
+a private Emacs server; it does not make an asynchronous request a historical
+snapshot of point.
+
+An expired Emacs insertion is refused inside Emacs before mutation. Each
+operation has a unique ID and a revocable permission file. A duplicate request
+returns its previous result. A timeout or an error after mutation begins is
+reported as uncertain: inspect the field and the saved transcript before
+repeating it. Buffer text edits are grouped atomically; terminal writes cannot
+be rolled back.
+
+When a generic field loses focus, applications may keep or discard its
+provisional text without reporting what happened. Voicekey leaves that text
+alone and preserves the final transcript instead of guessing which field or
+text to replace. Check any remaining provisional text before pasting. An IME
+success notification means the request was sent to the compositor; the
+protocol provides no application-level insertion acknowledgement.
+
+Spacing uses current surrounding text inside the IME operation, or the
+editor's actual insertion position. Where the application reports no cursor
+context, a leading space is added only when voicekey was the last thing to
+type in that window. A keystroke on any keyboard resets that fallback; a
+modifier alone does not. Mouse movement is not tracked.
 
 ## Configuration
 
@@ -158,9 +167,10 @@ is fine).
 | `[streaming] model_dir` | live-preview model; `""` disables the preview |
 | `[dictation] ime` | use the input method for preview and commit (default true) |
 | `[dictation] inject` | without an input method: `wtype` (type it) or `clipboard` (copy it and say so) |
-| `[dictation] max_delay_seconds` | older transcripts are copied, never typed late |
+| `[dictation] max_delay_seconds` | deadline from key release; expired work is saved/copied, outstanding requests may remain uncertain |
 | `[dictation] require_same_window` | copy instead of typing if the focused window changed (Emacs is exempt: its buffer is pinned) |
-| `[polish]` | third pass: `backend` (`none` or `openai`), `url`, `format` (`s1-mini` or `instruct`), `style`, `max_wait_seconds` |
+| `[polish]` | third pass: backend, endpoint, format, style, `min_words` (8), `max_wait_seconds` (4) |
+| `[pipeline]` | pending count/audio limits, transcription and shutdown deadlines, recovery quota and history retention |
 | `[polish.server]` | `model_file` makes voicekey run `llama-server` itself, as a child process; `command` names which one |
 | `[agent]` | Hermes target, local or over SSH via Tailscale |
 
@@ -178,10 +188,9 @@ words are visible at the same moment as before; what moves is when they
 solidify.
 
 The default model is [S1-mini by Superwhisper](https://huggingface.co/superwhisper/s1-mini),
-a 0.6B text normaliser trained for exactly this and nothing else: it will not
-follow instructions, answer questions or invent content, and it runs on the
-CPU (about half a second for a sentence, 1.5 s for a 500-character
-paragraph, on 4 threads). To turn it on:
+a 0.6B text normaliser trained for speech cleanup. Earlier measurements were
+about half a second per sentence and 1.5 s per 500-character paragraph on four
+CPU threads. To turn it on:
 
 ```toml
 [polish]
@@ -205,14 +214,22 @@ elsewhere. With `format = "instruct"` voicekey sends its own prompt (or
 yours, from `prompt_file`) for a general model that can do more, such as
 LaTeX from a formula described in words.
 
-What the model returns is judged before it is used. A reply cut off at the
-token limit, one that grew beyond the input, or one where more than a
-quarter of the words were never said is rejected and the raw text lands;
-so does the raw text when the model does not answer within
-`max_wait_seconds` (4 s by default, and always within the delivery budget).
-An empty reply to a filler-only dictation means there is nothing to type.
-With `recordings_dir` set, every recording keeps its live, raw and polished
-texts side by side for review.
+`min_words = 8` skips the model for short corrections; set it to `0` to try
+polish for every nonempty dictation. A skipped dictation still waits behind
+earlier dictations, preserving speech order.
+
+Empty or truncated replies, excessive growth or deletion, lost negations or
+qualifications, and changes to already-written numbers trigger raw fallback.
+The checks also limit novel vocabulary. They cannot establish semantic
+identity: review polished paper prose, especially names and formulae. Both
+raw and final text are kept in the recovery journal. `recordings_dir` retains
+a separate audio/transcript corpus when configured.
+
+The polish deadline starts when transcription finishes and includes queueing.
+After `max_wait_seconds` (four seconds by default, within the delivery budget),
+raw text becomes final. A hung request keeps its one execution slot; later
+utterances use raw text until it returns. Late results never replace text
+that has already moved on.
 
 ## Agent key (optional)
 
@@ -237,27 +254,73 @@ systemctl --user stop voicekey                                       # frees the
 
 `--check` exits 0 when ready, 2 when no keyboard is readable, 3 when only
 the agent target is unavailable, 1 on a configuration, dependency or model
-failure; with the polish pass on it also starts the model and runs one
-sentence through it. Transcription, polish and delivery run on separate
-threads, so a slow Emacs or a hung clipboard delays only the deliveries
-behind it, never the transcription of the next recording; a clipboard copy
-is given three seconds. The polish server's output goes to
-`~/.local/state/voicekey/polish-server.log`. Every transcript that was not typed — copied to the clipboard
-instead, or undeliverable — is also saved, mode 0600, at
-`~/.local/state/voicekey/last-recovery.txt`, since the clipboard is one
-`wl-copy` away from being overwritten.
+failure; with the polish pass on it also runs one sentence through the model.
+For a local polish model, the check starts a temporary server on a free
+localhost port with its own temporary log, so it can run alongside the daemon.
+This validates model startup and generation independently of the daemon's
+configured endpoint. External polish endpoints are tested at their configured
+URL. Transcription, polish and delivery have separate supervised workers;
+a clipboard copy is given three seconds. The polish server's output goes to
+`~/.local/state/voicekey/polish-server.log`.
+
+## Recovery and limits
+
+Each accepted recording is saved before transcription under
+`~/.local/state/voicekey/sessions/`, using a unique ID. Its `.wav` contains
+captured audio; `.jsonl` records stages and delivery attempts; `.txt` is a
+readable transcript history. Known text is saved before delivery, including
+before a clipboard attempt. `last-recovery.txt` remains a convenience copy;
+a later failure does not overwrite the individual records.
+
+Successful audio is removed after text and the outcome are saved, unless a
+recording/transcription failure makes the original audio useful for recovery. Unresolved
+audio and text remain for manual recovery. Successful text is retained for
+up to seven days, and may be removed sooner to make room. The default quota
+is 256 MB; unresolved records are never automatically deleted to meet it.
+A full or unavailable recovery store disables new recordings until it is
+repaired and the daemon restarted. Files are private to the user.
+
+The pipeline admits at most eight recordings for capture/transcription/dictation,
+with a separate eight-prompt limit for agent dispatch. It reserves recovery space and audio capacity before
+capture (180 seconds by default, including a full `max_seconds` for a new
+recording). Full admission refuses the key-down rather than capturing and
+then discarding it. Recorder failure and keyboard disconnect preserve the
+available samples. Only a deliberate short tap is discarded without journaling.
+A native model that ignores its timeout cannot spawn an unlimited succession
+of replacement threads.
+
+SIGTERM and Ctrl-C stop capture, drain pending work for `shutdown_seconds`
+(default ten seconds), save unresolved work and invalidate pending targets.
+Bounded resource cleanup follows; the systemd service imposes a 30-second
+stop limit. On restart, mode is off and old attempts are not automatically
+retried. Journaling protects completed writes against a process crash; it
+does not promise recovery of an in-memory recording or unflushed data after
+power loss. An uncertain delivery remains uncertain even when its text is
+safely saved.
+
+## Development
+
+Run `python -m unittest discover -q` in the project environment. The suite
+uses fake targets and a real paced WAV source, local HTTP servers, and a
+private Emacs server; it never types into the current desktop. If Emacs and
+Evil are available, editor transactions are also exercised in batch Emacs.
+CI installs both. See [the architecture](docs/persistent-mode-architecture.md)
+and [the audit](docs/audit-2026-09-05.md) for the persistent-mode prerequisites.
 
 ## Agents
 
 Coding agents drive the same desktop — `emacsclient`, `wl-copy`, `wtype`,
 compositor actions — and one of them evaluating Lisp in Emacs mid-dictation
-can steal focus or the clipboard. From key-down until the text has landed,
+can steal focus or the clipboard. From key-down until dictation is delivered
+or preserved for recovery,
 voicekey holds an exclusive `flock` on `$XDG_RUNTIME_DIR/voicekey/lock`. A
 hook that takes a shared lock before such tools run, waits a bounded time
 and then refuses with a reason keeps agents out of the way (for Claude Code
 and Codex: `ai/shared/hooks/voicekey-lock.sh` in the config repo). The lock
-is advisory, voicekey itself never waits for it, and it dies with the
-daemon, so nothing can wedge.
+is advisory; voicekey retries acquisition without delaying capture. The
+utterance owns the lock through release finalization and all pipeline stages.
+Agent prompts release their gate ownership once transcription is queued for
+agent dispatch; a busy agent does not lock desktop tools out for minutes.
 
 ## Caveats
 

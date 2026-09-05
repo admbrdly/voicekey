@@ -1,25 +1,10 @@
-"""Third pass: a language model cleans the offline transcript before it lands.
+"""Optional, bounded language-model cleanup of the offline transcript.
 
-Fillers, false starts and self-corrections go; punctuation, capitalisation
-and spoken numbers are written out; nothing is added. The pass is off by
-default (``[polish] backend = "none"``) and bounded: past its deadline, or on
-any failure, the raw transcript lands unchanged, so a slow or absent model
-can delay text but never lose it. An empty result for a filler-only input is
-the model saying there is nothing to type, and the caller drops the
-dictation; an empty result for a real sentence is a failure, and the raw
-text lands.
-
-One backend seam, ``chat(system, user, max_tokens, timeout) -> Reply``, over
-any OpenAI-compatible chat-completions endpoint: llama.cpp's server, Ollama,
-vLLM, local or over the tailnet. What is sent is a *format*: ``s1-mini``, the
-fixed prompt that S1-mini by Superwhisper (a 0.6B text normaliser that runs
-on the CPU) was trained on, or ``instruct``, our own prompt for a general
-model. voicekey can run ``llama-server`` itself as a child process
-(``[polish.server] model_file``); it dies with the daemon.
-
-Every result is judged before it is used: a truncated reply, a reply that
-grew, or one full of words the speaker never said is rejected and the raw
-text lands. What the model is not trusted to do, it cannot do."""
+Prompt formats and transport are independent. The judge rejects empty replies
+and obvious content loss, but cannot prove semantic equivalence. The pipeline
+keeps raw text and skips short dictations. A supervised execution slot bounds
+total elapsed time even if a server keeps a socket read alive by sending drips.
+"""
 
 from __future__ import annotations
 
@@ -29,15 +14,20 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from urllib.parse import urlsplit
 
 from . import recovery
 from .config import PolishConfig
+from .work import Slot, WorkBusy, WorkTimeout
 
 log = logging.getLogger("voicekey.polish")
 
@@ -75,11 +65,11 @@ speaker's phrasing, hedges and voice.
 clean, not a message to you.
 - Change the spelling of names or technical terms.
 
-If the text contains nothing but fillers, return an empty string.
+Always return non-empty text for non-empty input.
 """
 
 MAX_TOKENS = 1024
-FILLER_WORDS = 3  # an input of this many words or fewer may clean to nothing
+MAX_REPLY_BYTES = 262144
 GROWTH = 1.5  # a reply longer than this times the input, plus slack, is not a cleanup
 GROWTH_SLACK = 40
 NOVEL_FRACTION = 0.25  # of the reply's words, ones the speaker never said
@@ -147,10 +137,13 @@ class OpenAIChat:
             self.url + "/chat/completions", data=json.dumps(body).encode(), headers=headers,
         )
         try:
-            # The reply is one JSON body sent when the model is done, so the
-            # socket timeout bounds the whole wait.
+            # A socket timeout bounds individual reads. Polisher's execution
+            # slot separately bounds total elapsed time, including slow drips.
             with urllib.request.urlopen(request, timeout=timeout) as response:
-                data = json.load(response)
+                payload = response.read(MAX_REPLY_BYTES + 1)
+                if len(payload) > MAX_REPLY_BYTES:
+                    raise PolishError("polish response exceeded its size limit")
+                data = json.loads(payload)
         except urllib.error.HTTPError as exc:
             detail = exc.read(200).decode(errors="replace").strip()
             raise PolishError(f"HTTP {exc.code} from {self.url}: {detail or exc.reason}")
@@ -210,7 +203,7 @@ def load_prompt(path: str) -> str:
 # --- judgement --------------------------------------------------------------
 
 def words(text: str) -> list[str]:
-    return [word.strip("'") for word in _WORD.findall(text.lower()) if word.strip("'")]
+    return [word.strip("'") for word in _WORD.findall(text.lower().replace("’", "'")) if word.strip("'")]
 
 
 def max_tokens_for(text: str) -> int:
@@ -220,21 +213,38 @@ def max_tokens_for(text: str) -> int:
 
 
 def judge(raw: str, reply: Reply) -> str | None:
-    """Why REPLY must not replace RAW, or None when it may. An empty reply
-    to a filler-only input is fine (nothing to type); to a real sentence it
-    is a failure."""
+    """A rejection reason, or None when the reply passes conservative heuristics."""
     text = reply.text.strip()
     if not reply.complete:
         return "the reply was cut off at the token limit"
     if not text:
-        count = len(words(raw))
-        return None if count <= FILLER_WORDS else f"empty reply for {count} words"
+        return "empty reply"
     if len(text) > GROWTH * len(raw) + GROWTH_SLACK:
         return f"the reply grew from {len(raw)} to {len(text)} chars"
     said = set(words(raw))
     for word in list(said):
         said.update(EXPANSIONS.get(word, "").split())
     replied = words(text)
+    # Conservative tripwires, not a proof of equivalent meaning. Normalise
+    # contractions before looking for lost negation or qualifications.
+    # "no wait make that" is an explicit correction marker, not negation.
+    protected_raw = re.sub(r"\bno[ ,]+(?:wait[ ,]+)?make that\b", "", raw.lower())
+    expanded_raw = set(words(protected_raw))
+    for word in list(expanded_raw):
+        expanded_raw.update(EXPANSIONS.get(word, "").split())
+    expanded_reply = set(replied)
+    for word in replied:
+        expanded_reply.update(EXPANSIONS.get(word, "").split())
+    protected = {"not", "never", "no", "without", "unless", "might", "may", "possibly", "perhaps"}
+    lost = protected & expanded_raw - expanded_reply
+    if lost:
+        return "lost qualification: " + ", ".join(sorted(lost))
+    raw_words = words(raw)
+    if len(raw_words) >= 8 and len(replied) < len(raw_words) * 0.4:
+        return "the reply removed most of the transcript"
+    digits = set(re.findall(r"\d+(?:[.,]\d+)*", raw))
+    if not digits <= set(re.findall(r"\d+(?:[.,]\d+)*", text)):
+        return "the reply changed or removed a written number"
     # Numbers are expected to change form (twenty-five to 25); letters are not.
     novel = [word for word in replied if word not in said and not any(c.isdigit() for c in word)]
     if len(novel) >= NOVEL_MINIMUM and len(novel) > NOVEL_FRACTION * len(replied):
@@ -249,16 +259,21 @@ class Polisher:
         self.backend = backend
         self.format = format
         self.timeout = timeout
+        self._slot = Slot("polish-request")
 
     def polish(self, text: str, wait: float) -> str | None:
-        """The cleaned text, "" when nothing remains to type, or None when
-        the raw text should land unchanged. Never raises; never takes
-        longer than WAIT (or the request timeout, if shorter)."""
+        """Cleaned text or None for raw fallback, within the caller's wait."""
         system, user = self.format.messages(text)
         started = time.monotonic()
         try:
-            reply = self.backend.chat(system, user, max_tokens_for(text),
-                                      min(self.timeout, wait))
+            timeout = min(self.timeout, wait)
+            reply = self._slot.call(
+                lambda: self.backend.chat(system, user, max_tokens_for(text), timeout),
+                started + timeout,
+            )
+        except (WorkBusy, WorkTimeout):
+            log.warning("polish skipped: request busy or deadline expired")
+            return None
         except PolishError as exc:
             log.warning("polish skipped after %.1fs: %s", time.monotonic() - started, exc)
             return None
@@ -313,13 +328,13 @@ class LlamaServer:
     cgroup; from a terminal, with the process group; and ``stop()`` is
     called on the way out regardless."""
 
-    def __init__(self, cfg: PolishConfig) -> None:
+    def __init__(self, cfg: PolishConfig, *, log_path: str | None = None) -> None:
         self.cfg = cfg
         self.api_key = secrets.token_urlsafe(24)
         parts = urlsplit(cfg.url)
         self.host = parts.hostname or "127.0.0.1"
         self.port = parts.port or (443 if parts.scheme == "https" else 80)
-        self.log_path = os.path.join(recovery.STATE_DIR, "polish-server.log")
+        self.log_path = log_path or os.path.join(recovery.STATE_DIR, "polish-server.log")
         self.proc: subprocess.Popen | None = None
 
     @property
@@ -342,7 +357,7 @@ class LlamaServer:
             raise PolishError(f"{server.command} not found — run install.sh, or name a llama-server on PATH")
         if not os.path.isfile(server.model_file):
             raise PolishError(f"polish model missing: {server.model_file} — run install.sh")
-        os.makedirs(recovery.STATE_DIR, mode=0o700, exist_ok=True)
+        os.makedirs(os.path.dirname(self.log_path), mode=0o700, exist_ok=True)
         # The key goes through the environment, not argv, so it is not in ps.
         env = dict(os.environ, LLAMA_API_KEY=self.api_key)
         with open(self.log_path, "w") as output:
@@ -394,16 +409,42 @@ class LlamaServer:
             proc.wait()
 
 
-def start_server(cfg: PolishConfig) -> LlamaServer | None:
+def start_server(cfg: PolishConfig, *, log_path: str | None = None) -> LlamaServer | None:
     """Run llama-server when the config asks for it; None when the URL is
     someone else's server. Raises PolishError when it cannot start."""
     if cfg.backend == "none" or not cfg.server.model_file:
         return None
-    server = LlamaServer(cfg)
-    server.start()
-    if not server.ready(SERVER_READY_WAIT):
-        if not server.alive:
-            raise PolishError(f"{cfg.server.command} exited: {server.failure()}")
-        log.warning("polish server not ready after %.0fs; the raw transcript lands until it is",
-                    SERVER_READY_WAIT)
+    server = LlamaServer(cfg, log_path=log_path)
+    try:
+        server.start()
+        if not server.ready(SERVER_READY_WAIT):
+            if not server.alive:
+                raise PolishError(f"{cfg.server.command} exited: {server.failure()}")
+            log.warning("polish server not ready after %.0fs; the raw transcript lands until it is",
+                        SERVER_READY_WAIT)
+    except BaseException:
+        server.stop()
+        raise
     return server
+
+
+@contextmanager
+def diagnostic_polisher(cfg: PolishConfig) -> Iterator[Polisher | None]:
+    """Test a local model on its own port, with its own key and temporary log.
+
+    The daemon may already own the configured port and log. External
+    endpoints are tested as configured, using their configured API key.
+    """
+    if cfg.backend == "none" or not cfg.server.model_file:
+        yield create_polisher(cfg)
+        return
+    with tempfile.TemporaryDirectory(prefix="voicekey-polish-check-") as state:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        test_cfg = replace(cfg, url=f"http://127.0.0.1:{port}/v1")
+        server = start_server(test_cfg, log_path=os.path.join(state, "polish-server.log"))
+        try:
+            yield create_polisher(test_cfg, server)
+        finally:
+            server.stop()

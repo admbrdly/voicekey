@@ -21,26 +21,26 @@ class Focus:
     app_id: str | None = None
 
 
-def focused() -> Focus:
+def focused(*, timeout: float = 2.0) -> Focus:
     """The focused window, or an empty Focus when it cannot be queried."""
     name = compositor()
     if name == "niri":
-        data = _json(["niri", "msg", "--json", "focused-window"])
+        data = _json(["niri", "msg", "--json", "focused-window"], timeout)
         return _focus(data.get("id"), data.get("app_id")) if isinstance(data, dict) else Focus()
     if name == "sway":
-        node = _sway_focused(_json(["swaymsg", "-t", "get_tree"]))
+        node = _sway_focused(_json(["swaymsg", "-t", "get_tree"], timeout))
         if node is None:
             return Focus()
         app_id = node.get("app_id") or (node.get("window_properties") or {}).get("class")
         return _focus(node.get("id"), app_id)
     if name == "hyprland":
-        data = _json(["hyprctl", "-j", "activewindow"])
+        data = _json(["hyprctl", "-j", "activewindow"], timeout)
         return _focus(data.get("address"), data.get("class")) if isinstance(data, dict) else Focus()
     return Focus()
 
 
-def window_id() -> int | str | None:
-    return focused().id
+def window_id(*, timeout: float = 2.0) -> int | str | None:
+    return focused(timeout=timeout).id
 
 
 def compositor() -> str | None:
@@ -53,9 +53,11 @@ def compositor() -> str | None:
     return next((name for name in ("niri", "sway", "hyprland") if name in desktop), None)
 
 
-def _json(argv: list[str]):
+def _json(argv: list[str], timeout: float = 2.0):
+    if timeout <= 0:
+        return None
     try:
-        result = subprocess.run(argv, capture_output=True, text=True, timeout=2)
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired):
         return None
     if result.returncode != 0:

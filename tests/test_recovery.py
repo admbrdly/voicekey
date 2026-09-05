@@ -51,8 +51,41 @@ class RecoveryTests(unittest.TestCase):
                 for thread in threads:
                     thread.join()
             self.assertEqual(torn, [])
-            self.assertEqual(os.listdir(state_dir), ["last-recovery.txt"], "no temporary file left")
+            self.assertEqual(set(os.listdir(state_dir)), {"last-recovery.txt", "recovered"})
+            self.assertEqual(len(os.listdir(os.path.join(state_dir, "recovered"))), 100)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+class JournalTests(unittest.TestCase):
+    def test_quota_keeps_unresolved_work_and_prunes_successful_history(self):
+        from pathlib import Path
+        import numpy as np
+        with tempfile.TemporaryDirectory() as directory:
+            journal = recovery.Journal(directory)
+            journal.capture('a', np.zeros(1600, dtype=np.float32), 'live')
+            journal.append('a', 'transcribed', raw='raw')
+            journal.append('a', 'outcome', outcome='confirmed')
+            self.assertFalse(journal.path('a', '.wav').exists())
+            journal.capture('b', np.zeros(1600, dtype=np.float32), 'live')
+            journal.limit = sum(p.stat().st_size for p in Path(directory).iterdir())
+            journal.prepare(1)
+            self.assertFalse(journal.path('a', '.jsonl').exists())
+            self.assertTrue(journal.path('b', '.wav').exists())
+            with self.assertRaises(OSError):
+                journal.prepare(journal.limit)
+
+    def test_audio_and_all_tiers_are_private_and_recovery_is_not_overwritten(self):
+        import numpy as np
+        with tempfile.TemporaryDirectory() as directory:
+            journal = recovery.Journal(directory + '/sessions')
+            for identity in ('a', 'b'):
+                journal.capture(identity, np.zeros(1600, dtype=np.float32), identity)
+                journal.append(identity, 'final', raw=identity, final=identity)
+                journal.recover(identity, identity)
+                journal.append(identity, 'outcome', outcome='copied')
+            for path in journal.directory.iterdir():
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertIn('raw: a', journal.path('a', '.txt').read_text())
+            self.assertIn('raw: b', journal.path('b', '.txt').read_text())

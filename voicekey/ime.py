@@ -9,15 +9,12 @@ activate us; callers check ``activation()`` and fall back to notifications
 and wtype.
 
 One connection, one thread. ``preedit`` is fire-and-forget, ``commit`` waits.
-Every request names the activation *generation* it belongs to, so text never
-lands in a field that gained focus after the recording started. When focus
-leaves mid-dictation the application decides what becomes of the preedit
-(some keep it as text, most drop it) and tells us nothing; so the object
-remembers what the field was showing when it was deactivated, and reports
-the surrounding text of the next activation, for the daemon to reconcile
-the two. If the connection dies the object turns itself off:
-``activation()`` is None and requests are dropped, so the daemon degrades
-to notifications and typing."""
+Every request names an activation generation; a later field's activation
+cannot consume it. Surrounding state is published on done, and replacement
+requires the exact checked snapshot. Preview updates are coalesced separately
+from commands. A flushed commit is submission to the compositor, not an
+application acknowledgement. Started failures remain uncertain.
+"""
 
 from __future__ import annotations
 
@@ -27,6 +24,9 @@ import queue
 import select
 import socket
 import threading
+import time
+from collections import OrderedDict
+from dataclasses import dataclass
 
 log = logging.getLogger("voicekey.ime")
 
@@ -47,6 +47,13 @@ class ImeHung(Exception):
     """A started request did not complete: the compositor stopped responding.
     The connection has been severed, but a request already handed to the
     kernel may still reach the compositor when it recovers."""
+
+
+@dataclass(frozen=True)
+class Snapshot:
+    generation: int | None
+    serial: int
+    surrounding: tuple[str, int] | None
 
 
 class InputMethod:
@@ -101,15 +108,26 @@ class InputMethod:
         self._serial = 0  # number of `done` events received; echoed in commit()
         self._unavailable = False
         self._surrounding: tuple[str, int] | None = None
+        self._pending_surrounding: tuple[str, int] | None = None
+        self._activated = False
+        self._snapshot = Snapshot(None, 0, None)
         self._shown = ""  # preedit the field is showing now (applied requests only)
         self._left_showing = ""  # preedit the field had when it was last deactivated
+        self._history: OrderedDict[int, str] = OrderedDict()
         self._dead = False
         self._closing = False
-        self._commands: queue.SimpleQueue = queue.SimpleQueue()
+        self._commands: queue.Queue = queue.Queue(maxsize=64)
         self._wake_r, self._wake_w = os.pipe()
+        os.set_blocking(self._wake_w, False)
+        self._preview_lock = threading.Lock()
+        self._preview_owner = None
+        self._preview_text = ""
+        self._preview_pending = None
 
     def _close_pipe(self) -> None:
-        for fd in (self._wake_r, self._wake_w):
+        for name in ("_wake_r", "_wake_w"):
+            fd = getattr(self, name)
+            setattr(self, name, -1)
             try:
                 os.close(fd)
             except OSError:
@@ -164,23 +182,69 @@ class InputMethod:
         what the application did with it is for the caller to find out."""
         return self._left_showing
 
-    def rebind(self) -> bool:
+    def snapshot(self) -> Snapshot:
+        state = self._snapshot
+        return Snapshot(None, state.serial, None) if self.activation() is None else state
+
+    def shown_for(self, generation: int) -> str:
+        return self._shown if generation == self.activation() else self._history.get(generation, "")
+
+    def claim_preview(self, owner: str) -> None:
+        with self._preview_lock:
+            self._preview_owner = owner
+            self._preview_text = ""
+            self._preview_pending = None
+
+    def rebind(self, timeout: float | None = None) -> bool:
         """Bind afresh; the activation for a focused field follows shortly."""
-        return self._call(self._bind)
+        return self._call(self._bind, timeout=timeout)
 
-    def preedit(self, text: str, generation: int) -> None:
-        self._post(lambda: self._apply(generation, preedit=text))
+    def preedit(self, text: str, generation: int, owner: str | None = None) -> None:
+        if self._dead or self._closing:
+            return
+        with self._preview_lock:
+            if owner is not None and owner != self._preview_owner:
+                return
+            self._preview_text = text
+            self._preview_pending = (text, generation, owner)
+        self._wake()
 
-    def commit(self, text: str, generation: int) -> bool:
+    def clear_preedit(self, generation: int, owner: str, *, timeout: float) -> bool:
+        """Flush this preview's removal before a separate editor insertion.
+
+        A stale activation or a newer owner has nothing of ours to clear.
+        Success orders local submissions; it is not an editor acknowledgement.
+        """
+        if self.activation() != generation or owner != self._preview_owner:
+            return True
+        deadline = time.monotonic() + max(0, timeout)
+
+        def clear():
+            with self._preview_lock:
+                if self.activation() != generation or owner != self._preview_owner:
+                    return True
+                self._preview_pending = None
+                self._preview_text = ""
+            return self._apply(generation, preedit="", owner=owner, deadline=deadline)
+
+        return self._call(clear, timeout=timeout)
+
+    def commit(self, text: str, generation: int, *, timeout: float | None = None,
+               owner: str | None = None, prefix: str | None = None, cancelled=None) -> bool:
         """Insert TEXT in place of the preedit. False if the field went away."""
-        return self._call(lambda: self._apply(generation, commit=text))
+        deadline = time.monotonic() + (CALL_TIMEOUT if timeout is None else max(0, timeout))
+        return self._call(lambda: self._apply(generation, commit=text, deadline=deadline,
+                                             owner=owner, prefix=prefix, cancelled=cancelled), timeout=timeout)
 
-    def replace(self, before: int, text: str, generation: int) -> bool:
+    def replace(self, before: int, text: str, generation: int, *, expected: Snapshot,
+                timeout: float | None = None) -> bool:
         """Delete BEFORE bytes before the cursor and insert TEXT there, in
         one step. False if the field went away."""
-        return self._call(lambda: self._apply(generation, commit=text, delete_before=before))
+        deadline = time.monotonic() + (CALL_TIMEOUT if timeout is None else max(0, timeout))
+        return self._call(lambda: self._apply(generation, commit=text, delete_before=before,
+                                             expected=expected, deadline=deadline), timeout=timeout)
 
-    def _call(self, function) -> bool:
+    def _call(self, function, *, timeout: float | None = None) -> bool:
         """Run FUNCTION on the loop thread and wait for its result.
 
         A call still pending when the timeout expires is cancelled, so it
@@ -195,56 +259,72 @@ class InputMethod:
         state = {"started": False, "cancelled": False}
         done = threading.Event()
         result = []
+        errors = []
+        deadline = time.monotonic() + (CALL_TIMEOUT + STARTED_TIMEOUT if timeout is None else max(0, timeout))
 
         def run():
             with lock:
-                if state["cancelled"]:
+                if state["cancelled"] or time.monotonic() >= deadline:
+                    done.set()
                     return
                 state["started"] = True
             try:
                 result.append(bool(function()))
+            except Exception as exc:
+                errors.append(exc)
             finally:
                 done.set()
 
-        self._post(run)
-        if not done.wait(CALL_TIMEOUT):
+        if not self._post(run):
+            return False
+        if not done.wait(min(CALL_TIMEOUT, max(0, deadline - time.monotonic()))):
             with lock:
                 if not state["started"]:
                     state["cancelled"] = True
                     log.warning("the input method did not respond within %.0fs", CALL_TIMEOUT)
                     return False
-            if not done.wait(STARTED_TIMEOUT):
+            if not done.wait(max(0, deadline - time.monotonic())):
                 self._dead = True
                 self._active = False
                 self._sever()
                 raise ImeHung("the input method stopped responding; in-field text is off until restart")
+        if errors:
+            self._dead = True
+            self._sever()
+            raise ImeHung(f"a started input-method request failed: {errors[0]}") from errors[0]
         return bool(result and result[0])
 
     def _sever(self) -> None:
         """Shut the socket down from this thread so the loop thread's blocked
         request fails instead of completing later."""
         try:
-            socket.socket(fileno=os.dup(self._display.get_fd())).shutdown(socket.SHUT_RDWR)
+            with socket.socket(fileno=os.dup(self._display.get_fd())) as connection:
+                connection.shutdown(socket.SHUT_RDWR)
         except Exception as exc:
             log.warning("could not sever the input-method connection: %s", exc)
 
     def close(self) -> None:
+        if self._closing:
+            return
         self._closing = True
-        os.write(self._wake_w, b"x")
+        self._wake()
         self._thread.join(2.0)
+        if self._thread.is_alive():
+            self._sever()
+            self._thread.join(0.2)
 
     # --- protocol events (loop thread); state is applied on `done` ---
 
     def _on_activate(self, im) -> None:
         self._pending_active = True
-        self._surrounding = None
-        self._shown = ""
+        self._activated = True
+        self._pending_surrounding = None
 
     def _on_deactivate(self, im) -> None:
         self._pending_active = False
 
     def _on_surrounding_text(self, im, text, cursor, anchor) -> None:
-        self._surrounding = (text, cursor)
+        self._pending_surrounding = (text, cursor)
 
     def _on_text_change_cause(self, im, cause) -> None:
         pass
@@ -254,7 +334,13 @@ class InputMethod:
 
     def _on_done(self, im) -> None:
         self._serial += 1
-        if self._pending_active != self._active:
+        self._surrounding = self._pending_surrounding
+        if self._pending_active != self._active or self._activated:
+            if self._active:
+                self._left_showing = self._shown
+                self._history[self._generation] = self._shown
+                while len(self._history) > 32:
+                    self._history.popitem(last=False)
             self._active = self._pending_active
             if self._active:
                 self._generation += 1
@@ -263,19 +349,42 @@ class InputMethod:
                 self._shown = ""
             log.debug("input method %s (generation %d)",
                       "active" if self._active else "inactive", self._generation)
+            self._shown = ""
+        self._activated = False
+        self._snapshot = Snapshot(self.activation(), self._serial, self._surrounding)
 
     def _on_unavailable(self, im) -> None:
         self._unavailable = True
         self._active = self._pending_active = False
+        self._snapshot = Snapshot(None, self._serial, None)
         log.warning("another client bound the input method; "
                     "in-field text is off until the next recording")
 
     # --- requests (loop thread) ---
 
     def _apply(self, generation: int, *, preedit: str | None = None,
-               commit: str | None = None, delete_before: int = 0) -> bool:
-        if self._unavailable or not self._active or self._generation != generation:
+               commit: str | None = None, delete_before: int = 0,
+               expected: Snapshot | None = None, deadline: float | None = None,
+               owner: str | None = None, prefix: str | None = None, cancelled=None) -> bool:
+        if (self._dead or self._closing or self._unavailable or not self._active or self._generation != generation
+                or (deadline is not None and time.monotonic() >= deadline)
+                or (cancelled is not None and cancelled.is_set())):
             return False
+        if delete_before and (expected is None or expected != self.snapshot()):
+            return False
+        if delete_before:
+            surrounding = self.surrounding_text()
+            if surrounding is None or delete_before > len(surrounding[0].encode()):
+                return False
+            try:
+                surrounding[0].encode()[-delete_before:].decode()
+            except UnicodeDecodeError:
+                return False
+        if preedit is not None and owner is not None and owner != self._preview_owner:
+            return False
+        if commit is not None and prefix is not None:
+            from .spacing import owed, spaced
+            commit = spaced(owed(self.before_cursor(), prefix), commit)
         # Text-input state is double-buffered and resets on every commit, so a
         # commit that carries no preedit request *removes* the preedit. Never
         # send an empty preedit string instead: GTK treats "" as a preedit that
@@ -286,6 +395,16 @@ class InputMethod:
         if commit is not None:
             self._im.commit_string(commit)
             self._shown = ""
+            with self._preview_lock:
+                if owner is None or owner == self._preview_owner:
+                    self._preview_pending = None
+                    self._preview_text = ""
+                else:
+                    tail = self._preview_text
+                    if tail:
+                        end = len(tail.encode())
+                        self._im.set_preedit_string(tail, end, end)
+                        self._shown = tail
         elif preedit:
             end = len(preedit.encode())
             self._im.set_preedit_string(preedit, end, end)
@@ -293,20 +412,38 @@ class InputMethod:
         else:
             self._shown = ""
         self._im.commit(self._serial)
-        self._display.flush()
+        self._flush(deadline or time.monotonic() + CALL_TIMEOUT)
         return True
 
-    def _post(self, command) -> None:
-        if self._dead:
-            return
-        self._commands.put(command)
-        os.write(self._wake_w, b"x")
+    def _flush(self, deadline: float) -> None:
+        while self._display.flush() == -1:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ImeHung("input-method output did not flush before its deadline")
+            select.select([], [self._display.get_fd()], [], min(remaining, 0.05))
+            time.sleep(min(remaining, 0.001))
+
+    def _wake(self) -> None:
+        try:
+            os.write(self._wake_w, b"x")
+        except (BlockingIOError, OSError):
+            pass
+
+    def _post(self, command) -> bool:
+        if self._dead or self._closing:
+            return False
+        try:
+            self._commands.put_nowait(command)
+        except queue.Full:
+            return False
+        self._wake()
+        return True
 
     def _run(self) -> None:
         try:
             fd = self._display.get_fd()
             while not self._closing:
-                self._display.flush()
+                self._flush(time.monotonic() + CALL_TIMEOUT)
                 readable, _, _ = select.select([fd, self._wake_r], [], [], 1.0)
                 if fd in readable:
                     self._display.dispatch(block=True)
@@ -321,6 +458,11 @@ class InputMethod:
                         command()
                     except Exception:
                         log.exception("input-method request failed")
+                with self._preview_lock:
+                    preview, self._preview_pending = self._preview_pending, None
+                if preview is not None:
+                    text, generation, owner = preview
+                    self._apply(generation, preedit=text, owner=owner)
         except Exception:
             log.exception("input method connection failed; in-field text is off")
         finally:
@@ -330,3 +472,4 @@ class InputMethod:
                 self._display.disconnect()
             except Exception:
                 pass
+            self._close_pipe()

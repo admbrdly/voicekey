@@ -74,6 +74,7 @@ class KeyboardListener:
         self.devices: dict[str, InputDevice] = {}
         self._last_rescan = 0.0
         self._no_access_reported = False
+        self._desynchronised: set[str] = set()
 
     def _rescan(self) -> None:
         self._last_rescan = time.monotonic()
@@ -100,10 +101,13 @@ class KeyboardListener:
                 log.info("watching %s (%s)", path, dev.name)
             else:
                 dev.close()
-        voice_devices = [
-            dev for dev in self.devices.values()
-            if _supports_any_key(dev, self.keycodes)
-        ]
+        voice_devices = []
+        for dev in list(self.devices.values()):
+            try:
+                if _supports_any_key(dev, self.keycodes):
+                    voice_devices.append(dev)
+            except OSError:
+                self._drop(dev.path)
         if not voice_devices:
             if denied and not self._no_access_reported:
                 self._no_access_reported = True
@@ -141,6 +145,14 @@ class KeyboardListener:
 
     def dispatch(self, device_path: str, events) -> None:
         for ev in events:
+            if ev.type == ecodes.EV_SYN and ev.code == ecodes.SYN_DROPPED:
+                self._desynchronised.add(device_path)
+                self.on_device_lost(device_path)  # stop and preserve a possibly unreleased hold
+                continue
+            if device_path in self._desynchronised:
+                if ev.type == ecodes.EV_SYN and ev.code == ecodes.SYN_REPORT:
+                    self._desynchronised.discard(device_path)
+                continue
             if ev.type != ecodes.EV_KEY:
                 continue
             if ev.code in self.keycodes:
@@ -178,3 +190,11 @@ class KeyboardListener:
                     continue
                 self.dispatch(dev.path, events)
             self.on_tick()
+
+    def close(self) -> None:
+        for device in self.devices.values():
+            try:
+                device.close()
+            except OSError:
+                pass
+        self.devices.clear()
