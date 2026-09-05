@@ -1,0 +1,203 @@
+{
+  "variant": "parakeet-native",
+  "paced": true,
+  "smoke": true,
+  "live_threads": 2,
+  "load_seconds": 2.771788229998492,
+  "initial_memory": {
+    "Rss_MiB": 60.3515625,
+    "Pss_MiB": 47.388671875,
+    "Shared_Clean_MiB": 19.81640625,
+    "Private_Dirty_MiB": 33.31640625,
+    "Swap_MiB": 0.0,
+    "peak_Rss_MiB": 59.98828125
+  },
+  "loaded_memory": {
+    "Rss_MiB": 1390.3359375,
+    "Pss_MiB": 1371.673828125,
+    "Shared_Clean_MiB": 31.20703125,
+    "Private_Dirty_MiB": 1351.890625,
+    "Swap_MiB": 0.0,
+    "peak_Rss_MiB": 1748.96875
+  },
+  "results": [
+    {
+      "audio_seconds": 7.435,
+      "stream_compute_seconds": 17.698996570055897,
+      "stream_cpu_seconds": 71.99270010299999,
+      "stream_rtf": 2.380497184943631,
+      "first_preview_seconds": 3.2165503349970095,
+      "max_preview_lag_seconds": 9.383978597000532,
+      "preview_finished_after_audio_seconds": 10.866805738999975,
+      "preview": "Well, I don't wish to see it anymore, observed Phoebe, turning away her eyes. It is certainly very like the old portrait",
+      "updates": [
+        {
+          "audio_seconds": 1.6,
+          "seen_seconds": 3.2165503349970095,
+          "text": "Well,"
+        },
+        {
+          "audio_seconds": 1.7,
+          "seen_seconds": 3.5930870029988,
+          "text": "Well, I don't"
+        },
+        {
+          "audio_seconds": 1.9,
+          "seen_seconds": 3.9734126670009573,
+          "text": "Well, I don't wish"
+        },
+        {
+          "audio_seconds": 2.1,
+          "seen_seconds": 4.352705609999248,
+          "text": "Well, I don't wish to"
+        },
+        {
+          "audio_seconds": 2.2,
+          "seen_seconds": 4.725896634001401,
+          "text": "Well, I don't wish to see"
+        },
+        {
+          "audio_seconds": 2.4,
+          "seen_seconds": 5.097087444002682,
+          "text": "Well, I don't wish to see it"
+        },
+        {
+          "audio_seconds": 2.5,
+          "seen_seconds": 5.462505390001752,
+          "text": "Well, I don't wish to see it anymore"
+        },
+        {
+          "audio_seconds": 2.9,
+          "seen_seconds": 6.198812151000311,
+          "text": "Well, I don't wish to see it anymore,"
+        },
+        {
+          "audio_seconds": 3.0,
+          "seen_seconds": 6.568299170998216,
+          "text": "Well, I don't wish to see it anymore, obser"
+        },
+        {
+          "audio_seconds": 3.2,
+          "seen_seconds": 6.938855168002192,
+          "text": "Well, I don't wish to see it anymore, observed"
+        },
+        {
+          "audio_seconds": 3.5,
+          "seen_seconds": 7.688813895001658,
+          "text": "Well, I don't wish to see it anymore, observed Phoebe"
+        },
+        {
+          "audio_seconds": 4.0,
+          "seen_seconds": 8.811304237999138,
+          "text": "Well, I don't wish to see it anymore, observed Phoebe,"
+        },
+        {
+          "audio_seconds": 4.1,
+          "seen_seconds": 9.186708802000794,
+          "text": "Well, I don't wish to see it anymore, observed Phoebe, turning"
+        },
+        {
+          "audio_seconds": 4.5,
+          "seen_seconds": 9.938277661996835,
+          "text": "Well, I don't wish to see it anymore, observed Phoebe, turning away"
+        },
+        {
+          "audio_seconds": 4.8,
+          "seen_seconds": 10.69279844599805,
+          "text": "Well, I don't wish to see it anymore, observed Phoebe, turning away her eyes"
+        },
+        {
+          "audio_seconds": 5.7,
+          "seen_seconds": 12.949672217997431,
+          "text": "Well, I don't wish to see it anymore, observed Phoebe, turning away her eyes."
+        },
+        {
+          "audio_seconds": 6.1,
+          "seen_seconds": 13.697288759001822,
+          "text": "Well, I don't wish to see it anymore, observed Phoebe, turning away her eyes. It is"
+        },
+        {
+          "audio_seconds": 6.2,
+          "seen_seconds": 14.062637982002343,
+          "text": "Well, I don't wish to see it anymore, observed Phoebe, turning away her eyes. It is certainly"
+        },
+        {
+          "audio_seconds": 6.7,
+          "seen_seconds": 15.175640718000068,
+          "text": "Well, I don't wish to see it anymore, observed Phoebe, turning away her eyes. It is certainly very"
+        },
+        {
+          "audio_seconds": 6.9,
+          "seen_seconds": 15.546203926998714,
+          "text": "Well, I don't wish to see it anymore, observed Phoebe, turning away her eyes. It is certainly very like"
+        },
+        {
+          "audio_seconds": 7.0,
+          "seen_seconds": 15.917627180002455,
+          "text": "Well, I don't wish to see it anymore, observed Phoebe, turning away her eyes. It is certainly very like the"
+        },
+        {
+          "audio_seconds": 7.2,
+          "seen_seconds": 16.300191331996757,
+          "text": "Well, I don't wish to see it anymore, observed Phoebe, turning away her eyes. It is certainly very like the old"
+        },
+        {
+          "audio_seconds": 7.3,
+          "seen_seconds": 16.683978597000532,
+          "text": "Well, I don't wish to see it anymore, observed Phoebe, turning away her eyes. It is certainly very like the old port"
+        }
+      ],
+      "final": "Well, I don't wish to see it any more, observed Phoebe, turning away her eyes. It is certainly very like the old portrait",
+      "final_seconds": 0.3756582790010725,
+      "final_cpu_seconds": 2.6299868309999965,
+      "memory": {
+        "Rss_MiB": 1592.28125,
+        "Pss_MiB": 1573.189453125,
+        "Shared_Clean_MiB": 32.01171875,
+        "Private_Dirty_MiB": 1553.0234375,
+        "Swap_MiB": 0.0,
+        "peak_Rss_MiB": 1748.96875
+      },
+      "id": "packaged-parakeet",
+      "repeat": 0,
+      "reference": "",
+      "preview_wer": {
+        "errors": 22,
+        "reference_words": 0
+      },
+      "final_wer": {
+        "errors": 23,
+        "reference_words": 0
+      }
+    }
+  ],
+  "versions": {
+    "python": "3.12.13",
+    "sherpa": "1.13.6",
+    "numpy": "2.5.2",
+    "native_ort": "1.27.1",
+    "python_ort": "1.28.0"
+  },
+  "affinity": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "model_url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-streaming-560ms.tar.bz2",
+  "model_sha256": "dd2c2698f102eafbf0ee54bdfd7cd842ec00fa6cf2475cbbb048887f794ff52e",
+  "corpus_url": "https://www.openslr.org/resources/12/test-clean.tar.gz",
+  "corpus_md5": "32fa31d27d2e1cad72775fee3f4849a9",
+  "corpus_sha256": "39fde525e59672dc6d1551919b1478f724438a95aa55f874b576be21967e6c23",
+  "selection_seed": 20260906
+}

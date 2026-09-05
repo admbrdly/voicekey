@@ -28,7 +28,9 @@ role. The laptop binding remains a separate per-host choice.
 
 The first working persistent mode is built. Spend the next few days using F11
 for ordinary writing and record concrete problems before making more changes.
-Configure and measure the laptop separately when its binding is chosen.
+Keep Nemotron previews and Parakeet final transcription: the user accepted
+the benchmark result and prioritizes speed over modest RAM savings. Configure
+and measure the laptop separately when its binding is chosen.
 The older `persistent-mode.md` and the audit's original work order are
 historical context.
 
@@ -277,6 +279,17 @@ The additional contracts are:
    interchangeable outcomes.
 
 ## Next work
+
+The [September 6 cleanup and model review](model-review-2026-09-06.md) records
+the first live-test findings, the F11 cleanup changes and the promising shared
+speech-model option. The requested-stop failure classification found in the
+live session is repaired with a synthetic-process regression test.
+
+The [shared-Parakeet benchmark](asr-benchmark-2026-09-06.md) is also complete.
+The user accepted retaining the current Nemotron/Parakeet pair: the tested
+Parakeet streaming and memory-sharing alternatives were slower, and speed
+matters more than these RAM savings on their 32 GB machines. Benchmark
+artifacts are isolated from production; no speech-model refactor was deployed.
 
 1. Exercise F11 with actual paper dictation, including background Emacs
    insertion while reading a PDF and moving point after pending text lands.

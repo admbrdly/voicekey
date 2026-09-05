@@ -1,0 +1,1720 @@
+{
+  "variant": "baseline",
+  "paced": false,
+  "load_seconds": 2.8945429739978863,
+  "initial_memory": {
+    "Rss_MiB": 61.19921875,
+    "Pss_MiB": 49.1455078125,
+    "Shared_Clean_MiB": 19.875,
+    "Private_Dirty_MiB": 34.1015625,
+    "Swap_MiB": 0.0,
+    "peak_Rss_MiB": 60.78515625
+  },
+  "loaded_memory": {
+    "Rss_MiB": 1397.46484375,
+    "Pss_MiB": 1379.7197265625,
+    "Shared_Clean_MiB": 31.2578125,
+    "Private_Dirty_MiB": 1358.95703125,
+    "Swap_MiB": 0.0,
+    "peak_Rss_MiB": 1672.66796875
+  },
+  "results": [
+    {
+      "audio_seconds": 7.94,
+      "stream_compute_seconds": 1.401352615961514,
+      "stream_cpu_seconds": 7.868865829000001,
+      "stream_rtf": 0.17649277279112266,
+      "first_preview_seconds": 1.4029249130006065,
+      "max_preview_lag_seconds": 0.10899469300056808,
+      "preview_finished_after_audio_seconds": 0.10080868799559628,
+      "preview": "I come now to the other characteristic which memory images must have in order to account for our knowledge of the past",
+      "updates": [
+        {
+          "audio_seconds": 1.3,
+          "seen_seconds": 1.4029249130006065,
+          "text": "I come now"
+        },
+        {
+          "audio_seconds": 1.8,
+          "seen_seconds": 1.900613214999612,
+          "text": "I come now to the other"
+        },
+        {
+          "audio_seconds": 2.4,
+          "seen_seconds": 2.4994777269952464,
+          "text": "I come now to the other characterist"
+        },
+        {
+          "audio_seconds": 3.0,
+          "seen_seconds": 3.096641776995966,
+          "text": "I come now to the other characteristic"
+        },
+        {
+          "audio_seconds": 3.5,
+          "seen_seconds": 3.5952808470028685,
+          "text": "I come now to the other characteristic which"
+        },
+        {
+          "audio_seconds": 4.1,
+          "seen_seconds": 4.1947821139998265,
+          "text": "I come now to the other characteristic which memory im"
+        },
+        {
+          "audio_seconds": 4.6,
+          "seen_seconds": 4.696870296001725,
+          "text": "I come now to the other characteristic which memory images must"
+        },
+        {
+          "audio_seconds": 5.2,
+          "seen_seconds": 5.298277971999778,
+          "text": "I come now to the other characteristic which memory images must have"
+        },
+        {
+          "audio_seconds": 5.8,
+          "seen_seconds": 5.897729697998147,
+          "text": "I come now to the other characteristic which memory images must have in order to"
+        },
+        {
+          "audio_seconds": 6.3,
+          "seen_seconds": 6.397544172000198,
+          "text": "I come now to the other characteristic which memory images must have in order to account for"
+        },
+        {
+          "audio_seconds": 6.9,
+          "seen_seconds": 6.9968314780038785,
+          "text": "I come now to the other characteristic which memory images must have in order to account for our knowledge"
+        },
+        {
+          "audio_seconds": 7.4,
+          "seen_seconds": 7.507074799998373,
+          "text": "I come now to the other characteristic which memory images must have in order to account for our knowledge of the"
+        }
+      ],
+      "final": "I come now to the other characteristic which memory images must have in order to account for our knowledge of the past.",
+      "final_seconds": 0.4502580069965916,
+      "final_cpu_seconds": 3.0724387070000034,
+      "memory": {
+        "Rss_MiB": 1548.39453125,
+        "Pss_MiB": 1530.2333984375,
+        "Shared_Clean_MiB": 32.05078125,
+        "Private_Dirty_MiB": 1509.09375,
+        "Swap_MiB": 0.0,
+        "peak_Rss_MiB": 1672.66796875
+      },
+      "id": "8230-279154-0014",
+      "repeat": 0,
+      "reference": "I COME NOW TO THE OTHER CHARACTERISTIC WHICH MEMORY IMAGES MUST HAVE IN ORDER TO ACCOUNT FOR OUR KNOWLEDGE OF THE PAST",
+      "preview_wer": {
+        "errors": 0,
+        "reference_words": 22
+      },
+      "final_wer": {
+        "errors": 0,
+        "reference_words": 22
+      }
+    },
+    {
+      "audio_seconds": 21.51,
+      "stream_compute_seconds": 3.8321928669975023,
+      "stream_cpu_seconds": 18.614570892000003,
+      "stream_rtf": 0.17815866420258028,
+      "first_preview_seconds": 0.8020682269954704,
+      "max_preview_lag_seconds": 0.11651681800140068,
+      "preview_finished_after_audio_seconds": 5.190000229049474e-05,
+      "preview": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back to Missus Dorothy, only remarking",
+      "updates": [
+        {
+          "audio_seconds": 0.7,
+          "seen_seconds": 0.8020682269954704,
+          "text": "And"
+        },
+        {
+          "audio_seconds": 1.3,
+          "seen_seconds": 1.4016321489951225,
+          "text": "And Wild"
+        },
+        {
+          "audio_seconds": 1.8,
+          "seen_seconds": 1.9054537480013096,
+          "text": "And Wilder left"
+        },
+        {
+          "audio_seconds": 2.4,
+          "seen_seconds": 2.5165168180014006,
+          "text": "And Wilder left too"
+        },
+        {
+          "audio_seconds": 3.0,
+          "seen_seconds": 3.1021118790013134,
+          "text": "And Wilder left too more suddenly"
+        },
+        {
+          "audio_seconds": 4.1,
+          "seen_seconds": 4.199812041997211,
+          "text": "And Wilder left too more suddenly and noisily"
+        },
+        {
+          "audio_seconds": 4.6,
+          "seen_seconds": 4.699645310998312,
+          "text": "And Wilder left too more suddenly and noisily than the"
+        },
+        {
+          "audio_seconds": 5.2,
+          "seen_seconds": 5.3029195889932454,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the"
+        },
+        {
+          "audio_seconds": 5.8,
+          "seen_seconds": 5.904250097007025,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seem"
+        },
+        {
+          "audio_seconds": 6.3,
+          "seen_seconds": 6.400641432996781,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite"
+        },
+        {
+          "audio_seconds": 6.9,
+          "seen_seconds": 7.002399704999698,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for"
+        },
+        {
+          "audio_seconds": 8.0,
+          "seen_seconds": 8.104765757001587,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced"
+        },
+        {
+          "audio_seconds": 8.6,
+          "seen_seconds": 8.700676590998773,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim"
+        },
+        {
+          "audio_seconds": 9.1,
+          "seen_seconds": 9.199822099000448,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the"
+        },
+        {
+          "audio_seconds": 9.7,
+          "seen_seconds": 9.798788361996412,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners"
+        },
+        {
+          "audio_seconds": 10.2,
+          "seen_seconds": 10.297211978005361,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes"
+        },
+        {
+          "audio_seconds": 11.4,
+          "seen_seconds": 11.49745015599765,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake"
+        },
+        {
+          "audio_seconds": 11.9,
+          "seen_seconds": 11.99660815600364,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the"
+        },
+        {
+          "audio_seconds": 12.5,
+          "seen_seconds": 12.596710634003102,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant"
+        },
+        {
+          "audio_seconds": 13.0,
+          "seen_seconds": 13.097514896995563,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain"
+        },
+        {
+          "audio_seconds": 13.6,
+          "seen_seconds": 13.698343595003825,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem"
+        },
+        {
+          "audio_seconds": 14.2,
+          "seen_seconds": 14.298085883997555,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive"
+        },
+        {
+          "audio_seconds": 14.7,
+          "seen_seconds": 14.799574772997584,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it"
+        },
+        {
+          "audio_seconds": 15.3,
+          "seen_seconds": 15.397445298997628,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after"
+        },
+        {
+          "audio_seconds": 15.8,
+          "seen_seconds": 15.897182232006163,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds"
+        },
+        {
+          "audio_seconds": 16.4,
+          "seen_seconds": 16.496567227003105,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he"
+        },
+        {
+          "audio_seconds": 17.0,
+          "seen_seconds": 17.09760029899917,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it"
+        },
+        {
+          "audio_seconds": 17.5,
+          "seen_seconds": 17.598593389004236,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very"
+        },
+        {
+          "audio_seconds": 18.1,
+          "seen_seconds": 18.196752534998815,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently"
+        },
+        {
+          "audio_seconds": 18.6,
+          "seen_seconds": 18.700586217005913,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back"
+        },
+        {
+          "audio_seconds": 19.2,
+          "seen_seconds": 19.300095542002236,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back to Missus"
+        },
+        {
+          "audio_seconds": 19.8,
+          "seen_seconds": 19.899307043004956,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back to Missus Dorothy"
+        },
+        {
+          "audio_seconds": 20.9,
+          "seen_seconds": 21.002279351005562,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back to Missus Dorothy, only remark"
+        },
+        {
+          "audio_seconds": 21.4,
+          "seen_seconds": 21.506066009997447,
+          "text": "And Wilder left too more suddenly and noisily than the humour of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back to Missus Dorothy, only remarking"
+        }
+      ],
+      "final": "and Wilder laughed too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it, very innocently, back to misses Dorothy, only remarking",
+      "final_seconds": 0.9994605019965093,
+      "final_cpu_seconds": 5.293824433000005,
+      "memory": {
+        "Rss_MiB": 1839.9375,
+        "Pss_MiB": 1821.7763671875,
+        "Shared_Clean_MiB": 32.05078125,
+        "Private_Dirty_MiB": 1800.63671875,
+        "Swap_MiB": 0.0,
+        "peak_Rss_MiB": 1838.23046875
+      },
+      "id": "5683-32865-0012",
+      "repeat": 0,
+      "reference": "AND WYLDER LAUGHED TOO MORE SUDDENLY AND NOISILY THAN THE HUMOUR OF THE JOKE SEEMED QUITE TO CALL FOR AND GLANCED A GRIM LOOK FROM THE CORNERS OF HIS EYES ON LAKE BUT THE GALLANT CAPTAIN DID NOT SEEM TO PERCEIVE IT AND AFTER A FEW SECONDS MORE HE HANDED IT VERY INNOCENTLY BACK TO MISSUS DOROTHY ONLY REMARKING",
+      "preview_wer": {
+        "errors": 2,
+        "reference_words": 59
+      },
+      "final_wer": {
+        "errors": 3,
+        "reference_words": 59
+      }
+    },
+    {
+      "audio_seconds": 8.01,
+      "stream_compute_seconds": 1.4630148689902853,
+      "stream_cpu_seconds": 9.144961312999996,
+      "stream_rtf": 0.1826485479388621,
+      "first_preview_seconds": 0.8109355779990437,
+      "max_preview_lag_seconds": 0.11807663900253829,
+      "preview_finished_after_audio_seconds": 0.09770288499770707,
+      "preview": "So you will be a good girl I know and not make any trouble, but will stay at home contentedly, won't you",
+      "updates": [
+        {
+          "audio_seconds": 0.7,
+          "seen_seconds": 0.8109355779990437,
+          "text": "So"
+        },
+        {
+          "audio_seconds": 1.3,
+          "seen_seconds": 1.4093886729941005,
+          "text": "So you will be"
+        },
+        {
+          "audio_seconds": 1.8,
+          "seen_seconds": 1.9180766390025383,
+          "text": "So you will be a good"
+        },
+        {
+          "audio_seconds": 2.4,
+          "seen_seconds": 2.514788350998424,
+          "text": "So you will be a good girl"
+        },
+        {
+          "audio_seconds": 3.5,
+          "seen_seconds": 3.597570154997811,
+          "text": "So you will be a good girl I know"
+        },
+        {
+          "audio_seconds": 4.1,
+          "seen_seconds": 4.198696543995174,
+          "text": "So you will be a good girl I know and not"
+        },
+        {
+          "audio_seconds": 4.6,
+          "seen_seconds": 4.699478247000661,
+          "text": "So you will be a good girl I know and not make any trou"
+        },
+        {
+          "audio_seconds": 5.2,
+          "seen_seconds": 5.296952599997167,
+          "text": "So you will be a good girl I know and not make any trouble"
+        },
+        {
+          "audio_seconds": 5.8,
+          "seen_seconds": 5.898355612004525,
+          "text": "So you will be a good girl I know and not make any trouble, but"
+        },
+        {
+          "audio_seconds": 6.3,
+          "seen_seconds": 6.407937109001796,
+          "text": "So you will be a good girl I know and not make any trouble, but will stay at home"
+        },
+        {
+          "audio_seconds": 6.9,
+          "seen_seconds": 6.9967109940029335,
+          "text": "So you will be a good girl I know and not make any trouble, but will stay at home cont"
+        },
+        {
+          "audio_seconds": 7.4,
+          "seen_seconds": 7.498850447000587,
+          "text": "So you will be a good girl I know and not make any trouble, but will stay at home contentedly"
+        },
+        {
+          "audio_seconds": 8.0,
+          "seen_seconds": 8.107648844001233,
+          "text": "So you will be a good girl I know and not make any trouble, but will stay at home contentedly, won't you"
+        }
+      ],
+      "final": "so you will be a good girl, I know, and not make any trouble, but will stay at home contentedly, won't you?",
+      "final_seconds": 0.3812646259975736,
+      "final_cpu_seconds": 2.6859081439999954,
+      "memory": {
+        "Rss_MiB": 1840.29296875,
+        "Pss_MiB": 1822.1318359375,
+        "Shared_Clean_MiB": 32.05078125,
+        "Private_Dirty_MiB": 1800.9921875,
+        "Swap_MiB": 0.0,
+        "peak_Rss_MiB": 1838.54296875
+      },
+      "id": "7021-79730-0005",
+      "repeat": 0,
+      "reference": "SO YOU WILL BE A GOOD GIRL I KNOW AND NOT MAKE ANY TROUBLE BUT WILL STAY AT HOME CONTENTEDLY WON'T YOU",
+      "preview_wer": {
+        "errors": 0,
+        "reference_words": 22
+      },
+      "final_wer": {
+        "errors": 0,
+        "reference_words": 22
+      }
+    },
+    {
+      "audio_seconds": 19.61,
+      "stream_compute_seconds": 3.622776741955022,
+      "stream_cpu_seconds": 17.714623748999998,
+      "stream_rtf": 0.1847412922975534,
+      "first_preview_seconds": 1.4510088020004333,
+      "max_preview_lag_seconds": 0.1578534150030464,
+      "preview_finished_after_audio_seconds": 3.665900294436142e-05,
+      "preview": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches. The acorn is now an oak, offering protection and the sweets of satisfaction to every earnest pilgrim journeying its way for truth",
+      "updates": [
+        {
+          "audio_seconds": 1.3,
+          "seen_seconds": 1.4510088020004333,
+          "text": "Nevertheless"
+        },
+        {
+          "audio_seconds": 1.8,
+          "seen_seconds": 1.942644047999056,
+          "text": "Nevertheless, the"
+        },
+        {
+          "audio_seconds": 2.4,
+          "seen_seconds": 2.499631529999897,
+          "text": "Nevertheless, the mustard seed"
+        },
+        {
+          "audio_seconds": 3.5,
+          "seen_seconds": 3.6008920410022256,
+          "text": "Nevertheless, the mustard seed among the smallest of"
+        },
+        {
+          "audio_seconds": 4.1,
+          "seen_seconds": 4.203633585000352,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds"
+        },
+        {
+          "audio_seconds": 5.8,
+          "seen_seconds": 5.907898286994896,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained"
+        },
+        {
+          "audio_seconds": 6.3,
+          "seen_seconds": 6.414745228005631,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of"
+        },
+        {
+          "audio_seconds": 6.9,
+          "seen_seconds": 7.0029306350028495,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree"
+        },
+        {
+          "audio_seconds": 8.0,
+          "seen_seconds": 8.108489498998097,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds"
+        },
+        {
+          "audio_seconds": 8.6,
+          "seen_seconds": 8.700156184002116,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air"
+        },
+        {
+          "audio_seconds": 9.1,
+          "seen_seconds": 9.205230914996354,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting"
+        },
+        {
+          "audio_seconds": 9.7,
+          "seen_seconds": 9.801363784997374,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branch"
+        },
+        {
+          "audio_seconds": 10.2,
+          "seen_seconds": 10.29688605699921,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches"
+        },
+        {
+          "audio_seconds": 11.4,
+          "seen_seconds": 11.496191279997584,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches. The ac"
+        },
+        {
+          "audio_seconds": 11.9,
+          "seen_seconds": 11.997023859001638,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches. The acorn is now"
+        },
+        {
+          "audio_seconds": 12.5,
+          "seen_seconds": 12.594996400999662,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches. The acorn is now an oak"
+        },
+        {
+          "audio_seconds": 13.0,
+          "seen_seconds": 13.09763543200097,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches. The acorn is now an oak, offering"
+        },
+        {
+          "audio_seconds": 13.6,
+          "seen_seconds": 13.702607029002683,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches. The acorn is now an oak, offering protect"
+        },
+        {
+          "audio_seconds": 14.2,
+          "seen_seconds": 14.29560947099817,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches. The acorn is now an oak, offering protection"
+        },
+        {
+          "audio_seconds": 14.7,
+          "seen_seconds": 14.79637776800082,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches. The acorn is now an oak, offering protection and the sweets"
+        },
+        {
+          "audio_seconds": 15.3,
+          "seen_seconds": 15.396247376000975,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches. The acorn is now an oak, offering protection and the sweets of satisfact"
+        },
+        {
+          "audio_seconds": 15.8,
+          "seen_seconds": 15.89561027000018,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches. The acorn is now an oak, offering protection and the sweets of satisfaction"
+        },
+        {
+          "audio_seconds": 16.4,
+          "seen_seconds": 16.496208171002216,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches. The acorn is now an oak, offering protection and the sweets of satisfaction to every"
+        },
+        {
+          "audio_seconds": 17.0,
+          "seen_seconds": 17.096395692999067,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches. The acorn is now an oak, offering protection and the sweets of satisfaction to every earnest"
+        },
+        {
+          "audio_seconds": 17.5,
+          "seen_seconds": 17.593515275002574,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches. The acorn is now an oak, offering protection and the sweets of satisfaction to every earnest pilgrim"
+        },
+        {
+          "audio_seconds": 18.1,
+          "seen_seconds": 18.195318824998687,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches. The acorn is now an oak, offering protection and the sweets of satisfaction to every earnest pilgrim journeying its"
+        },
+        {
+          "audio_seconds": 18.6,
+          "seen_seconds": 18.696027701001732,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches. The acorn is now an oak, offering protection and the sweets of satisfaction to every earnest pilgrim journeying its way"
+        },
+        {
+          "audio_seconds": 19.2,
+          "seen_seconds": 19.296531852002953,
+          "text": "Nevertheless, the mustard seed among the smallest of all seeds has attained the proportions of a tree and the birds of the air are nesting in its branches. The acorn is now an oak, offering protection and the sweets of satisfaction to every earnest pilgrim journeying its way for truth"
+        }
+      ],
+      "final": "Nevertheless the mustard seed, among the smallest of all seeds, has attained the proportions of a tree, and the birds of the air are nesting in its branches. The acorn is now an oak, offering protection and the sweets of satisfaction to every earnest pilgrim journeying its way for truth.",
+      "final_seconds": 0.8271255569998175,
+      "final_cpu_seconds": 4.608250730999998,
+      "memory": {
+        "Rss_MiB": 1921.80859375,
+        "Pss_MiB": 1903.646484375,
+        "Shared_Clean_MiB": 32.05078125,
+        "Private_Dirty_MiB": 1882.5078125,
+        "Swap_MiB": 0.0,
+        "peak_Rss_MiB": 1920.10546875
+      },
+      "id": "4077-13751-0005",
+      "repeat": 0,
+      "reference": "NEVERTHELESS THE MUSTARD SEED AMONG THE SMALLEST OF ALL SEEDS HAS ATTAINED THE PROPORTIONS OF A TREE AND THE BIRDS OF THE AIR ARE NESTING IN ITS BRANCHES THE ACORN IS NOW AN OAK OFFERING PROTECTION AND THE SWEETS OF SATISFACTION TO EVERY EARNEST PILGRIM JOURNEYING ITS WAY FOR TRUTH",
+      "preview_wer": {
+        "errors": 0,
+        "reference_words": 50
+      },
+      "final_wer": {
+        "errors": 0,
+        "reference_words": 50
+      }
+    },
+    {
+      "audio_seconds": 8.295,
+      "stream_compute_seconds": 1.4901638080482371,
+      "stream_cpu_seconds": 9.300017363999999,
+      "stream_rtf": 0.17964602869779833,
+      "first_preview_seconds": 1.4382306390005397,
+      "max_preview_lag_seconds": 0.13823063900053967,
+      "preview_finished_after_audio_seconds": 0.00011653200635919347,
+      "preview": "Forthwith all ran to the opening of the tent to see what might be amiss, but Master Will, who peeped out first, needed no more than one glance",
+      "updates": [
+        {
+          "audio_seconds": 1.3,
+          "seen_seconds": 1.4382306390005397,
+          "text": "Forthwith"
+        },
+        {
+          "audio_seconds": 1.8,
+          "seen_seconds": 1.937799484000425,
+          "text": "Forthwith all ran to the"
+        },
+        {
+          "audio_seconds": 2.4,
+          "seen_seconds": 2.5005254600022453,
+          "text": "Forthwith all ran to the opening of the"
+        },
+        {
+          "audio_seconds": 3.0,
+          "seen_seconds": 3.0964590290022898,
+          "text": "Forthwith all ran to the opening of the tent to see what"
+        },
+        {
+          "audio_seconds": 3.5,
+          "seen_seconds": 3.595982439001091,
+          "text": "Forthwith all ran to the opening of the tent to see what might be"
+        },
+        {
+          "audio_seconds": 4.1,
+          "seen_seconds": 4.197125309002876,
+          "text": "Forthwith all ran to the opening of the tent to see what might be amiss"
+        },
+        {
+          "audio_seconds": 4.6,
+          "seen_seconds": 4.696961962997738,
+          "text": "Forthwith all ran to the opening of the tent to see what might be amiss, but"
+        },
+        {
+          "audio_seconds": 5.2,
+          "seen_seconds": 5.296842759005085,
+          "text": "Forthwith all ran to the opening of the tent to see what might be amiss, but Master Will"
+        },
+        {
+          "audio_seconds": 5.8,
+          "seen_seconds": 5.897133279996342,
+          "text": "Forthwith all ran to the opening of the tent to see what might be amiss, but Master Will, who peeped out"
+        },
+        {
+          "audio_seconds": 6.3,
+          "seen_seconds": 6.396921682001266,
+          "text": "Forthwith all ran to the opening of the tent to see what might be amiss, but Master Will, who peeped out first"
+        },
+        {
+          "audio_seconds": 6.9,
+          "seen_seconds": 6.996679518996098,
+          "text": "Forthwith all ran to the opening of the tent to see what might be amiss, but Master Will, who peeped out first, needed"
+        },
+        {
+          "audio_seconds": 7.4,
+          "seen_seconds": 7.497417133001727,
+          "text": "Forthwith all ran to the opening of the tent to see what might be amiss, but Master Will, who peeped out first, needed no more than one"
+        },
+        {
+          "audio_seconds": 8.0,
+          "seen_seconds": 8.096743709000293,
+          "text": "Forthwith all ran to the opening of the tent to see what might be amiss, but Master Will, who peeped out first, needed no more than one glance"
+        }
+      ],
+      "final": "Forthwith all ran to the opening of the tent to see what might be amiss but Master Will, who peeped out first, needed no more than one glance.",
+      "final_seconds": 0.44559502399351913,
+      "final_cpu_seconds": 3.099581853999993,
+      "memory": {
+        "Rss_MiB": 1921.9375,
+        "Pss_MiB": 1903.775390625,
+        "Shared_Clean_MiB": 32.05078125,
+        "Private_Dirty_MiB": 1882.63671875,
+        "Swap_MiB": 0.0,
+        "peak_Rss_MiB": 1920.10546875
+      },
+      "id": "61-70968-0010",
+      "repeat": 0,
+      "reference": "FORTHWITH ALL RAN TO THE OPENING OF THE TENT TO SEE WHAT MIGHT BE AMISS BUT MASTER WILL WHO PEEPED OUT FIRST NEEDED NO MORE THAN ONE GLANCE",
+      "preview_wer": {
+        "errors": 0,
+        "reference_words": 28
+      },
+      "final_wer": {
+        "errors": 0,
+        "reference_words": 28
+      }
+    },
+    {
+      "audio_seconds": 16.285,
+      "stream_compute_seconds": 2.8285114770551445,
+      "stream_cpu_seconds": 14.692724243,
+      "stream_rtf": 0.17368814719405248,
+      "first_preview_seconds": 1.4344368890058832,
+      "max_preview_lag_seconds": 0.13863683700037654,
+      "preview_finished_after_audio_seconds": 0.00012199400225654244,
+      "preview": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they were both laughing heartily over the thing when the young people passed them, and thus Mister Hopkins failed to notice who the occupants of the other vehicle",
+      "updates": [
+        {
+          "audio_seconds": 1.3,
+          "seen_seconds": 1.4344368890058832,
+          "text": "The descript"
+        },
+        {
+          "audio_seconds": 1.8,
+          "seen_seconds": 1.9386368370003766,
+          "text": "The description she gave"
+        },
+        {
+          "audio_seconds": 2.4,
+          "seen_seconds": 2.4993316669992054,
+          "text": "The description she gave of the"
+        },
+        {
+          "audio_seconds": 3.0,
+          "seen_seconds": 3.095835726002406,
+          "text": "The description she gave of the coming recept"
+        },
+        {
+          "audio_seconds": 3.5,
+          "seen_seconds": 3.5962894949989277,
+          "text": "The description she gave of the coming reception to the"
+        },
+        {
+          "audio_seconds": 4.1,
+          "seen_seconds": 4.197321270004613,
+          "text": "The description she gave of the coming reception to the women's"
+        },
+        {
+          "audio_seconds": 4.6,
+          "seen_seconds": 4.695578912005294,
+          "text": "The description she gave of the coming reception to the women's political"
+        },
+        {
+          "audio_seconds": 5.2,
+          "seen_seconds": 5.298107171004813,
+          "text": "The description she gave of the coming reception to the women's political league was"
+        },
+        {
+          "audio_seconds": 5.8,
+          "seen_seconds": 5.896086935998755,
+          "text": "The description she gave of the coming reception to the women's political league was so"
+        },
+        {
+          "audio_seconds": 6.3,
+          "seen_seconds": 6.3955503830045926,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous"
+        },
+        {
+          "audio_seconds": 6.9,
+          "seen_seconds": 6.9956339600015784,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting"
+        },
+        {
+          "audio_seconds": 7.4,
+          "seen_seconds": 7.495858127999236,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they"
+        },
+        {
+          "audio_seconds": 8.0,
+          "seen_seconds": 8.096034739995957,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they were both"
+        },
+        {
+          "audio_seconds": 8.6,
+          "seen_seconds": 8.696356230998935,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they were both laughing"
+        },
+        {
+          "audio_seconds": 9.1,
+          "seen_seconds": 9.195922093001718,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they were both laughing heartily over the"
+        },
+        {
+          "audio_seconds": 9.7,
+          "seen_seconds": 9.795433447997492,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they were both laughing heartily over the thing"
+        },
+        {
+          "audio_seconds": 10.2,
+          "seen_seconds": 10.296057734997884,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they were both laughing heartily over the thing when the young people"
+        },
+        {
+          "audio_seconds": 10.8,
+          "seen_seconds": 10.896219883998857,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they were both laughing heartily over the thing when the young people passed"
+        },
+        {
+          "audio_seconds": 11.4,
+          "seen_seconds": 11.496053332999873,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they were both laughing heartily over the thing when the young people passed them"
+        },
+        {
+          "audio_seconds": 11.9,
+          "seen_seconds": 11.995837631000905,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they were both laughing heartily over the thing when the young people passed them, and thus"
+        },
+        {
+          "audio_seconds": 12.5,
+          "seen_seconds": 12.596075454996026,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they were both laughing heartily over the thing when the young people passed them, and thus Mister"
+        },
+        {
+          "audio_seconds": 13.0,
+          "seen_seconds": 13.096615675000066,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they were both laughing heartily over the thing when the young people passed them, and thus Mister Hopkins failed"
+        },
+        {
+          "audio_seconds": 13.6,
+          "seen_seconds": 13.696640649004257,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they were both laughing heartily over the thing when the young people passed them, and thus Mister Hopkins failed to notice"
+        },
+        {
+          "audio_seconds": 14.2,
+          "seen_seconds": 14.300128522004524,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they were both laughing heartily over the thing when the young people passed them, and thus Mister Hopkins failed to notice who the"
+        },
+        {
+          "audio_seconds": 14.7,
+          "seen_seconds": 14.797624389003612,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they were both laughing heartily over the thing when the young people passed them, and thus Mister Hopkins failed to notice who the occupants"
+        },
+        {
+          "audio_seconds": 15.3,
+          "seen_seconds": 15.396777976999875,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they were both laughing heartily over the thing when the young people passed them, and thus Mister Hopkins failed to notice who the occupants of the other"
+        },
+        {
+          "audio_seconds": 15.8,
+          "seen_seconds": 15.89662658400339,
+          "text": "The description she gave of the coming reception to the women's political league was so humorous and diverting that they were both laughing heartily over the thing when the young people passed them, and thus Mister Hopkins failed to notice who the occupants of the other vehicle"
+        }
+      ],
+      "final": "The description she gave of the coming reception to the Women's Political League was so humorous and diverting that they were both laughing heartily over the thing when the young people passed them and thus mister Hopkins failed to notice who the occupants of the other vehicle were.",
+      "final_seconds": 0.7412834529968677,
+      "final_cpu_seconds": 4.296654201999999,
+      "memory": {
+        "Rss_MiB": 1926.96484375,
+        "Pss_MiB": 1908.802734375,
+        "Shared_Clean_MiB": 32.05078125,
+        "Private_Dirty_MiB": 1887.6640625,
+        "Swap_MiB": 0.0,
+        "peak_Rss_MiB": 1925.10546875
+      },
+      "id": "6829-68771-0007",
+      "repeat": 0,
+      "reference": "THE DESCRIPTION SHE GAVE OF THE COMING RECEPTION TO THE WOMAN'S POLITICAL LEAGUE WAS SO HUMOROUS AND DIVERTING THAT THEY WERE BOTH LAUGHING HEARTILY OVER THE THING WHEN THE YOUNG PEOPLE PASSED THEM AND THUS MISTER HOPKINS FAILED TO NOTICE WHO THE OCCUPANTS OF THE OTHER VEHICLE WERE",
+      "preview_wer": {
+        "errors": 2,
+        "reference_words": 48
+      },
+      "final_wer": {
+        "errors": 1,
+        "reference_words": 48
+      }
+    },
+    {
+      "audio_seconds": 9.815,
+      "stream_compute_seconds": 1.6759276600569137,
+      "stream_cpu_seconds": 10.076811366000001,
+      "stream_rtf": 0.17075167193651694,
+      "first_preview_seconds": 1.397937173995888,
+      "max_preview_lag_seconds": 0.10606347399880178,
+      "preview_finished_after_audio_seconds": 3.765200381167233e-05,
+      "preview": "They informed the English Parliament of this unexpected incident and assured them that they had entered into no private treaty with the King",
+      "updates": [
+        {
+          "audio_seconds": 1.3,
+          "seen_seconds": 1.397937173995888,
+          "text": "They"
+        },
+        {
+          "audio_seconds": 1.8,
+          "seen_seconds": 1.899244279001141,
+          "text": "They informed"
+        },
+        {
+          "audio_seconds": 2.4,
+          "seen_seconds": 2.496564159000991,
+          "text": "They informed the English"
+        },
+        {
+          "audio_seconds": 3.0,
+          "seen_seconds": 3.095786883000983,
+          "text": "They informed the English Parliament"
+        },
+        {
+          "audio_seconds": 3.5,
+          "seen_seconds": 3.5967897869995795,
+          "text": "They informed the English Parliament of"
+        },
+        {
+          "audio_seconds": 4.1,
+          "seen_seconds": 4.203170811002201,
+          "text": "They informed the English Parliament of this unex"
+        },
+        {
+          "audio_seconds": 4.6,
+          "seen_seconds": 4.69755280099489,
+          "text": "They informed the English Parliament of this unexpected"
+        },
+        {
+          "audio_seconds": 5.2,
+          "seen_seconds": 5.2966055959943334,
+          "text": "They informed the English Parliament of this unexpected incident"
+        },
+        {
+          "audio_seconds": 6.3,
+          "seen_seconds": 6.3963860639967605,
+          "text": "They informed the English Parliament of this unexpected incident and assured"
+        },
+        {
+          "audio_seconds": 6.9,
+          "seen_seconds": 6.997087091999129,
+          "text": "They informed the English Parliament of this unexpected incident and assured them that they"
+        },
+        {
+          "audio_seconds": 7.4,
+          "seen_seconds": 7.496836692995567,
+          "text": "They informed the English Parliament of this unexpected incident and assured them that they had entered"
+        },
+        {
+          "audio_seconds": 8.0,
+          "seen_seconds": 8.096983843002818,
+          "text": "They informed the English Parliament of this unexpected incident and assured them that they had entered into no"
+        },
+        {
+          "audio_seconds": 8.6,
+          "seen_seconds": 8.696529182002996,
+          "text": "They informed the English Parliament of this unexpected incident and assured them that they had entered into no private"
+        },
+        {
+          "audio_seconds": 9.1,
+          "seen_seconds": 9.20049428899947,
+          "text": "They informed the English Parliament of this unexpected incident and assured them that they had entered into no private treaty with"
+        },
+        {
+          "audio_seconds": 9.7,
+          "seen_seconds": 9.795220488998165,
+          "text": "They informed the English Parliament of this unexpected incident and assured them that they had entered into no private treaty with the King"
+        }
+      ],
+      "final": "They informed the English parliament of this unexpected incident, and assured them that they had entered into no private treaty with the king",
+      "final_seconds": 0.3776367999962531,
+      "final_cpu_seconds": 2.6562320410000098,
+      "memory": {
+        "Rss_MiB": 1927.1875,
+        "Pss_MiB": 1909.025390625,
+        "Shared_Clean_MiB": 32.05078125,
+        "Private_Dirty_MiB": 1887.88671875,
+        "Swap_MiB": 0.0,
+        "peak_Rss_MiB": 1925.26171875
+      },
+      "id": "8224-274384-0002",
+      "repeat": 0,
+      "reference": "THEY INFORMED THE ENGLISH PARLIAMENT OF THIS UNEXPECTED INCIDENT AND ASSURED THEM THAT THEY HAD ENTERED INTO NO PRIVATE TREATY WITH THE KING",
+      "preview_wer": {
+        "errors": 0,
+        "reference_words": 23
+      },
+      "final_wer": {
+        "errors": 0,
+        "reference_words": 23
+      }
+    },
+    {
+      "audio_seconds": 15.77,
+      "stream_compute_seconds": 2.7220505970108206,
+      "stream_cpu_seconds": 14.340673545000001,
+      "stream_rtf": 0.17260942276542934,
+      "first_preview_seconds": 1.4113927109981887,
+      "max_preview_lag_seconds": 0.15327696600434138,
+      "preview_finished_after_audio_seconds": 0.00012683199747698382,
+      "preview": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road, and they sauntered leisurely along to avoid paying the price of fatigue for the recreation provided for the Toledons in the valley or on the banks of their",
+      "updates": [
+        {
+          "audio_seconds": 1.3,
+          "seen_seconds": 1.4113927109981887,
+          "text": "Eleven o'clock"
+        },
+        {
+          "audio_seconds": 1.8,
+          "seen_seconds": 1.9532769660043414,
+          "text": "Eleven o'clock had"
+        },
+        {
+          "audio_seconds": 2.4,
+          "seen_seconds": 2.506237856998632,
+          "text": "Eleven o'clock had struck"
+        },
+        {
+          "audio_seconds": 3.0,
+          "seen_seconds": 3.0950793029987835,
+          "text": "Eleven o'clock had struck. It was"
+        },
+        {
+          "audio_seconds": 3.5,
+          "seen_seconds": 3.5950093339997693,
+          "text": "Eleven o'clock had struck. It was a fine clear"
+        },
+        {
+          "audio_seconds": 4.1,
+          "seen_seconds": 4.19434272100043,
+          "text": "Eleven o'clock had struck. It was a fine clear night"
+        },
+        {
+          "audio_seconds": 4.6,
+          "seen_seconds": 4.695954623997386,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were"
+        },
+        {
+          "audio_seconds": 5.2,
+          "seen_seconds": 5.297069126000861,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only"
+        },
+        {
+          "audio_seconds": 5.8,
+          "seen_seconds": 5.896022964004078,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the"
+        },
+        {
+          "audio_seconds": 6.3,
+          "seen_seconds": 6.394880811004259,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road"
+        },
+        {
+          "audio_seconds": 6.9,
+          "seen_seconds": 6.995849842000462,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road, and they"
+        },
+        {
+          "audio_seconds": 7.4,
+          "seen_seconds": 7.495713790004084,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road, and they sauntered"
+        },
+        {
+          "audio_seconds": 8.0,
+          "seen_seconds": 8.096170836004603,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road, and they sauntered leisurely along"
+        },
+        {
+          "audio_seconds": 9.1,
+          "seen_seconds": 9.195752189998165,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road, and they sauntered leisurely along to avoid"
+        },
+        {
+          "audio_seconds": 9.7,
+          "seen_seconds": 9.795955010001489,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road, and they sauntered leisurely along to avoid paying the"
+        },
+        {
+          "audio_seconds": 10.2,
+          "seen_seconds": 10.296226219997333,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road, and they sauntered leisurely along to avoid paying the price of"
+        },
+        {
+          "audio_seconds": 10.8,
+          "seen_seconds": 10.896627667000576,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road, and they sauntered leisurely along to avoid paying the price of fatigue for the"
+        },
+        {
+          "audio_seconds": 11.4,
+          "seen_seconds": 11.495872785997927,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road, and they sauntered leisurely along to avoid paying the price of fatigue for the recreat"
+        },
+        {
+          "audio_seconds": 11.9,
+          "seen_seconds": 11.996465062000789,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road, and they sauntered leisurely along to avoid paying the price of fatigue for the recreation"
+        },
+        {
+          "audio_seconds": 12.5,
+          "seen_seconds": 12.596947464997356,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road, and they sauntered leisurely along to avoid paying the price of fatigue for the recreation provided for"
+        },
+        {
+          "audio_seconds": 13.0,
+          "seen_seconds": 13.10362864999479,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road, and they sauntered leisurely along to avoid paying the price of fatigue for the recreation provided for the Tol"
+        },
+        {
+          "audio_seconds": 13.6,
+          "seen_seconds": 13.696137499000178,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road, and they sauntered leisurely along to avoid paying the price of fatigue for the recreation provided for the Toledons in"
+        },
+        {
+          "audio_seconds": 14.2,
+          "seen_seconds": 14.296575919997121,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road, and they sauntered leisurely along to avoid paying the price of fatigue for the recreation provided for the Toledons in the valley"
+        },
+        {
+          "audio_seconds": 14.7,
+          "seen_seconds": 14.79833128399623,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road, and they sauntered leisurely along to avoid paying the price of fatigue for the recreation provided for the Toledons in the valley or on the"
+        },
+        {
+          "audio_seconds": 15.3,
+          "seen_seconds": 15.3957686010006,
+          "text": "Eleven o'clock had struck. It was a fine clear night. There were the only persons on the road, and they sauntered leisurely along to avoid paying the price of fatigue for the recreation provided for the Toledons in the valley or on the banks of their"
+        }
+      ],
+      "final": "Eleven o'clock had struck it was a fine, clear night they were the only persons on the road, and they sauntered leisurely along, to avoid paying the price of fatigue for the recreation provided for the Toledans in the valley or on the banks of their river.",
+      "final_seconds": 0.7294887310054037,
+      "final_cpu_seconds": 4.219329388999995,
+      "memory": {
+        "Rss_MiB": 1927.33984375,
+        "Pss_MiB": 1909.1787109375,
+        "Shared_Clean_MiB": 32.05078125,
+        "Private_Dirty_MiB": 1888.0390625,
+        "Swap_MiB": 0.0,
+        "peak_Rss_MiB": 1925.41796875
+      },
+      "id": "5639-40744-0000",
+      "repeat": 0,
+      "reference": "ELEVEN O'CLOCK HAD STRUCK IT WAS A FINE CLEAR NIGHT THEY WERE THE ONLY PERSONS ON THE ROAD AND THEY SAUNTERED LEISURELY ALONG TO AVOID PAYING THE PRICE OF FATIGUE FOR THE RECREATION PROVIDED FOR THE TOLEDANS IN THEIR VALLEY OR ON THE BANKS OF THEIR RIVER",
+      "preview_wer": {
+        "errors": 4,
+        "reference_words": 47
+      },
+      "final_wer": {
+        "errors": 1,
+        "reference_words": 47
+      }
+    },
+    {
+      "audio_seconds": 12.415,
+      "stream_compute_seconds": 2.2365879469944048,
+      "stream_cpu_seconds": 12.297374945000001,
+      "stream_rtf": 0.1801520698344265,
+      "first_preview_seconds": 0.8256590569973923,
+      "max_preview_lag_seconds": 0.13798348000273108,
+      "preview_finished_after_audio_seconds": 0.09673672400822397,
+      "preview": "The whole proceeding was so childish. The miserable plot so transparent, the outrage so gross as to bring disgust to the better class of border ruffians who were witnesses and accessories",
+      "updates": [
+        {
+          "audio_seconds": 0.7,
+          "seen_seconds": 0.8256590569973923,
+          "text": "The"
+        },
+        {
+          "audio_seconds": 1.3,
+          "seen_seconds": 1.4379834800027311,
+          "text": "The whole proceeding"
+        },
+        {
+          "audio_seconds": 1.8,
+          "seen_seconds": 1.9228106369962916,
+          "text": "The whole proceeding was so child"
+        },
+        {
+          "audio_seconds": 2.4,
+          "seen_seconds": 2.5015030439957626,
+          "text": "The whole proceeding was so childish"
+        },
+        {
+          "audio_seconds": 3.0,
+          "seen_seconds": 3.0968450809959904,
+          "text": "The whole proceeding was so childish. The mis"
+        },
+        {
+          "audio_seconds": 3.5,
+          "seen_seconds": 3.596423874005268,
+          "text": "The whole proceeding was so childish. The miserable plot"
+        },
+        {
+          "audio_seconds": 4.6,
+          "seen_seconds": 4.696442075002414,
+          "text": "The whole proceeding was so childish. The miserable plot so transparent"
+        },
+        {
+          "audio_seconds": 5.8,
+          "seen_seconds": 5.896356606998597,
+          "text": "The whole proceeding was so childish. The miserable plot so transparent, the outra"
+        },
+        {
+          "audio_seconds": 6.3,
+          "seen_seconds": 6.3963739749931845,
+          "text": "The whole proceeding was so childish. The miserable plot so transparent, the outrage so"
+        },
+        {
+          "audio_seconds": 6.9,
+          "seen_seconds": 6.996033178997459,
+          "text": "The whole proceeding was so childish. The miserable plot so transparent, the outrage so gross"
+        },
+        {
+          "audio_seconds": 7.4,
+          "seen_seconds": 7.496442111003853,
+          "text": "The whole proceeding was so childish. The miserable plot so transparent, the outrage so gross as to bring"
+        },
+        {
+          "audio_seconds": 8.0,
+          "seen_seconds": 8.09727963500336,
+          "text": "The whole proceeding was so childish. The miserable plot so transparent, the outrage so gross as to bring disgust"
+        },
+        {
+          "audio_seconds": 8.6,
+          "seen_seconds": 8.696844139996392,
+          "text": "The whole proceeding was so childish. The miserable plot so transparent, the outrage so gross as to bring disgust to the better"
+        },
+        {
+          "audio_seconds": 9.1,
+          "seen_seconds": 9.198976851004408,
+          "text": "The whole proceeding was so childish. The miserable plot so transparent, the outrage so gross as to bring disgust to the better class of"
+        },
+        {
+          "audio_seconds": 9.7,
+          "seen_seconds": 9.796558473996992,
+          "text": "The whole proceeding was so childish. The miserable plot so transparent, the outrage so gross as to bring disgust to the better class of border"
+        },
+        {
+          "audio_seconds": 10.2,
+          "seen_seconds": 10.296163982998404,
+          "text": "The whole proceeding was so childish. The miserable plot so transparent, the outrage so gross as to bring disgust to the better class of border ruffians"
+        },
+        {
+          "audio_seconds": 10.8,
+          "seen_seconds": 10.896127491000517,
+          "text": "The whole proceeding was so childish. The miserable plot so transparent, the outrage so gross as to bring disgust to the better class of border ruffians who were"
+        },
+        {
+          "audio_seconds": 11.4,
+          "seen_seconds": 11.49646305500064,
+          "text": "The whole proceeding was so childish. The miserable plot so transparent, the outrage so gross as to bring disgust to the better class of border ruffians who were witnesses"
+        }
+      ],
+      "final": "The whole proceeding was so childish, the miserable plot so transparent, the outrage so gross, as to bring disgust to the better class of Border Ruffians who were witnesses and accessories.",
+      "final_seconds": 0.5211921949958196,
+      "final_cpu_seconds": 3.365226813999982,
+      "memory": {
+        "Rss_MiB": 1927.37890625,
+        "Pss_MiB": 1909.2177734375,
+        "Shared_Clean_MiB": 32.05078125,
+        "Private_Dirty_MiB": 1888.078125,
+        "Swap_MiB": 0.0,
+        "peak_Rss_MiB": 1925.41796875
+      },
+      "id": "7729-102255-0041",
+      "repeat": 0,
+      "reference": "THE WHOLE PROCEEDING WAS SO CHILDISH THE MISERABLE PLOT SO TRANSPARENT THE OUTRAGE SO GROSS AS TO BRING DISGUST TO THE BETTER CLASS OF BORDER RUFFIANS WHO WERE WITNESSES AND ACCESSORIES",
+      "preview_wer": {
+        "errors": 0,
+        "reference_words": 31
+      },
+      "final_wer": {
+        "errors": 0,
+        "reference_words": 31
+      }
+    },
+    {
+      "audio_seconds": 14.76,
+      "stream_compute_seconds": 2.747452546027489,
+      "stream_cpu_seconds": 14.329643036999983,
+      "stream_rtf": 0.1861417714110765,
+      "first_preview_seconds": 0.8379253289996995,
+      "max_preview_lag_seconds": 0.13842123900394654,
+      "preview_finished_after_audio_seconds": 0.03706273399933657,
+      "preview": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an element of decency is at its best in those portions of the community where the human contact of the individual is widest and the mobility of the population is greatest",
+      "updates": [
+        {
+          "audio_seconds": 0.7,
+          "seen_seconds": 0.8379253289996995,
+          "text": "It is"
+        },
+        {
+          "audio_seconds": 1.3,
+          "seen_seconds": 1.4382126530006645,
+          "text": "It is also not"
+        },
+        {
+          "audio_seconds": 1.8,
+          "seen_seconds": 1.9384212390039466,
+          "text": "It is also noticeable that"
+        },
+        {
+          "audio_seconds": 2.4,
+          "seen_seconds": 2.496752473997185,
+          "text": "It is also noticeable that the"
+        },
+        {
+          "audio_seconds": 3.0,
+          "seen_seconds": 3.095888568997907,
+          "text": "It is also noticeable that the serviceability"
+        },
+        {
+          "audio_seconds": 3.5,
+          "seen_seconds": 3.5943191740007023,
+          "text": "It is also noticeable that the serviceability of consumption"
+        },
+        {
+          "audio_seconds": 4.1,
+          "seen_seconds": 4.19642881500622,
+          "text": "It is also noticeable that the serviceability of consumption as a means of"
+        },
+        {
+          "audio_seconds": 4.6,
+          "seen_seconds": 4.706598835001932,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute"
+        },
+        {
+          "audio_seconds": 5.2,
+          "seen_seconds": 5.2979854070028525,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the"
+        },
+        {
+          "audio_seconds": 5.8,
+          "seen_seconds": 5.896768788003828,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on"
+        },
+        {
+          "audio_seconds": 6.3,
+          "seen_seconds": 6.39669700700033,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an"
+        },
+        {
+          "audio_seconds": 6.9,
+          "seen_seconds": 7.002499109001656,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an element of"
+        },
+        {
+          "audio_seconds": 7.4,
+          "seen_seconds": 7.500296867996804,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an element of decency"
+        },
+        {
+          "audio_seconds": 8.0,
+          "seen_seconds": 8.096293401998992,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an element of decency is"
+        },
+        {
+          "audio_seconds": 8.6,
+          "seen_seconds": 8.69806389699952,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an element of decency is at its best"
+        },
+        {
+          "audio_seconds": 9.1,
+          "seen_seconds": 9.205129527997633,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an element of decency is at its best in those port"
+        },
+        {
+          "audio_seconds": 9.7,
+          "seen_seconds": 9.819144465999852,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an element of decency is at its best in those portions of the commun"
+        },
+        {
+          "audio_seconds": 10.2,
+          "seen_seconds": 10.298658080001768,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an element of decency is at its best in those portions of the community"
+        },
+        {
+          "audio_seconds": 10.8,
+          "seen_seconds": 10.899672714000918,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an element of decency is at its best in those portions of the community where the human"
+        },
+        {
+          "audio_seconds": 11.4,
+          "seen_seconds": 11.498649774001388,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an element of decency is at its best in those portions of the community where the human contact of the individual"
+        },
+        {
+          "audio_seconds": 11.9,
+          "seen_seconds": 12.000446465003188,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an element of decency is at its best in those portions of the community where the human contact of the individual is"
+        },
+        {
+          "audio_seconds": 12.5,
+          "seen_seconds": 12.623404105004738,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an element of decency is at its best in those portions of the community where the human contact of the individual is widest"
+        },
+        {
+          "audio_seconds": 13.0,
+          "seen_seconds": 13.104299796003033,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an element of decency is at its best in those portions of the community where the human contact of the individual is widest and the mobility of"
+        },
+        {
+          "audio_seconds": 13.6,
+          "seen_seconds": 13.696230390998243,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an element of decency is at its best in those portions of the community where the human contact of the individual is widest and the mobility of the populat"
+        },
+        {
+          "audio_seconds": 14.2,
+          "seen_seconds": 14.297493485001905,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an element of decency is at its best in those portions of the community where the human contact of the individual is widest and the mobility of the population is great"
+        },
+        {
+          "audio_seconds": 14.7,
+          "seen_seconds": 14.796937356000125,
+          "text": "It is also noticeable that the serviceability of consumption as a means of repute as well as the insistence on it as an element of decency is at its best in those portions of the community where the human contact of the individual is widest and the mobility of the population is greatest"
+        }
+      ],
+      "final": "It is also noticeable that the serviceability of consumption as a means of repute, as well as the insistence on it as an element of decency, is at its best in those portions of the community where the human contact of the individual is widest and the mobility of the population is greatest.",
+      "final_seconds": 0.7105524860016885,
+      "final_cpu_seconds": 4.1440341850000095,
+      "memory": {
+        "Rss_MiB": 1927.62890625,
+        "Pss_MiB": 1909.46875,
+        "Shared_Clean_MiB": 32.05078125,
+        "Private_Dirty_MiB": 1888.328125,
+        "Swap_MiB": 0.0,
+        "peak_Rss_MiB": 1925.88671875
+      },
+      "id": "3570-5695-0012",
+      "repeat": 0,
+      "reference": "IT IS ALSO NOTICEABLE THAT THE SERVICEABILITY OF CONSUMPTION AS A MEANS OF REPUTE AS WELL AS THE INSISTENCE ON IT AS AN ELEMENT OF DECENCY IS AT ITS BEST IN THOSE PORTIONS OF THE COMMUNITY WHERE THE HUMAN CONTACT OF THE INDIVIDUAL IS WIDEST AND THE MOBILITY OF THE POPULATION IS GREATEST",
+      "preview_wer": {
+        "errors": 0,
+        "reference_words": 53
+      },
+      "final_wer": {
+        "errors": 0,
+        "reference_words": 53
+      }
+    },
+    {
+      "audio_seconds": 6.15,
+      "stream_compute_seconds": 1.0069889139995212,
+      "stream_cpu_seconds": 7.390179166999985,
+      "stream_rtf": 0.1637380347966701,
+      "first_preview_seconds": 1.4012837409944041,
+      "max_preview_lag_seconds": 0.10395378999965033,
+      "preview_finished_after_audio_seconds": 6.98649964760989e-05,
+      "preview": "Bartley leaned over her shoulder without touching her and whispered in her ear, You are giving me a chance",
+      "updates": [
+        {
+          "audio_seconds": 1.3,
+          "seen_seconds": 1.4012837409944041,
+          "text": "Bartley leaned over her"
+        },
+        {
+          "audio_seconds": 1.8,
+          "seen_seconds": 1.9022957199966186,
+          "text": "Bartley leaned over her shoulder without"
+        },
+        {
+          "audio_seconds": 2.4,
+          "seen_seconds": 2.5039537899996502,
+          "text": "Bartley leaned over her shoulder without touching"
+        },
+        {
+          "audio_seconds": 3.0,
+          "seen_seconds": 3.101823611999862,
+          "text": "Bartley leaned over her shoulder without touching her and whispered"
+        },
+        {
+          "audio_seconds": 3.5,
+          "seen_seconds": 3.6012179310055217,
+          "text": "Bartley leaned over her shoulder without touching her and whispered in her ear"
+        },
+        {
+          "audio_seconds": 4.1,
+          "seen_seconds": 4.200398092996329,
+          "text": "Bartley leaned over her shoulder without touching her and whispered in her ear, You"
+        },
+        {
+          "audio_seconds": 4.6,
+          "seen_seconds": 4.6972036250022935,
+          "text": "Bartley leaned over her shoulder without touching her and whispered in her ear, You are giving me a"
+        },
+        {
+          "audio_seconds": 5.2,
+          "seen_seconds": 5.296672684994701,
+          "text": "Bartley leaned over her shoulder without touching her and whispered in her ear, You are giving me a chance"
+        }
+      ],
+      "final": "Bartley leaned over her shoulder without touching her and whispered in her ear You are giving me a chance? Yes",
+      "final_seconds": 0.265688184001192,
+      "final_cpu_seconds": 1.8891174849999857,
+      "memory": {
+        "Rss_MiB": 1927.640625,
+        "Pss_MiB": 1909.48046875,
+        "Shared_Clean_MiB": 32.05078125,
+        "Private_Dirty_MiB": 1888.33984375,
+        "Swap_MiB": 0.0,
+        "peak_Rss_MiB": 1925.88671875
+      },
+      "id": "4446-2273-0035",
+      "repeat": 0,
+      "reference": "BARTLEY LEANED OVER HER SHOULDER WITHOUT TOUCHING HER AND WHISPERED IN HER EAR YOU ARE GIVING ME A CHANCE YES",
+      "preview_wer": {
+        "errors": 1,
+        "reference_words": 20
+      },
+      "final_wer": {
+        "errors": 0,
+        "reference_words": 20
+      }
+    },
+    {
+      "audio_seconds": 21.185,
+      "stream_compute_seconds": 3.706216704005783,
+      "stream_cpu_seconds": 18.16216058699999,
+      "stream_rtf": 0.17494532471115332,
+      "first_preview_seconds": 1.4479963820020203,
+      "max_preview_lag_seconds": 0.14799638200202025,
+      "preview_finished_after_audio_seconds": 0.00011113399523310363,
+      "preview": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air need to be slaked with moisture for innumerable columns of water rush upwards into the air and fall back again in white foam.",
+      "updates": [
+        {
+          "audio_seconds": 1.3,
+          "seen_seconds": 1.4479963820020203,
+          "text": "From the"
+        },
+        {
+          "audio_seconds": 1.8,
+          "seen_seconds": 1.9341922850042466,
+          "text": "From the undersurface of the"
+        },
+        {
+          "audio_seconds": 2.4,
+          "seen_seconds": 2.4956137770044733,
+          "text": "From the undersurface of the clouds"
+        },
+        {
+          "audio_seconds": 3.0,
+          "seen_seconds": 3.0973875839990797,
+          "text": "From the undersurface of the clouds there are"
+        },
+        {
+          "audio_seconds": 3.5,
+          "seen_seconds": 3.597310846002074,
+          "text": "From the undersurface of the clouds there are continual"
+        },
+        {
+          "audio_seconds": 4.1,
+          "seen_seconds": 4.197116539000126,
+          "text": "From the undersurface of the clouds there are continual emissions"
+        },
+        {
+          "audio_seconds": 4.6,
+          "seen_seconds": 4.697135468997294,
+          "text": "From the undersurface of the clouds there are continual emissions of lur"
+        },
+        {
+          "audio_seconds": 5.2,
+          "seen_seconds": 5.296614623995265,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light"
+        },
+        {
+          "audio_seconds": 6.3,
+          "seen_seconds": 6.393997579999268,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is"
+        },
+        {
+          "audio_seconds": 6.9,
+          "seen_seconds": 6.993302674002189,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in contin"
+        },
+        {
+          "audio_seconds": 7.4,
+          "seen_seconds": 7.493249248006032,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolut"
+        },
+        {
+          "audio_seconds": 8.0,
+          "seen_seconds": 8.09353315300541,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution"
+        },
+        {
+          "audio_seconds": 8.6,
+          "seen_seconds": 8.693909565002832,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their compon"
+        },
+        {
+          "audio_seconds": 9.1,
+          "seen_seconds": 9.193994859002123,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molec"
+        },
+        {
+          "audio_seconds": 9.7,
+          "seen_seconds": 9.793281802001001,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules"
+        },
+        {
+          "audio_seconds": 10.8,
+          "seen_seconds": 10.89703794199595,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The"
+        },
+        {
+          "audio_seconds": 11.4,
+          "seen_seconds": 11.497846903001482,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements"
+        },
+        {
+          "audio_seconds": 11.9,
+          "seen_seconds": 11.996979586000089,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air"
+        },
+        {
+          "audio_seconds": 12.5,
+          "seen_seconds": 12.597331962999306,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air need to"
+        },
+        {
+          "audio_seconds": 13.0,
+          "seen_seconds": 13.094918531001895,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air need to be"
+        },
+        {
+          "audio_seconds": 13.6,
+          "seen_seconds": 13.693685659005132,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air need to be slaked"
+        },
+        {
+          "audio_seconds": 14.2,
+          "seen_seconds": 14.293451444998208,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air need to be slaked with"
+        },
+        {
+          "audio_seconds": 14.7,
+          "seen_seconds": 14.79385637500236,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air need to be slaked with moisture"
+        },
+        {
+          "audio_seconds": 15.8,
+          "seen_seconds": 15.894113040999219,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air need to be slaked with moisture for innumer"
+        },
+        {
+          "audio_seconds": 16.4,
+          "seen_seconds": 16.495425656996666,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air need to be slaked with moisture for innumerable columns"
+        },
+        {
+          "audio_seconds": 17.0,
+          "seen_seconds": 17.094139358996472,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air need to be slaked with moisture for innumerable columns of water"
+        },
+        {
+          "audio_seconds": 17.5,
+          "seen_seconds": 17.592750462004915,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air need to be slaked with moisture for innumerable columns of water rush"
+        },
+        {
+          "audio_seconds": 18.1,
+          "seen_seconds": 18.197653024000466,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air need to be slaked with moisture for innumerable columns of water rush upwards into"
+        },
+        {
+          "audio_seconds": 18.6,
+          "seen_seconds": 18.708700504999435,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air need to be slaked with moisture for innumerable columns of water rush upwards into the air"
+        },
+        {
+          "audio_seconds": 19.2,
+          "seen_seconds": 19.299511893000453,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air need to be slaked with moisture for innumerable columns of water rush upwards into the air and fall"
+        },
+        {
+          "audio_seconds": 19.8,
+          "seen_seconds": 19.896164773996862,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air need to be slaked with moisture for innumerable columns of water rush upwards into the air and fall back again"
+        },
+        {
+          "audio_seconds": 20.3,
+          "seen_seconds": 20.395984640000098,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air need to be slaked with moisture for innumerable columns of water rush upwards into the air and fall back again in white"
+        },
+        {
+          "audio_seconds": 20.9,
+          "seen_seconds": 20.99625603599852,
+          "text": "From the undersurface of the clouds there are continual emissions of lurid light. Electric matter is in continual evolution from their component molecules. The gaseous elements of the air need to be slaked with moisture for innumerable columns of water rush upwards into the air and fall back again in white foam."
+        }
+      ],
+      "final": "From the under surface of the clouds there are continual emissions of lurid light electric matter is in continual evolution from their component molecules the gaseous elements of the air need to be slaked with moisture, for innumerable columns of water rush upwards into the air and fall back again in white foam",
+      "final_seconds": 0.9246430350031005,
+      "final_cpu_seconds": 5.0151113719999785,
+      "memory": {
+        "Rss_MiB": 1927.72265625,
+        "Pss_MiB": 1909.5625,
+        "Shared_Clean_MiB": 32.05078125,
+        "Private_Dirty_MiB": 1888.421875,
+        "Swap_MiB": 0.0,
+        "peak_Rss_MiB": 1925.88671875
+      },
+      "id": "260-123288-0015",
+      "repeat": 0,
+      "reference": "FROM THE UNDER SURFACE OF THE CLOUDS THERE ARE CONTINUAL EMISSIONS OF LURID LIGHT ELECTRIC MATTER IS IN CONTINUAL EVOLUTION FROM THEIR COMPONENT MOLECULES THE GASEOUS ELEMENTS OF THE AIR NEED TO BE SLAKED WITH MOISTURE FOR INNUMERABLE COLUMNS OF WATER RUSH UPWARDS INTO THE AIR AND FALL BACK AGAIN IN WHITE FOAM",
+      "preview_wer": {
+        "errors": 2,
+        "reference_words": 53
+      },
+      "final_wer": {
+        "errors": 0,
+        "reference_words": 53
+      }
+    }
+  ],
+  "versions": {
+    "python": "3.12.13",
+    "sherpa": "1.13.6",
+    "numpy": "2.5.2",
+    "native_ort": "1.27.1",
+    "python_ort": "1.28.0"
+  },
+  "affinity": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19
+  ]
+}

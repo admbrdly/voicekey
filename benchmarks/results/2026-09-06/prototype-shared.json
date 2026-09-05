@@ -1,0 +1,589 @@
+{
+  "variant": "parakeet-shared",
+  "paced": false,
+  "smoke": false,
+  "live_threads": 2,
+  "load_seconds": 1.9511960490053752,
+  "initial_memory": {
+    "Rss_MiB": 60.55078125,
+    "Pss_MiB": 47.591796875,
+    "Shared_Clean_MiB": 19.79296875,
+    "Private_Dirty_MiB": 33.53125,
+    "Swap_MiB": 0.0,
+    "peak_Rss_MiB": 59.78515625
+  },
+  "loaded_memory": {
+    "Rss_MiB": 1746.4609375,
+    "Pss_MiB": 1733.408203125,
+    "Shared_Clean_MiB": 19.98046875,
+    "Private_Dirty_MiB": 1711.359375,
+    "Swap_MiB": 0.0,
+    "peak_Rss_MiB": 1746.9921875
+  },
+  "results": [
+    {
+      "audio_seconds": 7.94,
+      "stream_compute_seconds": 20.127604478002468,
+      "stream_cpu_seconds": 70.2548826,
+      "stream_rtf": 2.5349627806048445,
+      "first_preview_seconds": 3.537629276995722,
+      "max_preview_lag_seconds": 11.601035461997672,
+      "preview_finished_after_audio_seconds": 12.78697659299738,
+      "preview": "I come now to the other characteristic which memory images must have in order to account for our knowledge of the past",
+      "updates": [
+        {
+          "audio_seconds": 1.6,
+          "seen_seconds": 3.537629276995722,
+          "text": "I"
+        },
+        {
+          "audio_seconds": 1.7,
+          "seen_seconds": 3.947176932998991,
+          "text": "I come now"
+        },
+        {
+          "audio_seconds": 2.1,
+          "seen_seconds": 4.762767248002637,
+          "text": "I come now to"
+        },
+        {
+          "audio_seconds": 2.2,
+          "seen_seconds": 5.172287795002921,
+          "text": "I come now to the other"
+        },
+        {
+          "audio_seconds": 2.5,
+          "seen_seconds": 5.987481070996727,
+          "text": "I come now to the other charact"
+        },
+        {
+          "audio_seconds": 2.7,
+          "seen_seconds": 6.388549566001165,
+          "text": "I come now to the other character"
+        },
+        {
+          "audio_seconds": 2.9,
+          "seen_seconds": 6.78758763900405,
+          "text": "I come now to the other characteristic"
+        },
+        {
+          "audio_seconds": 3.7,
+          "seen_seconds": 8.780194262007717,
+          "text": "I come now to the other characteristic which"
+        },
+        {
+          "audio_seconds": 4.0,
+          "seen_seconds": 9.600362997008778,
+          "text": "I come now to the other characteristic which mem"
+        },
+        {
+          "audio_seconds": 4.1,
+          "seen_seconds": 9.999205144007282,
+          "text": "I come now to the other characteristic which memory"
+        },
+        {
+          "audio_seconds": 4.3,
+          "seen_seconds": 10.394019253007718,
+          "text": "I come now to the other characteristic which memory im"
+        },
+        {
+          "audio_seconds": 4.5,
+          "seen_seconds": 10.793802431000222,
+          "text": "I come now to the other characteristic which memory images"
+        },
+        {
+          "audio_seconds": 4.9,
+          "seen_seconds": 11.980477438993693,
+          "text": "I come now to the other characteristic which memory images must"
+        },
+        {
+          "audio_seconds": 5.3,
+          "seen_seconds": 12.765452882989484,
+          "text": "I come now to the other characteristic which memory images must have"
+        },
+        {
+          "audio_seconds": 5.7,
+          "seen_seconds": 13.966813741988153,
+          "text": "I come now to the other characteristic which memory images must have in"
+        },
+        {
+          "audio_seconds": 5.9,
+          "seen_seconds": 14.365528903990343,
+          "text": "I come now to the other characteristic which memory images must have in order"
+        },
+        {
+          "audio_seconds": 6.2,
+          "seen_seconds": 15.15801967199659,
+          "text": "I come now to the other characteristic which memory images must have in order to"
+        },
+        {
+          "audio_seconds": 6.4,
+          "seen_seconds": 15.55454252998752,
+          "text": "I come now to the other characteristic which memory images must have in order to account"
+        },
+        {
+          "audio_seconds": 6.9,
+          "seen_seconds": 16.74234049699735,
+          "text": "I come now to the other characteristic which memory images must have in order to account for"
+        },
+        {
+          "audio_seconds": 7.0,
+          "seen_seconds": 17.141447810996034,
+          "text": "I come now to the other characteristic which memory images must have in order to account for our"
+        },
+        {
+          "audio_seconds": 7.2,
+          "seen_seconds": 17.54875779899303,
+          "text": "I come now to the other characteristic which memory images must have in order to account for our knowledge"
+        },
+        {
+          "audio_seconds": 7.8,
+          "seen_seconds": 19.144351863994963,
+          "text": "I come now to the other characteristic which memory images must have in order to account for our knowledge of the"
+        },
+        {
+          "audio_seconds": 7.94,
+          "seen_seconds": 19.541035461997673,
+          "text": "I come now to the other characteristic which memory images must have in order to account for our knowledge of the past"
+        }
+      ],
+      "final": "I come now to the other characteristic which memory images must have in order to account for our knowledge of the past.",
+      "final_seconds": 0.40286439600458834,
+      "final_cpu_seconds": 2.380547843000002,
+      "memory": {
+        "Rss_MiB": 2024.58984375,
+        "Pss_MiB": 2011.4775390625,
+        "Shared_Clean_MiB": 20.04296875,
+        "Private_Dirty_MiB": 1988.61328125,
+        "Swap_MiB": 0.0,
+        "peak_Rss_MiB": 2022.609375
+      },
+      "id": "8230-279154-0014",
+      "repeat": 0,
+      "reference": "I COME NOW TO THE OTHER CHARACTERISTIC WHICH MEMORY IMAGES MUST HAVE IN ORDER TO ACCOUNT FOR OUR KNOWLEDGE OF THE PAST",
+      "preview_wer": {
+        "errors": 0,
+        "reference_words": 22
+      },
+      "final_wer": {
+        "errors": 0,
+        "reference_words": 22
+      }
+    },
+    {
+      "audio_seconds": 21.51,
+      "stream_compute_seconds": 53.739866060976055,
+      "stream_cpu_seconds": 190.949225046,
+      "stream_rtf": 2.4983666230114387,
+      "first_preview_seconds": 2.584218941994186,
+      "max_preview_lag_seconds": 31.348396384982337,
+      "preview_finished_after_audio_seconds": 32.82933812098403,
+      "preview": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back to Mrs. Dorothy, only remarking",
+      "updates": [
+        {
+          "audio_seconds": 1.3,
+          "seen_seconds": 2.584218941994186,
+          "text": "And"
+        },
+        {
+          "audio_seconds": 1.4,
+          "seen_seconds": 2.98223355399532,
+          "text": "And wild"
+        },
+        {
+          "audio_seconds": 1.6,
+          "seen_seconds": 3.379952353994304,
+          "text": "And wilder"
+        },
+        {
+          "audio_seconds": 1.7,
+          "seen_seconds": 3.780434075991798,
+          "text": "And wilder le"
+        },
+        {
+          "audio_seconds": 1.9,
+          "seen_seconds": 4.17693598899641,
+          "text": "And wilder left"
+        },
+        {
+          "audio_seconds": 2.1,
+          "seen_seconds": 4.577116155001567,
+          "text": "And wilder left too"
+        },
+        {
+          "audio_seconds": 2.9,
+          "seen_seconds": 6.565693124009703,
+          "text": "And wilder left too,"
+        },
+        {
+          "audio_seconds": 3.0,
+          "seen_seconds": 6.963493564007512,
+          "text": "And wilder left too, more"
+        },
+        {
+          "audio_seconds": 3.2,
+          "seen_seconds": 7.362896163010737,
+          "text": "And wilder left too, more su"
+        },
+        {
+          "audio_seconds": 3.3,
+          "seen_seconds": 7.763298870014841,
+          "text": "And wilder left too, more suddenly"
+        },
+        {
+          "audio_seconds": 3.8,
+          "seen_seconds": 8.961361197014048,
+          "text": "And wilder left too, more suddenly and no"
+        },
+        {
+          "audio_seconds": 4.0,
+          "seen_seconds": 9.35900949001516,
+          "text": "And wilder left too, more suddenly and noisily"
+        },
+        {
+          "audio_seconds": 4.9,
+          "seen_seconds": 11.753452480008127,
+          "text": "And wilder left too, more suddenly and noisily than"
+        },
+        {
+          "audio_seconds": 5.1,
+          "seen_seconds": 12.150298349015065,
+          "text": "And wilder left too, more suddenly and noisily than the hum"
+        },
+        {
+          "audio_seconds": 5.3,
+          "seen_seconds": 12.549690333014587,
+          "text": "And wilder left too, more suddenly and noisily than the humor"
+        },
+        {
+          "audio_seconds": 5.6,
+          "seen_seconds": 13.345917218016984,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the"
+        },
+        {
+          "audio_seconds": 5.7,
+          "seen_seconds": 13.743096920015523,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke"
+        },
+        {
+          "audio_seconds": 6.1,
+          "seen_seconds": 14.536844010015193,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke se"
+        },
+        {
+          "audio_seconds": 6.2,
+          "seen_seconds": 14.936411897020298,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed"
+        },
+        {
+          "audio_seconds": 6.4,
+          "seen_seconds": 15.336993930018798,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite"
+        },
+        {
+          "audio_seconds": 6.7,
+          "seen_seconds": 16.152192780014595,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to"
+        },
+        {
+          "audio_seconds": 6.9,
+          "seen_seconds": 16.55689520801534,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call"
+        },
+        {
+          "audio_seconds": 7.0,
+          "seen_seconds": 16.955631668011485,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for"
+        },
+        {
+          "audio_seconds": 8.0,
+          "seen_seconds": 19.34821718500607,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and"
+        },
+        {
+          "audio_seconds": 8.1,
+          "seen_seconds": 19.74670651400229,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and gl"
+        },
+        {
+          "audio_seconds": 8.3,
+          "seen_seconds": 20.14609739100124,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced"
+        },
+        {
+          "audio_seconds": 8.8,
+          "seen_seconds": 21.343134081996688,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim"
+        },
+        {
+          "audio_seconds": 9.1,
+          "seen_seconds": 22.135374074992434,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look"
+        },
+        {
+          "audio_seconds": 9.6,
+          "seen_seconds": 23.33278950298118,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from"
+        },
+        {
+          "audio_seconds": 9.7,
+          "seen_seconds": 23.732685698983552,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corn"
+        },
+        {
+          "audio_seconds": 9.9,
+          "seen_seconds": 24.129947486982566,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners"
+        },
+        {
+          "audio_seconds": 10.4,
+          "seen_seconds": 25.32242867897876,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his"
+        },
+        {
+          "audio_seconds": 10.5,
+          "seen_seconds": 25.719519517982555,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes"
+        },
+        {
+          "audio_seconds": 11.0,
+          "seen_seconds": 26.911371908974253,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on"
+        },
+        {
+          "audio_seconds": 11.2,
+          "seen_seconds": 27.310540284970195,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on L"
+        },
+        {
+          "audio_seconds": 11.3,
+          "seen_seconds": 27.714658875972965,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake"
+        },
+        {
+          "audio_seconds": 12.3,
+          "seen_seconds": 30.08851158298203,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake."
+        },
+        {
+          "audio_seconds": 12.5,
+          "seen_seconds": 30.486463450980956,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But"
+        },
+        {
+          "audio_seconds": 12.6,
+          "seen_seconds": 30.88357085998141,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gall"
+        },
+        {
+          "audio_seconds": 12.8,
+          "seen_seconds": 31.279281930977596,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant"
+        },
+        {
+          "audio_seconds": 13.1,
+          "seen_seconds": 32.06985277098429,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant cap"
+        },
+        {
+          "audio_seconds": 13.3,
+          "seen_seconds": 32.464497628979736,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain"
+        },
+        {
+          "audio_seconds": 13.7,
+          "seen_seconds": 33.650522165991426,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not"
+        },
+        {
+          "audio_seconds": 13.9,
+          "seen_seconds": 34.047575164995216,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem"
+        },
+        {
+          "audio_seconds": 14.2,
+          "seen_seconds": 34.839753769994424,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to"
+        },
+        {
+          "audio_seconds": 14.4,
+          "seen_seconds": 35.237746914988385,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive"
+        },
+        {
+          "audio_seconds": 14.7,
+          "seen_seconds": 36.03246587897738,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it"
+        },
+        {
+          "audio_seconds": 15.3,
+          "seen_seconds": 37.62786114298215,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it,"
+        },
+        {
+          "audio_seconds": 15.5,
+          "seen_seconds": 38.02984474897821,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and"
+        },
+        {
+          "audio_seconds": 15.7,
+          "seen_seconds": 38.42710849597788,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after"
+        },
+        {
+          "audio_seconds": 15.8,
+          "seen_seconds": 38.82495753297699,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a"
+        },
+        {
+          "audio_seconds": 16.0,
+          "seen_seconds": 39.22498999498348,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few"
+        },
+        {
+          "audio_seconds": 16.1,
+          "seen_seconds": 39.62598001598381,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds"
+        },
+        {
+          "audio_seconds": 16.6,
+          "seen_seconds": 40.8185180839806,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more"
+        },
+        {
+          "audio_seconds": 17.1,
+          "seen_seconds": 42.00696242697595,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he hand"
+        },
+        {
+          "audio_seconds": 17.3,
+          "seen_seconds": 42.40281929697958,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed"
+        },
+        {
+          "audio_seconds": 17.6,
+          "seen_seconds": 43.19375927797373,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it"
+        },
+        {
+          "audio_seconds": 17.7,
+          "seen_seconds": 43.590593305970835,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very"
+        },
+        {
+          "audio_seconds": 18.1,
+          "seen_seconds": 44.383556865964785,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocent"
+        },
+        {
+          "audio_seconds": 18.2,
+          "seen_seconds": 44.78463242296275,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently"
+        },
+        {
+          "audio_seconds": 19.2,
+          "seen_seconds": 47.17259188898024,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back"
+        },
+        {
+          "audio_seconds": 19.3,
+          "seen_seconds": 47.57007898897573,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back to"
+        },
+        {
+          "audio_seconds": 19.5,
+          "seen_seconds": 47.96758165597712,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back to Mrs"
+        },
+        {
+          "audio_seconds": 19.7,
+          "seen_seconds": 48.363922096979515,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back to Mrs."
+        },
+        {
+          "audio_seconds": 19.8,
+          "seen_seconds": 48.76347799998039,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back to Mrs. Dor"
+        },
+        {
+          "audio_seconds": 20.0,
+          "seen_seconds": 49.162435856976664,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back to Mrs. Dorothy"
+        },
+        {
+          "audio_seconds": 20.8,
+          "seen_seconds": 51.13600267298316,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back to Mrs. Dorothy, on"
+        },
+        {
+          "audio_seconds": 20.9,
+          "seen_seconds": 51.53545009998343,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back to Mrs. Dorothy, only"
+        },
+        {
+          "audio_seconds": 21.1,
+          "seen_seconds": 51.93134005998727,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back to Mrs. Dorothy, only rem"
+        },
+        {
+          "audio_seconds": 21.3,
+          "seen_seconds": 52.35170181198337,
+          "text": "And wilder left too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back to Mrs. Dorothy, only remarking"
+        }
+      ],
+      "final": "and Wylder laughed too, more suddenly and noisily than the humor of the joke seemed quite to call for, and glanced a grim look from the corners of his eyes on Lake. But the gallant captain did not seem to perceive it, and after a few seconds more he handed it very innocently back to misses Dorothy, only remarking",
+      "final_seconds": 0.9981717429982382,
+      "final_cpu_seconds": 4.80729044200001,
+      "memory": {
+        "Rss_MiB": 2314.8984375,
+        "Pss_MiB": 2301.7861328125,
+        "Shared_Clean_MiB": 20.04296875,
+        "Private_Dirty_MiB": 2278.921875,
+        "Swap_MiB": 0.0,
+        "peak_Rss_MiB": 2312.765625
+      },
+      "id": "5683-32865-0012",
+      "repeat": 0,
+      "reference": "AND WYLDER LAUGHED TOO MORE SUDDENLY AND NOISILY THAN THE HUMOUR OF THE JOKE SEEMED QUITE TO CALL FOR AND GLANCED A GRIM LOOK FROM THE CORNERS OF HIS EYES ON LAKE BUT THE GALLANT CAPTAIN DID NOT SEEM TO PERCEIVE IT AND AFTER A FEW SECONDS MORE HE HANDED IT VERY INNOCENTLY BACK TO MISSUS DOROTHY ONLY REMARKING",
+      "preview_wer": {
+        "errors": 4,
+        "reference_words": 59
+      },
+      "final_wer": {
+        "errors": 2,
+        "reference_words": 59
+      }
+    }
+  ],
+  "versions": {
+    "python": "3.12.13",
+    "sherpa": "1.13.6",
+    "numpy": "2.5.2",
+    "native_ort": "1.27.1",
+    "python_ort": "1.28.0"
+  },
+  "affinity": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19
+  ],
+  "shared_initializer_bytes": 609509376,
+  "borrowed_weight_buffers": 374
+}

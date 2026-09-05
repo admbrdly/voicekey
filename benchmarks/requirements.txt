@@ -1,0 +1,5 @@
+# Optional isolated benchmark dependencies; not voicekey runtime requirements.
+onnx==1.22.0
+onnxruntime==1.28.0
+kaldi-native-fbank==1.22.3
+numpy==2.5.2
