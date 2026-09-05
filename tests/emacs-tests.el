@@ -19,6 +19,40 @@
 (defun voicekey-test-insert (text &optional operation)
   (voicekey--insert "pin" (or operation "operation") (voicekey-test-expiry) text ""))
 
+(ert-deftest voicekey-persistent-buffer-follows-point-and-inserts-in-background ()
+  (voicekey-test-buffer "section 2\nsection 5\n"
+    (goto-char 10)
+    (voicekey-test-pin)
+    (let ((original (current-buffer)))
+      (should (equal (voicekey--insert "pin" "one" (voicekey-test-expiry) "first" "" nil t) "ok"))
+      (with-temp-buffer
+        (set-window-buffer (selected-window) (current-buffer))
+        (insert "PDF")
+        (let ((pdf (current-buffer)) (position (point)) (window (selected-window)))
+          (should (equal (voicekey--insert "pin" "two" (voicekey-test-expiry) "background" "" nil t) "ok"))
+          (should (eq (current-buffer) pdf))
+          (should (eq (selected-window) window))
+          (should (= (point) position))
+          (should (equal (buffer-string) "PDF"))))
+      (set-window-buffer (selected-window) original)
+      (goto-char (point-min))
+      (forward-line 1)
+      (end-of-line)
+      (should (equal (voicekey--insert "pin" "three" (voicekey-test-expiry) "new section" "" nil t) "ok"))
+      (should (equal (buffer-string) "section 2 first background\nsection 5 new section\n"))
+      (should (assoc "pin" voicekey--pins))
+      (voicekey--unpin "pin")
+      (should-not (assoc "pin" voicekey--pins))
+      (should (string-prefix-p "refused:" (voicekey--insert "pin" "late" (voicekey-test-expiry) "late" "" nil t))))))
+
+(ert-deftest voicekey-persistent-operations-remain-idempotent-with-live-pin ()
+  (voicekey-test-buffer "old"
+    (voicekey-test-pin)
+    (dotimes (_ 2)
+      (should (equal (voicekey--insert "pin" "one" (voicekey-test-expiry) "next" "" nil t) "ok")))
+    (should (assoc "pin" voicekey--pins))
+    (should (equal (buffer-string) "old next"))))
+
 (ert-deftest voicekey-insert-spacing-and-punctuation ()
   (voicekey-test-buffer "old"
     (voicekey-test-pin)

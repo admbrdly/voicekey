@@ -62,6 +62,19 @@ class StreamingConfig:
 
 
 @dataclass
+class PersistentConfig:
+    key: str = ""  # opt in with a dedicated toggle chord
+    vad_model: str = f"{MODELS_DIR}/silero_vad.onnx"
+    pause_seconds: float = 1.2
+    silence_seconds: float = 120.0
+    max_utterance_seconds: float = 30.0
+    pre_roll_seconds: float = 0.3
+    delivery_seconds: float = 5.0
+    polish_min_words: int = 0
+    drop_filler_only: bool = True
+
+
+@dataclass
 class DictationConfig:
     ime: bool = True
     inject: str = "wtype"
@@ -142,6 +155,7 @@ class Config:
     recordings_dir: str = ""
     backend: BackendConfig = field(default_factory=BackendConfig)
     streaming: StreamingConfig = field(default_factory=StreamingConfig)
+    persistent: PersistentConfig = field(default_factory=PersistentConfig)
     dictation: DictationConfig = field(default_factory=DictationConfig)
     polish: PolishConfig = field(default_factory=PolishConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
@@ -241,6 +255,7 @@ def _validate(cfg: Config) -> None:
     cfg.agent_toggle_key = _string(
         "agent_toggle_key", cfg.agent_toggle_key, allow_empty=True
     )
+    cfg.persistent.key = _string("persistent.key", cfg.persistent.key, allow_empty=True)
     cfg.language = _string("language", cfg.language, allow_empty=True)
     cfg.min_seconds = _number("min_seconds", cfg.min_seconds)
     cfg.max_seconds = _number("max_seconds", cfg.max_seconds, minimum=0.1)
@@ -254,6 +269,7 @@ def _validate(cfg: Config) -> None:
             cfg.agent_key,
             cfg.dictate_toggle_key,
             cfg.agent_toggle_key,
+            cfg.persistent.key,
         )
         if key
     ]
@@ -274,6 +290,16 @@ def _validate(cfg: Config) -> None:
             _string(f"backend.{name}", getattr(cfg.backend, name), allow_empty=True),
         )
     cfg.streaming.model_dir = _path("streaming.model_dir", cfg.streaming.model_dir)
+    cfg.persistent.vad_model = _path("persistent.vad_model", cfg.persistent.vad_model)
+    cfg.persistent.polish_min_words = _integer("persistent.polish_min_words", cfg.persistent.polish_min_words)
+    cfg.persistent.drop_filler_only = _boolean("persistent.drop_filler_only", cfg.persistent.drop_filler_only)
+    for name in ("pause_seconds", "silence_seconds", "max_utterance_seconds", "pre_roll_seconds", "delivery_seconds"):
+        setattr(cfg.persistent, name, _number(f"persistent.{name}", getattr(cfg.persistent, name), minimum=0.1))
+    p = cfg.persistent
+    if not p.pre_roll_seconds < p.pause_seconds < p.max_utterance_seconds:
+        raise ConfigError("persistent requires pre_roll_seconds < pause_seconds < max_utterance_seconds")
+    if p.silence_seconds <= p.pause_seconds:
+        raise ConfigError("persistent.silence_seconds must exceed pause_seconds")
 
     cfg.dictation.ime = _boolean("dictation.ime", cfg.dictation.ime)
     cfg.dictation.inject = _string("dictation.inject", cfg.dictation.inject)
@@ -297,6 +323,8 @@ def _validate(cfg: Config) -> None:
         setattr(cfg.pipeline, name, _number(f"pipeline.{name}", getattr(cfg.pipeline, name), minimum=0.1))
     if cfg.pipeline.max_audio_seconds < cfg.max_seconds:
         raise ConfigError("pipeline.max_audio_seconds must be at least max_seconds")
+    if cfg.persistent.key and p.max_utterance_seconds + 4 > cfg.pipeline.max_audio_seconds:
+        raise ConfigError("pipeline.max_audio_seconds must allow a persistent utterance plus 4 seconds")
 
     cfg.agent.target = _string("agent.target", cfg.agent.target)
     if cfg.agent.target not in AGENT_TARGETS:
@@ -408,6 +436,7 @@ def load(path: str | None = None) -> Config:
     for section, target in (
         ("backend", cfg.backend),
         ("streaming", cfg.streaming),
+        ("persistent", cfg.persistent),
         ("dictation", cfg.dictation),
         ("agent", cfg.agent),
         ("pipeline", cfg.pipeline),

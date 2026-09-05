@@ -4,7 +4,7 @@
 (require 'seq)
 (require 'subr-x)
 
-(defconst voicekey--protocol-version 1)
+(defconst voicekey--protocol-version 2)
 (defvar voicekey--pins nil)
 (defvar voicekey--operations nil)
 (defvar voicekey--user-buffer nil)
@@ -64,7 +64,11 @@ alter command-loop behavior. This is the anchor groundwork for persistent mode."
       text
     (concat " " text)))
 
-(defun voicekey--insert (id operation expires text fallback &optional permit)
+(defun voicekey--unpin (id)
+  (setq voicekey--pins (assoc-delete-all id voicekey--pins))
+  "ok")
+
+(defun voicekey--insert (id operation expires text fallback &optional permit keep-pin)
   "Insert once for OPERATION; refuse expiry before any mutation.
 An error after mutation begins is reported as unknown. Buffer text changes
 are grouped atomically; terminal writes cannot be rolled back."
@@ -115,7 +119,7 @@ are grouped atomically; terminal writes cannot be rolled back."
                           "ok")))
                   (error (concat (if started "unknown: " "refused: ")
                                  (error-message-string err)))))))
-        (setq voicekey--pins (assoc-delete-all id voicekey--pins))
+        (unless keep-pin (voicekey--unpin id))
         (setq voicekey--operations
               (cons (list operation answer expires)
                     (seq-take (seq-filter (lambda (item) (> (nth 2 item) (float-time)))

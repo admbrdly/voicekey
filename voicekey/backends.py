@@ -66,6 +66,10 @@ LLAMA_SHA256 = "91d7b03ddae498a39f28fdb85d84d2b4a0fd3838d10b4f897e0ef8975bb9b583
 
 # Single-file downloads (polish models), by file name: URL and SHA-256.
 FILES = {
+    "silero_vad.onnx": (
+        RELEASES + "silero_vad.onnx",
+        "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+    ),
     # S1-mini by Superwhisper, Q4_K_M: Apache 2.0 with a naming clause (the
     # model keeps the name "S1-mini" by "Superwhisper" wherever it is used).
     "s1-mini-q4_k_m.gguf": (
@@ -377,7 +381,7 @@ def ensure_llama() -> None:
 
 
 def predownload(backend: BackendConfig, streaming: StreamingConfig,
-                polish: PolishConfig | None = None) -> None:
+                polish: PolishConfig | None = None, persistent=None) -> None:
     """Fetch model weights without loading them (install step, not first keypress)."""
     if backend.type == "faster-whisper":
         from faster_whisper.utils import download_model
@@ -387,6 +391,8 @@ def predownload(backend: BackendConfig, streaming: StreamingConfig,
         ensure_model(backend.model_dir)
     if streaming.model_dir:
         ensure_model(streaming.model_dir)
+    if persistent is not None and persistent.key:
+        ensure_file(persistent.vad_model)
     if polish is not None and polish.backend != "none" and polish.server.model_file:
         ensure_file(polish.server.model_file)
         if polish.server.command == llama_server_path():

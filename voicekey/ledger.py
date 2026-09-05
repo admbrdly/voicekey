@@ -26,6 +26,8 @@ NEXT = {Stage.CAPTURING: Stage.FINALIZING, Stage.FINALIZING: Stage.TRANSCRIBING,
 @dataclass(frozen=True)
 class Utterance:
     id: str
+    session_id: str = ""
+    sequence: int = 0
     stage: Stage = Stage.CAPTURING
     revision: int = 0
     audio_seconds: float = 0.0
@@ -47,18 +49,28 @@ class Ledger:
         self.history: deque[Utterance] = deque(maxlen=32)
 
     def admit(self, audio_seconds: float, *, retained_audio: float = 0.0,
-              storage_bytes: int = 0, storage_available: float = float("inf")) -> str | None:
+              storage_bytes: int = 0, storage_available: float = float("inf"),
+              session_id: str = "", sequence: int = 0, gated: bool = True) -> str | None:
         with self._lock:
             # Agent dispatch has its own bounded backlog after releasing its
             # gate ownership. It must not consume all dictation admission.
-            if (sum(u.gated for u in self._pending.values()) >= self.max_pending or
+            if (sum(u.gated or bool(u.session_id) for u in self._pending.values()) >= self.max_pending or
                     sum(u.audio_seconds for u in self._pending.values()) + audio_seconds + retained_audio > self.max_audio_seconds):
                 return None
             if sum(u.storage_bytes for u in self._pending.values()) + storage_bytes > storage_available:
                 return None
             identity = uuid.uuid4().hex
-            self._pending[identity] = Utterance(identity, audio_seconds=audio_seconds, storage_bytes=storage_bytes)
+            self._pending[identity] = Utterance(identity, session_id=session_id, sequence=sequence,
+                                               gated=gated, audio_seconds=audio_seconds, storage_bytes=storage_bytes)
             return identity
+
+    def speech(self, identity: str) -> bool:
+        with self._lock:
+            current = self._pending.get(identity)
+            if current is None or current.stage != Stage.CAPTURING:
+                return False
+            self._pending[identity] = replace(current, gated=True)
+            return True
 
     def get(self, identity: str) -> Utterance | None:
         with self._lock:

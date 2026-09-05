@@ -206,6 +206,21 @@ def words(text: str) -> list[str]:
     return [word.strip("'") for word in _WORD.findall(text.lower().replace("’", "'")) if word.strip("'")]
 
 
+def filler_only(text: str) -> bool:
+    """Recognize an utterance made entirely of hesitation/noise interjections.
+
+    Repeated letters cover ASR spellings such as 'errrr' and 'uhhhh'. This is
+    intentionally a narrow text rule: quoted words, digits, non-English text,
+    and hyphenated responses such as 'uh-huh' and 'uh-uh' remain meaningful.
+    It never removes words from an utterance which also contains real text.
+    """
+    if not re.fullmatch(r"[a-zA-Z\s.,!?;:…]+", text):
+        return False
+    tokens = re.findall(r"[a-z]+", text.lower())
+    noises = {"ah", "eh", "er", "erm", "uh", "um", "ugh", "gah", "ach", "ack", "argh", "hm"}
+    return bool(tokens) and all(re.sub(r"(.)\1+", r"\1", token) in noises for token in tokens)
+
+
 def max_tokens_for(text: str) -> int:
     """Room for the cleaned text and no more: a cleanup rarely grows, and a
     model that runs on is stopped here rather than waited for."""

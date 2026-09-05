@@ -8,6 +8,28 @@ from voicekey.config import ConfigError, load
 
 
 class ConfigTests(unittest.TestCase):
+    def test_persistent_settings_and_incompatible_bindings_are_validated(self):
+        cfg = self._load_text('[persistent]\nkey = "KEY_F11"\nsilence_seconds = 90\n')
+        self.assertEqual(cfg.persistent.key, 'KEY_F11')
+        self.assertEqual(cfg.persistent.silence_seconds, 90)
+        self.assertTrue(os.path.isabs(cfg.persistent.vad_model))
+        self.assertEqual(cfg.persistent.polish_min_words, 0)
+        self.assertTrue(cfg.persistent.drop_filler_only)
+        changed = self._load_text('[persistent]\npolish_min_words = 3\ndrop_filler_only = false')
+        self.assertEqual(changed.persistent.polish_min_words, 3)
+        self.assertFalse(changed.persistent.drop_filler_only)
+        for text in ('[persistent]\nkey = "KEY_F9"',
+                     '[persistent]\nsilence_seconds = 0',
+                     '[persistent]\nsilence_seconds = 1',
+                     '[persistent]\nmax_utterance_seconds = 1',
+                     '[persistent]\npause_seconds = "slow"',
+                     '[persistent]\npolish_min_words = -1',
+                     '[persistent]\ndrop_filler_only = "yes"',
+                     '[pipeline]\nmax_audio_seconds = "bad"',
+                     '[persistent]\nunknown = true'):
+            with self.subTest(text=text), self.assertRaises(ConfigError):
+                self._load_text(text)
+
     def _load_text(self, text: str):
         fd, path = tempfile.mkstemp(suffix=".toml")
         try:

@@ -24,6 +24,62 @@ PW_RECORD = [
 ]
 
 
+class AudioBuffer:
+    """Bounded retained PCM with absolute sample indices and retrospective cuts.
+
+    Only references are copied under the lock; concatenation happens outside it.
+    The producer stops on overflow instead of overwriting unconsumed speech.
+    """
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        self.start = self.end = 0
+        self._frames = deque()
+        self._lock = threading.Lock()
+
+    def append(self, frame):
+        with self._lock:
+            take = min(len(frame), self.capacity - (self.end - self.start))
+            if take:
+                self._frames.append((self.end, frame[:take]))
+                self.end += take
+            return take == len(frame)
+
+    def read(self, start=None, end=None):
+        with self._lock:
+            start = self.start if start is None else start
+            end = self.end if end is None else end
+            if not self.start <= start <= end <= self.end:
+                raise ValueError("audio range is no longer retained")
+            frames = [frame[max(0, start - offset):end - offset]
+                      for offset, frame in self._frames if offset < end and offset + len(frame) > start]
+        return np.concatenate(frames) if frames else np.zeros(0, dtype=np.float32)
+
+    def discard_before(self, end):
+        with self._lock:
+            if not self.start <= end <= self.end:
+                raise ValueError("invalid audio cut")
+            while self._frames and self._frames[0][0] + len(self._frames[0][1]) <= end:
+                self._frames.popleft()
+            if self._frames and self._frames[0][0] < end:
+                offset, frame = self._frames.popleft()
+                self._frames.appendleft((end, frame[end - offset:]))
+            self.start = end
+
+
+class CutRecording:
+    """An immutable utterance, accepted by the same finalizer as a recorder."""
+    def __init__(self, samples, *, start=0, reason="pause", failure=""):
+        self.samples = samples
+        self.start_sample = start
+        self.end_sample = start + len(samples)
+        self.reason, self.failure = reason, failure
+
+    def stop(self):
+        if self.failure:
+            raise RecordingError(self.failure, self.samples, len(self.samples) / SAMPLE_RATE)
+        return self.samples, len(self.samples) / SAMPLE_RATE
+
+
 class RecordingError(Exception):
     def __init__(self, message: str, samples=None, duration: float = 0.0):
         super().__init__(message)
@@ -43,6 +99,9 @@ class Recorder:
         self._stderr_thread: threading.Thread | None = None
         self._failure: str | None = None
         self.max_samples: int | None = None
+        self.buffer: AudioBuffer | None = None
+        self._stop_signalled = False
+        self._stop_lock = threading.Lock()
 
     @property
     def active(self) -> bool:
@@ -65,6 +124,7 @@ class Recorder:
         self.frames = []
         self.started = time.monotonic()
         self.stopped_at = None
+        self._stop_signalled = False
         self._failure = None
         self._errors.clear()
         self._stderr_thread = threading.Thread(
@@ -89,7 +149,12 @@ class Recorder:
                 if self.max_samples is not None:
                     frame = frame[:max(0, self.max_samples - count)]
                 count += len(frame)
-                self.frames.append(frame)
+                if self.buffer is None:
+                    self.frames.append(frame)
+                elif not self.buffer.append(frame):
+                    self._failure = "continuous audio buffer full; capture stopped"
+                    self.request_stop()
+                    break
                 try:
                     on_frame(frame)
                 except Exception:
@@ -114,13 +179,15 @@ class Recorder:
 
     def request_stop(self) -> None:
         """Signal promptly at key release; joining and decoding happen elsewhere."""
-        if self.stopped_at is None:
-            self.stopped_at = time.monotonic()
-        if self.proc is not None and self.proc.poll() is None:
-            try:
-                self.proc.send_signal(signal.SIGINT)
-            except ProcessLookupError:
-                pass
+        with self._stop_lock:
+            if self.stopped_at is None:
+                self.stopped_at = time.monotonic()
+            if self.proc is not None and self.proc.poll() is None and not self._stop_signalled:
+                try:
+                    self.proc.send_signal(signal.SIGINT)
+                    self._stop_signalled = True
+                except ProcessLookupError:
+                    pass
 
     def stop(self) -> tuple[np.ndarray, float]:
         """Stop the source; return (samples, duration). Raises RecordingError
@@ -128,7 +195,8 @@ class Recorder:
         assert self.proc is not None and self.thread is not None
         proc, thread = self.proc, self.thread
         duration = self.elapsed
-        failed = proc.poll() not in (None, 0)
+        with self._stop_lock:
+            failed = proc.poll() not in (None, 0) and not self._stop_signalled
         self.request_stop()
         try:
             proc.wait(timeout=2.0)
@@ -146,11 +214,14 @@ class Recorder:
         self.proc = self.thread = None
         stderr = b"".join(self._errors).decode(errors="replace").strip()[-500:]
         frames = tuple(self.frames)
-        samples = np.concatenate(frames) if frames else np.zeros(0, dtype=np.float32)
+        samples = (self.buffer.read() if self.buffer is not None else
+                   np.concatenate(frames) if frames else np.zeros(0, dtype=np.float32))
         if failed or self._failure or thread.is_alive():
+            reason = self._failure or stderr or ("audio reader did not stop" if thread.is_alive()
+                                                  else "audio source exited with nonzero status")
             raise RecordingError(
                 f"{self.argv[0]} exited early (rc={proc.returncode}): "
-                f"{self._failure or stderr or 'audio reader did not stop'}",
+                f"{reason}",
                 samples, duration,
             )
         log.info("recorded %.2fs", duration)

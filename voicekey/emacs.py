@@ -46,7 +46,7 @@ def _lisp_string(text: str) -> str:
 
 def _form(body: str) -> str:
     return (f'(progn (unless (and (boundp \'voicekey--protocol-version) '
-            f'(= voicekey--protocol-version 1)) (load {_lisp_string(LIBRARY)} nil t)) {body})')
+            f'(= voicekey--protocol-version 2)) (load {_lisp_string(LIBRARY)} nil t)) {body})')
 
 
 def _eval(form: str, timeout: float = TIMEOUT) -> str:
@@ -110,12 +110,17 @@ class PendingPin:
 
 
 def insert(text: str, pin_id: str, timeout: float = TIMEOUT, *,
-           operation_id: str | None = None, prefix: str = "", permit: str | None = None) -> None:
+           operation_id: str | None = None, prefix: str = "", permit: str | None = None,
+           keep_pin: bool = False) -> None:
     operation_id = operation_id or secrets.token_hex(16)
     expires = time.time() + max(0, timeout)
     permission = _lisp_string(permit) if permit is not None else "nil"
     body = (f'(voicekey--insert {_lisp_string(pin_id)} {_lisp_string(operation_id)} '
-            f'{expires!r} {_lisp_string(text)} {_lisp_string(prefix)} {permission})')
+            f'{expires!r} {_lisp_string(text)} {_lisp_string(prefix)} {permission} {"t" if keep_pin else "nil"})')
     value = _eval(_form(body), timeout)
     if value != "ok":
         raise EmacsError("Emacs did not confirm insertion")
+
+
+def unpin(pin_id: str) -> None:
+    _eval(_form(f'(voicekey--unpin {_lisp_string(pin_id)})'), 0.25)

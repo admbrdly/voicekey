@@ -48,6 +48,17 @@ class FormatTests(unittest.TestCase):
 
 
 class JudgeTests(unittest.TestCase):
+    def test_filler_only_matches_stretched_noise_but_preserves_meaningful_text(self):
+        for text in ('Um', 'er ach um errrr uhhhh ugh gah', 'Uuuummmm…',
+                     'Ah! Ehh, erm.', 'hmmmm', 'arrrghhh'):
+            with self.subTest(text=text):
+                self.assertTrue(polish.filler_only(text))
+        for text in ('', '...', 'No.', 'Yes.', 'I disagree.', 'Do not publish.',
+                     'uh-huh', 'uh-uh', 'um 42', 'um 你好', '"um"', '“um”',
+                     'The word is um.', 'Ugh, this is wrong.', 'early', 'grammar'):
+            with self.subTest(text=text):
+                self.assertFalse(polish.filler_only(text))
+
     def test_a_cleanup_can_remove_corrections_and_fillers(self):
         raw = "so um i need to like send the the report by uh friday no wait make that thursday"
         self.assertIsNone(judge(raw, Reply("I need to send the report by Thursday.", True)))

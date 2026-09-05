@@ -24,6 +24,9 @@ from .ime import ImeUnavailable, InputMethod
 from .listener import KeyboardListener
 from .notify import notify
 from .pipeline import Pipeline
+from .persistent import PersistentSession
+from .segment import SpeechDetector
+from .work import Slot
 from .recorder import Recorder
 from .spacing import owed
 from .target import LABEL, ClipboardTarget, NotifyPreview, Window
@@ -64,9 +67,14 @@ class Daemon:
         for chord, action in ((cfg.dictate_toggle_key, "dictate"), (cfg.agent_toggle_key, "agent")):
             if chord:
                 self.actions[_key_chord(chord)] = (action, TOGGLE)
+        if cfg.persistent.key:
+            self.actions[_key_chord(cfg.persistent.key)] = ("persistent", TOGGLE)
         self.recorder_factory = recorder_factory
         self.recorder = recorder_factory()
         self.session = None
+        self.persistent = None
+        self.vad = None
+        self._vad_slot = Slot("speech-detector")
         self.pressed = {}
         self.backend = self.streaming = self.ime = self.polisher = self.polish_server = None
         self.backend_error = None
@@ -89,6 +97,11 @@ class Daemon:
             log.exception("transcription backend failed to load")
         if self.backend_error:
             notify("voicekey: transcription unavailable", self.backend_error, error=True)
+        if self.cfg.persistent.key:
+            try:
+                self.vad = SpeechDetector(self.cfg.persistent.vad_model)
+            except Exception as exc:
+                notify("voicekey: persistent mode unavailable", str(exc), error=True)
         try:
             self.streaming = create_streaming(self.cfg.streaming)
         except BackendUnavailable as exc:
@@ -121,6 +134,8 @@ class Daemon:
             return
         self._closed = self._stopping = True
         try:
+            if self.persistent is not None:
+                self.persistent.close()
             if self.session is not None:
                 self._finish()
             self.pipeline.close()
@@ -154,13 +169,17 @@ class Daemon:
         return [f"{key}={action}({behavior})" for key, action, behavior in (
             (self.cfg.dictate_key, "dictate", HOLD), (self.cfg.agent_key, "agent", HOLD),
             (self.cfg.dictate_toggle_key, "dictate", TOGGLE),
-            (self.cfg.agent_toggle_key, "agent", TOGGLE)) if key]
+            (self.cfg.agent_toggle_key, "agent", TOGGLE),
+            (self.cfg.persistent.key, "persistent", TOGGLE)) if key]
 
     def replay(self, path, action="dictate"):
         self.gate.open()
         self.recorder = Recorder([sys.executable, "-m", "voicekey.replay", path])
-        self._start("replay", frozenset(), HOLD, action, "replaying")
-        while self.session is not None:
+        if action == "persistent":
+            self._start_persistent("replay", frozenset(), self.recorder)
+        else:
+            self._start("replay", frozenset(), HOLD, action, "replaying")
+        while self.session is not None or self.persistent is not None:
             self._on_tick()
             time.sleep(0.02)
         while self.pipeline.ledger.busy:
@@ -188,12 +207,44 @@ class Daemon:
             log.warning("ambiguous dictation chord")
             return
         chord, (action, behavior) = matches[0]
+        if self.persistent is not None:
+            if self.persistent.done.is_set():
+                self._live_session = self.persistent.last_live or self._live_session
+                self.persistent = None
+            else:
+                if action == "persistent":
+                    self.persistent.request_stop()
+                return
         if session is not None:
             if behavior == TOGGLE and chord == session.chord and device == session.device:
                 self._finish()
             return
+        if action == "persistent":
+            self._start_persistent(device, chord)
+            return
         self._start(device, chord, behavior, action,
                     "press again to stop" if behavior == TOGGLE else "release to stop")
+
+    def _start_persistent(self, device, chord, recorder=None):
+        if self.vad is None or self.backend is None or self._vad_slot.busy:
+            notify("voicekey: persistent mode unavailable", "speech models unavailable or a detector call is still running", error=True)
+            return
+        # A new session cannot share the previous gesture's decoder or preview.
+        if self.pipeline.ledger.busy or self._live_session is not None and self._live_session.stuck:
+            notify("voicekey: busy", "let pending dictation finish before starting persistent mode", error=True)
+            return
+        session = PersistentSession(self.cfg, self.pipeline, recorder or self.recorder_factory(),
+            lambda: target_mod.bind(self.ime, self.cfg.dictation, False), self.vad, self._vad_slot,
+            self.streaming, device=device, chord=chord)
+        self.persistent = session
+        try:
+            if not session.start():
+                self.persistent = None
+                notify("voicekey: busy", "pending work or recovery storage is full", error=True)
+        except Exception as exc:
+            self.persistent = None
+            self._settle_gate()
+            notify("voicekey: persistent capture failed", str(exc), error=True)
 
     def _start(self, device, chord, behavior, action, instruction):
         identity = self.pipeline.admit()
@@ -248,6 +299,8 @@ class Daemon:
 
     def _on_device_lost(self, device):
         self.pressed.pop(device, None)
+        if self.persistent is not None and device == self.persistent.device:
+            self.persistent.request_stop("keyboard disconnected", paused=True)
         if self.session is not None and device == self.session.device:
             notify("voicekey", "keyboard disconnected; preserving the recording", error=True)
             self._finish()
@@ -260,6 +313,11 @@ class Daemon:
 
     def _on_tick(self):
         self._settle_gate()  # retry a shared lock which was occupied at key-down
+        if self.persistent is not None:
+            self.persistent.tick()
+            if self.persistent.done.is_set():
+                self._live_session = self.persistent.last_live or self._live_session
+                self.persistent = None
         if self.session is None:
             return
         if self.recorder.finished or self.recorder.elapsed >= self.cfg.max_seconds:

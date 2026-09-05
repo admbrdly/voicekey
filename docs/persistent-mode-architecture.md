@@ -1,10 +1,9 @@
-# Persistent mode: architecture and repaired foundation
+# Persistent mode: architecture and implementation
 
-Updated 2026-09-05 after [the architecture audit](audit-2026-09-05.md).
-This replaces the earlier architecture's proposed contracts. Persistent
-listening is **not implemented**. The hold-to-talk repairs below are built;
-segmentation and continuous sessions remain to be implemented. The earlier
-feasibility study is historical context.
+Updated 2026-09-06 after implementing continuous capture, segmentation,
+session previews, ordered delivery and the persistent controller on top of
+the [audited foundation](audit-2026-09-05.md). Persistent listening is now
+implemented. The earlier feasibility study is historical context.
 
 **Preview decision (2026-09-05).** Use native Wayland preedit in Emacs as well
 as other supported applications. Keep the shared path as the default for
@@ -12,47 +11,77 @@ persistent mode. The initial writing workflow assumes that pending text can
 finish before point moves; buffer-attached overlays, per-utterance anchors and
 editing committed regions are optional later work, justified by actual use.
 
+**Silence decision (2026-09-05).** A configurable period without detected
+speech turns persistent mode fully off. Resuming requires an explicit start;
+speech or a focus change cannot restart the microphone after this timeout.
+Measure silence from the audio's last detected speech (or session start before
+any speech), independently of transcription and insertion delays. This is a
+separate, longer threshold from the pause that ends an utterance. Initial
+defaults are 1.2 seconds to end an utterance and 120 seconds to turn listening
+off; pending work receives bounded drain and preservation when capture stops.
+
+**Key decision (2026-09-06).** F11 starts and stops the desktop's persistent
+session. Releasing the key does nothing. Escape retains its normal editing
+role. The laptop binding remains a separate per-host choice.
+
 ## Handoff for the next session
 
-This is the current implementation plan. Start with **continuous capture and
-pause segmentation**, then follow [Next work](#next-work) below. The older
-`persistent-mode.md` and the audit's original work order are historical context.
+The first working persistent mode is built. Spend the next few days using F11
+for ordinary writing and record concrete problems before making more changes.
+Configure and measure the laptop separately when its binding is chosen.
+The older `persistent-mode.md` and the audit's original work order are
+historical context.
 
-The last verified state (2026-09-05) passes **199 Python tests**, including a
-batch run of **15 Emacs editor tests** and a private-server binding test:
+The implementation passes **227 Python tests**, including a batch run of
+**17 Emacs editor tests** and a private-server binding test:
 
 ```sh
 ~/.local/share/voicekey/venv/bin/python -m unittest discover -q
 ```
 
-The suite needs localhost sockets. Its editor checks use batch/private Emacs,
-not the user's live server. The daemon and local polish server were restarted
-successfully after restoring shared Wayland previews. Hold/toggle dictation
-works through the repaired pipeline; neither existing toggle key is persistent
-listening. Polish skips dictations under eight words by default.
+The suite needs localhost sockets. Editor checks use batch/private Emacs,
+not the user's live server. Existing hold/toggle keys retain their behavior;
+the dedicated `[persistent] key` enables continuous listening. Quick dictation
+skips polish below eight words; persistent mode defaults to polishing every
+meaningful utterance and dropping filler-only utterances with raw text retained.
 
-The main entry points and remaining one-recording assumptions are:
+The desktop configuration now uses F11, niri reserves that key, and the
+checksum-verified Silero model is installed. The service was restarted after
+an idle dictation gap and verified active with
+`KEY_F11=persistent(toggle)` in its startup log. It starts with capture off.
 
-- `recorder.py`: buffers until `stop()`; add sample-indexed cuts while the
-  capture process continues, with bounded retained audio and silence handling.
-- `capture.py`: `Session` currently owns one gesture's live decoder; arrange
-  decoder rollover and suffix replay at utterance boundaries.
-- `pipeline.py`: `_finalize` currently stops the recorder for every job; allow
-  an already-cut utterance to enter the same downstream pipeline.
-- `ledger.py`: lifecycle and admission are built; session grouping and a
-  combined rendering of all pending utterances are still missing.
-- `target.py` and `voicekey.el`: targets/previews close after one delivery,
-  and Emacs consumes its pin on insertion. Separate the continuous session's
-  binding/preview lifetime from each utterance's delivery attempt. This does
-  not require overlays or per-utterance cursor markers.
-- `daemon.py` and `config.py`: add the dedicated persistent binding, controller
-  states, visible microphone status, focus/silence policy and bounded drain.
+The implementation entry points are:
 
-The first acceptance milestone is a paced WAV containing several utterances:
-capture stays on across cuts, audio ownership is accounted for, live text keeps
-up while earlier text finishes, commits stay ordered, and stopping preserves
-pending work. Then test actual dictation before tuning pause thresholds. Keep
-hold/toggle behavior covered throughout.
+- `recorder.py`: `AudioBuffer` retains bounded PCM with absolute sample
+  indices; `CutRecording` passes an extracted utterance to the existing finalizer.
+- `segment.py`: Silero classification, separate pause/idle thresholds,
+  retrospective cuts, pre-roll and exact maximum-length boundaries. The
+  detector is independent of the optional live recognizer.
+- `persistent.py`: one continuous capture owner, decoder rollover with suffix
+  replay, admission before cuts, silence disposal, stop and bounded drain.
+  Each capture reservation includes four seconds for processing lag.
+- `ledger.py` and `pipeline.py`: session IDs and utterance order, per-utterance
+  gate ownership, ordinary FIFO processing, and per-session expiry at stop.
+  Persistent queue age does not trigger quick dictation's insertion deadline;
+  each individual worker/delivery operation remains bounded.
+- `session_target.py`: one session preview renders every pending utterance at
+  its best tier. Delivery attempts remain single-use. Generic commits carry
+  the newer provisional tail in the same protocol transaction. Emacs clears
+  the preview, inserts through its retained pin, then renders the current tail.
+- `voicekey.el`: protocol version 2 supports retaining and explicitly releasing
+  a session pin, while each insertion keeps its own expiring operation ID.
+- `daemon.py` and `config.py`: dedicated toggle binding, microphone status and
+  conservative focus/failure handling. Pauses stop capture and require a new
+  explicit start; there is no automatic resume in this first implementation.
+
+A real-model replay on the desktop processed 19.87 seconds of packaged speech
+and silence in 19.93 seconds, producing two ordered commits and 27 preview
+updates. Commits arrived about 1.05 and 0.98 seconds after their audio cuts.
+The isolated process peaked at about 1.74 GiB RSS and used 50.0 CPU-seconds
+during replay. This used the actual Silero, Parakeet and streaming models,
+an isolated destination, and no polish; it is not a live compositor test or
+a measurement of the user's dictation quality. The replay accounted for all
+317,920 samples as utterance audio or explicitly discarded silence.
 
 ## What is built
 
@@ -74,7 +103,12 @@ utterance. Admission is bounded across capture, transcription and dictation;
 agent dispatch has a separate bounded backlog so it cannot exhaust dictation
 slots. Every dictation traverses the polish queue, including ones that skip
 the model, so a short dictation cannot overtake an earlier long one. The default
-polish threshold is eight words; `min_words = 0` disables that threshold.
+quick-mode polish threshold is eight words; `min_words = 0` disables that
+threshold. Persistent mode uses its own `polish_min_words`, default zero.
+Its configurable filler-only rule produces a journalled empty final tier and
+a queued drop, with no insertion attempt. Preview rendering respects that
+empty final tier instead of falling back to the raw filler. Empty model replies
+for content-bearing input remain rejected.
 
 The ledger does no I/O. It returns immutable snapshots under a short lock;
 workers perform journal and target operations outside that lock. A delivery
@@ -138,9 +172,19 @@ and therefore does not redirect this tracking state. Batch tests exercise
 normal, insert and visual state, operator/block refusal, narrowing, killed and
 read-only buffers, cancellation, expiry, duplicate operations and hook failure.
 
-The initial persistent mode will keep a buffer pin and insert at point when
-each commit executes, as hold-to-talk does. The user normally waits for pending
-text before moving point. Per-utterance markers are not a prerequisite.
+**Buffer and point decision (reaffirmed 2026-09-05).** The persistent session
+keeps its original Emacs buffer binding and follows point within that buffer.
+For example: start in section 2, switch to a PDF, and continue dictating into
+section 2 in the background. Return to the bound buffer and click in section
+5; subsequent commits follow point there without restarting the session.
+Selecting another application or another Emacs buffer does not retarget the
+session. Background insertion must leave the user's selected window and
+buffer alone after the operation.
+
+Insertion uses point when each commit executes, as hold-to-talk does. The
+existing workflow assumes the user lets pending text finish before moving
+point: queued text is not anchored to the position where it was spoken.
+Per-utterance markers are not a prerequisite.
 If later editing needs them, a marker planted by a helper records point when
 that helper executes, not at an earlier audio cut. The existing marker spike
 verifies that insertion-type `t` preserves order at a shared position. Exact
@@ -182,7 +226,7 @@ closed with bounded cleanup. New sessions get new IDs. Old uncertain attempts
 are never automatically replayed. Agent commands also check the operation's
 cancellation/deadline before each external command.
 
-## Persistent mode contract, still to implement
+## Persistent mode contract
 
 The user explicitly enables a continuous session with a dedicated key.
 VAD-driven pauses create utterances that use the same lifecycle and delivery
@@ -196,6 +240,8 @@ The additional contracts are:
    utterance ID and revision. Stop/drain revokes authority for later updates.
    Mode state is separate from target availability and stage progress. A
    pinned Emacs buffer remains available when another application gains focus.
+   The session follows point movement within that buffer; switching to a
+   different buffer does not change the bound destination.
 2. **Sample ownership.** Cuts use absolute sample indices. Account for samples
    assigned to utterances and explicitly discarded no-speech silence. A
    retrospective pause cut needs retained suffix frames so the new live
@@ -216,8 +262,10 @@ The additional contracts are:
    A verified editor anchor supports continuing while focus moves elsewhere.
 6. **Microphone policy.** Distinguish armed/capturing, holding, paused and off.
    Automatic resume is permitted only while the user has left the session
-   armed, and is announced. Explicit off and daemon restart never turn the
-   microphone on. Absence and no-speech limits must be specified independently.
+   armed, and is announced. Explicit off, the configurable no-speech timeout
+   and daemon restart require an explicit start before capture can resume.
+   Measure the no-speech timeout from detected speech, not text insertion.
+   Target absence and no-speech limits are independent.
 7. **Voice commands.** Deterministic matching precedes polish. Newline and
    paragraph insertion can use ordinary text. `scratch that` requires verified
    replacement capability; unsupported targets must report that limitation
@@ -230,25 +278,21 @@ The additional contracts are:
 
 ## Next work
 
-1. Build continuous capture and sample-indexed segmentation against paced WAV
-   fixtures and a fake VAD. Assert coverage, retrospective suffix replay and
-   hard cuts under decode lag.
-2. Extend the current per-recording ledger and preview ownership into one
-   continuous session with several utterances. Render pending raw/final text
-   and current live text together through the shared Wayland preview. Keep
-   ordered commits and recovery while the next utterance records. Emacs keeps
-   its pinned final insertion; test preview clearing and tail updates across
-   that handoff.
-3. Add the persistent controller with explicit armed/pause/off policy and
-   target availability. Test overload, lost keyboards, failed capture, dead
-   targets, stale results and stop during drain.
-4. Exercise the complete mode with paced WAV fixtures, then measure real
-   latency, CPU, memory, silence cuts and paper-dictation quality on both
-   machines. This is the first working persistent-mode milestone.
-5. Revisit editor overlays, per-utterance anchors, voice editing commands,
-   additional providers or paragraph rewriting only as use demonstrates need.
+1. Exercise F11 with actual paper dictation, including background Emacs
+   insertion while reading a PDF and moving point after pending text lands.
+   Tune pause/silence thresholds and measure latency with polish enabled.
+2. Configure a dedicated laptop chord and measure its CPU, memory, latency and
+   speech boundaries. The desktop replay does not establish laptop behavior.
+3. Revisit editor overlays if preview continuity across focus changes matters.
+   Native previews stay bound to their original activation; notification
+   previews take over for the rest of an Emacs session after deactivation.
+4. Add voice editing commands, per-utterance anchors, additional polish
+   providers or paragraph rewriting only as actual use demonstrates need.
 
-The existing deterministic tests cover the repaired lifecycle and a full WAV
-capture-to-fake-target run. CI runs the Python suite and batch/private-server
-Emacs tests. Real compositor/application behavior and speech-model accuracy
-remain integration measurements, not conclusions inferred from mocked tests.
+The deterministic suite covers continuous paced WAV capture, sample ownership,
+hard cuts and suffix replay, ordered commits and combined previews, idle gate
+release, silence shutoff, overload, dead targets, VAD timeout, stop during drain
+and late-result suppression. Batch Emacs exercises repeated insertion through
+one pin, background delivery and cursor movement within the pinned buffer.
+CI runs the Python suite and batch/private-server Emacs tests. Real desktop
+behavior and model accuracy remain separate integration measurements.

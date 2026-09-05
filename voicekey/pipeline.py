@@ -43,6 +43,8 @@ class Job:
     final: str = ""
     polish_deadline: float = 0.0
     failure: str = ""
+    session_id: str = ""
+    drop_reason: str = ""
 
 
 class Pipeline:
@@ -67,12 +69,13 @@ class Pipeline:
         self._threads = []
         self._items = {}
         self._recorders = {}
+        self._session_deadlines = {}
         self._stalled_audio = 0.0
         self._stalled_corpus_audio = 0.0
         self._items_lock = threading.Lock()
         self._slots = {name: Slot(name) for name in ("transcribe", "polish", "deliver", "agent", "corpus")}
         self._journal_slots = {name: Slot("journal-" + name) for name in
-                               ("startup", "capture", "transcribe", "polish", "deliver", "agent", "close")}
+                               ("startup", "capture", "transcribe", "polish", "deliver", "agent", "close", "session")}
         self._send_agent = send_agent or (lambda text: agent.send_prompt(
             cfg.agent, text, cancelled=self._closed,
             deadline=min(self._stop_at, time.monotonic() + cfg.agent.ready_timeout)))
@@ -94,13 +97,56 @@ class Pipeline:
             thread.start()
             self._threads.append(thread)
 
-    def admit(self):
+    def admit(self, *, audio_seconds=None, session_id="", sequence=0, gated=True):
         if not self._accepting or self._storage_failed or self._slots["transcribe"].busy and not self.ledger.gated:
             return None
         retained = self._stalled_audio if self._slots["transcribe"].busy else 0.0
         retained += self._stalled_corpus_audio if self._slots["corpus"].busy else 0.0
-        return self.ledger.admit(self.cfg.max_seconds, retained_audio=retained,
-                                 storage_bytes=self._disk_reservation, storage_available=self.journal.available)
+        seconds = self.cfg.max_seconds if audio_seconds is None else audio_seconds
+        return self.ledger.admit(seconds, retained_audio=retained,
+                                 storage_bytes=int(seconds * 32000) + TEXT_RESERVE,
+                                 storage_available=self.journal.available, session_id=session_id,
+                                 sequence=sequence, gated=gated)
+
+    def stop_session(self, identity, deadline):
+        with self._items_lock:
+            self._session_deadlines[identity] = deadline
+
+    def forget_session(self, identity):
+        with self._items_lock:
+            self._session_deadlines.pop(identity, None)
+
+    def _deadline(self, job):
+        with self._items_lock:
+            return min(job.deadline, self._stop_at,
+                       self._session_deadlines.get(job.session_id, float("inf")))
+
+    def expire_session(self, session_id):
+        """Preserve one stopped session and revoke its remaining attempts."""
+        identities = {u.id for u in self.ledger.snapshots() if u.session_id == session_id}
+        with self._items_lock:
+            items = [self._items[i] for i in identities if i in self._items]
+            recorders = {i: self._recorders[i] for i in identities if i in self._recorders}
+        for item in items:
+            item.target.cancel()
+        def preserve():
+            for item in items:
+                self.journal.revoke(item.id)
+                source = recorders.get(item.id)
+                if source is not None:
+                    self.journal.capture(item.id, source.samples, getattr(item, "text", ""))
+                current = self.ledger.get(item.id)
+                self.journal.append(item.id, "shutdown", disposition="unknown" if current and
+                                    current.stage == Stage.DELIVERING else "saved")
+        self._save("session", preserve)
+        for identity in identities:
+            current = self.ledger.get(identity)
+            self.ledger.complete(identity, "unknown" if current and current.stage == Stage.DELIVERING else "saved")
+        with self._items_lock:
+            for identity in identities:
+                self._items.pop(identity, None)
+                self._recorders.pop(identity, None)
+        self.settled()
 
     def submit(self, session, recorder, finished_at):
         if self.ledger.transition(session.id, Stage.CAPTURING, Stage.FINALIZING):
@@ -159,6 +205,8 @@ class Pipeline:
             except Exception:
                 pass  # outcome is saved; the storage error already disabled new admission
         finally:
+            if job.session_id:
+                job.target.completed(outcome)
             job.target.clear()
             self.ledger.complete(job.id, str(outcome))
             log.info("%s outcome=%s", job.id, outcome)
@@ -174,7 +222,7 @@ class Pipeline:
         except RecordingError as exc:
             samples, duration, failure = exc.samples, exc.duration, str(exc)
         # A deliberate tap is the only discarded audio path.
-        if duration < self.cfg.min_seconds and not failure:
+        if duration < self.cfg.min_seconds and not failure and not getattr(session, "session_id", ""):
             session.cancel()
             session.target.clear()
             self.ledger.complete(session.id, "dropped")
@@ -183,13 +231,20 @@ class Pipeline:
                 self._recorders.pop(session.id, None)
             return
         self._save("capture", lambda: self.journal.capture(session.id, samples, session.text))
+        session_id = getattr(session, "session_id", "")
+        if session_id:
+            self._save("capture", lambda: self.journal.append(session.id, "segment", session_id=session_id,
+                sequence=session.sequence, start_sample=recorder.start_sample,
+                end_sample=recorder.end_sample, reason=recorder.reason))
         with self._items_lock:
             self._recorders.pop(session.id, None)
         session.finish(timeout=min(1.0, max(0, self._stop_at - time.monotonic())))
         deadline = finished_at + (self.cfg.dictation.max_delay_seconds if session.action == "dictate"
                                   else self.cfg.pipeline.transcription_seconds)
+        if session_id:
+            deadline = float("inf")  # queue age does not revoke a persistent binding
         job = Job(session.id, session.action, session.target, samples, finished_at, deadline,
-                  live=session.text, failure=failure)
+                  live=session.text, failure=failure, session_id=session_id)
         if not self.ledger.transition(job.id, Stage.FINALIZING, Stage.TRANSCRIBING,
                                       audio_seconds=len(samples) / 16000, live=session.text, storage_bytes=TEXT_RESERVE):
             return
@@ -202,7 +257,7 @@ class Pipeline:
         try:
             if backend is None:
                 raise RuntimeError("transcription backend unavailable")
-            deadline = min(job.deadline, self._stop_at,
+            deadline = min(self._deadline(job),
                            time.monotonic() + self.cfg.pipeline.transcription_seconds)
             raw = self._slots["transcribe"].call(lambda: backend.transcribe(job.samples), deadline)
             if not isinstance(raw, str) or len(raw.encode()) > MAX_TEXT_BYTES:
@@ -237,9 +292,13 @@ class Pipeline:
     def _polish(self, job):
         final = job.raw
         polisher = self.polisher()
-        deadline = min(job.polish_deadline, self._stop_at)
-        eligible = (job.action == "dictate" and polisher is not None
-                    and len(polish.words(job.raw)) >= self.cfg.polish.min_words)
+        deadline = min(job.polish_deadline, self._deadline(job))
+        drop = bool(job.session_id and self.cfg.persistent.drop_filler_only and polish.filler_only(job.raw))
+        minimum = self.cfg.persistent.polish_min_words if job.session_id else self.cfg.polish.min_words
+        eligible = (not drop and job.action == "dictate" and polisher is not None
+                    and len(polish.words(job.raw)) >= minimum)
+        if drop:
+            final = ""
         if eligible and time.monotonic() < deadline:
             job.target.show(job.raw)
             try:
@@ -261,7 +320,7 @@ class Pipeline:
                 if isinstance(exc, WorkTimeout) and self._slots["corpus"].busy:
                     self._stalled_corpus_audio = len(job.samples) / 16000
                 log.warning("optional recordings corpus unavailable: %s", exc)
-        job = replace(job, final=final, samples=None)
+        job = replace(job, final=final, samples=None, drop_reason="filler-only utterance" if drop else "")
         if not self.ledger.transition(job.id, Stage.POLISHING, Stage.READY, final=final,
                                       audio_seconds=0, gated=job.action == "dictate"):
             return
@@ -273,13 +332,22 @@ class Pipeline:
         (self.agents if job.action == "agent" else self.deliveries).put_nowait(job)
 
     def _deliver(self, job):
+        if job.drop_reason:
+            # Preserve raw/final tiers before a deliberate drop, in queue order.
+            # No insertion attempt, clipboard operation or model-authorized
+            # deletion is involved; meaningful empty replies still fall back.
+            self._complete(job, Outcome.DROPPED, job.drop_reason)
+            return
         attempt = self.ledger.reserve(job.id)
         if attempt is None:
             return
+        deadline = self._deadline(job)
+        if job.session_id:
+            deadline = min(deadline, time.monotonic() + self.cfg.persistent.delivery_seconds)
         self._save("deliver", lambda: self.journal.append(job.id, "delivery-attempt", attempt=attempt,
-                                                          final=job.final, deadline=job.deadline))
+                                                          final=job.final, deadline=deadline))
         job.target.permit = str(self.journal.path(job.id, ".permit"))
-        deadline = min(job.deadline, self._stop_at)
+        deadline = min(deadline, self._deadline(job))
         mark = self.spacing.mark()
         if time.monotonic() >= deadline:
             landing = Landing(reason="dictation expired before delivery")
@@ -311,7 +379,7 @@ class Pipeline:
             job.target.clear()
             outcome = Outcome.SAVED
             self._save("deliver", lambda: self.journal.recover(job.id, job.final))
-            if not self._closed.is_set():
+            if not self._closed.is_set() and not job.session_id:
                 try:
                     inject.copy(job.final)
                     outcome = Outcome.COPIED

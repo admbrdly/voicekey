@@ -22,7 +22,7 @@ a remote polish endpoint or agent explicitly sends text to that endpoint.
   field or prevent focus from changing during typing.
 - **Optional polish pass.** A small language model can clean the transcript
   before it lands: fillers, stutters and self-corrections go, punctuation
-  and numbers can be written out. Dictations below eight words skip polish
+  and numbers can be written out. Quick dictations below eight words skip polish
   for latency. The raw transcript is retained, and is used whenever the model
   is late or its output fails the checks. These checks are heuristics, not a
   guarantee that meaning is preserved.
@@ -125,7 +125,7 @@ the delivery deadline. This orders the requests locally; the two channels
 do not provide an atomic application-level transaction. Losing preview focus
 does not invalidate an acknowledged buffer pin for final insertion.
 
-Shared Wayland previews are also the default for the planned persistent mode.
+Shared Wayland previews are also the default for persistent mode.
 Start with dictation at one position and let pending text finish before moving
 point; Emacs overlays and per-utterance insertion markers can be revisited if
 actual use needs them. To bind the last buffer used through Emacs's command
@@ -165,6 +165,7 @@ modifier alone does not. Mouse movement is not tracked.
 | `recordings_dir` | keep the audio and both transcripts of every recording (off by default) |
 | `[backend]` | final pass: `parakeet` (CPU) or `faster-whisper` (CUDA), and its model |
 | `[streaming] model_dir` | live-preview model; `""` disables the preview |
+| `[persistent]` | dedicated toggle key, speech detector, pause and silence thresholds, utterance and delivery limits |
 | `[dictation] ime` | use the input method for preview and commit (default true) |
 | `[dictation] inject` | without an input method: `wtype` (type it) or `clipboard` (copy it and say so) |
 | `[dictation] max_delay_seconds` | deadline from key release; expired work is saved/copied, outstanding requests may remain uncertain |
@@ -214,8 +215,9 @@ elsewhere. With `format = "instruct"` voicekey sends its own prompt (or
 yours, from `prompt_file`) for a general model that can do more, such as
 LaTeX from a formula described in words.
 
-`min_words = 8` skips the model for short corrections; set it to `0` to try
-polish for every nonempty dictation. A skipped dictation still waits behind
+`min_words = 8` skips the model for short quick-mode corrections; set it to `0`
+to try polish for every nonempty quick dictation. Persistent mode has its own
+`polish_min_words = 0` default. A skipped dictation still waits behind
 earlier dictations, preserving speech order.
 
 Empty or truncated replies, excessive growth or deletion, lost negations or
@@ -262,6 +264,70 @@ configured endpoint. External polish endpoints are tested at their configured
 URL. Transcription, polish and delivery have separate supervised workers;
 a clipboard copy is given three seconds. The polish server's output goes to
 `~/.local/state/voicekey/polish-server.log`.
+
+## Persistent dictation
+
+Set `[persistent] key = "KEY_F11"` (or a dedicated evdev chord), run
+`python -m voicekey --download` to fetch the small Silero speech detector, and
+restart the service. Reserve the key in your compositor, as for F9/F10; for niri:
+
+```kdl
+F11 repeat=false allow-inhibiting=false hotkey-overlay-title="Persistent Dictation" { spawn "true"; }
+```
+
+Press once to listen continuously, and again to stop. Release does nothing;
+Escape remains an ordinary editing key. A persistent notification shows
+whether the microphone is listening, finishing, off or paused. Automatic
+startup never enables the microphone.
+
+Speech pauses of `pause_seconds` (default 1.2) queue an utterance for
+transcription and optional polish while capture continues. Pending text and
+new live text share one preview, and final commits remain in speaking order.
+The speech detector works independently of the optional streaming recognizer.
+Persistent mode sends even short meaningful utterances through the configured
+cleanup model. `[persistent] polish_min_words` controls its threshold separately
+from quick dictation. Whole utterances containing only recognized hesitation or
+noise interjections (um, uh, er, erm, ah, eh, ach, ugh, gah, hmm, and stretched
+spellings such as errrr or uhhhh) are omitted by default. Their raw text and
+the drop reason remain in the journal. Mixed utterances, quoted words and
+hyphenated responses such as uh-huh/uh-uh are not dropped by this rule.
+Set `[persistent] drop_filler_only = false` when dictating literal interjections.
+Empty model replies for meaningful text still fall back to the raw transcript.
+
+`silence_seconds` (default 120) without detected speech turns listening fully
+off; only the key starts another session. `max_utterance_seconds` (default 30)
+forces a cut during uninterrupted speech. All three settings are configurable.
+
+In Emacs, the session stays bound to the buffer where it started. Dictate in
+section 2, read a PDF while dictating into section 2 in the background, then
+return and move point to section 5: subsequent commits follow point there.
+Another Emacs buffer does not become the destination. Let pending text land
+before moving point. Each commit follows the existing Evil insertion gesture.
+Native inline previews depend on the original Wayland activation; after it
+ends, the session uses notification previews while pinned Emacs insertion
+continues. Inline previews return with a new session.
+
+Generic IME fields and `wtype` destinations require their original activation
+or window to remain available. Losing that destination pauses capture and
+preserves pending text; it never redirects the queue to another field. Press
+the key after draining to start a fresh session at the desired destination.
+Clipboard-only targets cannot start persistent dictation.
+
+The queue uses the existing count, audio and recovery limits. A capture slot
+reserves `max_utterance_seconds + 4` seconds of audio, including room for
+processing lag. Long silence retains only a short lookback and does not hold
+the agent coordination lock once earlier utterances are settled. Overload,
+failed storage, lost keyboard or failed capture stops the microphone and
+preserves available speech. There is no automatic resume after a pause.
+
+Queued persistent text does not inherit quick dictation's ten-second age
+limit. Transcription, polish and insertion calls still have finite deadlines.
+Stopping signals the microphone immediately, drains for
+`pipeline.shutdown_seconds`, and saves the remainder without repeatedly
+overwriting the clipboard. Session and ordered utterance IDs appear in the
+recovery journal. A paced WAV can exercise this path with
+`--replay recording.wav --persistent`; this CLI command performs real desktop
+delivery, whereas the automated replay tests use isolated targets.
 
 ## Recovery and limits
 

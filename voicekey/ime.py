@@ -230,11 +230,13 @@ class InputMethod:
         return self._call(clear, timeout=timeout)
 
     def commit(self, text: str, generation: int, *, timeout: float | None = None,
-               owner: str | None = None, prefix: str | None = None, cancelled=None) -> bool:
+               owner: str | None = None, prefix: str | None = None, cancelled=None,
+               tail: str | None = None) -> bool:
         """Insert TEXT in place of the preedit. False if the field went away."""
         deadline = time.monotonic() + (CALL_TIMEOUT if timeout is None else max(0, timeout))
         return self._call(lambda: self._apply(generation, commit=text, deadline=deadline,
-                                             owner=owner, prefix=prefix, cancelled=cancelled), timeout=timeout)
+                                             owner=owner, prefix=prefix, cancelled=cancelled,
+                                             preedit=tail), timeout=timeout)
 
     def replace(self, before: int, text: str, generation: int, *, expected: Snapshot,
                 timeout: float | None = None) -> bool:
@@ -385,6 +387,8 @@ class InputMethod:
         if commit is not None and prefix is not None:
             from .spacing import owed, spaced
             commit = spaced(owed(self.before_cursor(), prefix), commit)
+        if any(value is not None and len(value.encode()) > 4000 for value in (commit, preedit)):
+            return False
         # Text-input state is double-buffered and resets on every commit, so a
         # commit that carries no preedit request *removes* the preedit. Never
         # send an empty preedit string instead: GTK treats "" as a preedit that
@@ -398,7 +402,11 @@ class InputMethod:
             with self._preview_lock:
                 if owner is None or owner == self._preview_owner:
                     self._preview_pending = None
-                    self._preview_text = ""
+                    self._preview_text = preedit or ""
+                    if preedit:
+                        end = len(preedit.encode())
+                        self._im.set_preedit_string(preedit, end, end)
+                        self._shown = preedit
                 else:
                     tail = self._preview_text
                     if tail:

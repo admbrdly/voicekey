@@ -17,6 +17,7 @@ _REPLACE_IDS = {
     "dictate": "91021",
     "agent": "91022",
     "system": "91023",
+    "persistent": "91024",
 }
 _pending: queue.SimpleQueue = queue.SimpleQueue()
 _worker: threading.Thread | None = None

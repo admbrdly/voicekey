@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import wave
@@ -73,6 +74,29 @@ if __name__ == "__main__":
     unittest.main()
 
 class RecorderFailureTests(unittest.TestCase):
+    def test_requested_stop_may_exit_nonzero_before_finalizer_runs(self):
+        source = [PYTHON, '-c', 'import signal,sys,time; '
+                  'signal.signal(signal.SIGINT, lambda *_: sys.exit(1)); '
+                  'sys.stdout.buffer.write(bytes(3200)); sys.stdout.buffer.flush(); time.sleep(30)']
+        ready = threading.Event()
+        recorder = Recorder(source)
+        recorder.start(lambda _: ready.set())
+        self.addCleanup(recorder.abort)
+        self.assertTrue(ready.wait(2))
+        recorder.request_stop()
+        _wait(lambda: recorder.finished)
+        samples, _duration = recorder.stop()
+        self.assertEqual(len(samples), 1600)
+
+    def test_stop_request_after_unexpected_exit_does_not_hide_failure(self):
+        recorder = Recorder([PYTHON, '-c', "import sys; sys.stderr.write('microphone failed'); sys.exit(1)"])
+        recorder.start(lambda _: None)
+        self.addCleanup(recorder.abort)
+        _wait(lambda: recorder.finished)
+        recorder.request_stop()
+        with self.assertRaisesRegex(RecordingError, 'microphone failed'):
+            recorder.stop()
+
     def test_closed_stdout_with_live_child_does_not_hang_stop(self):
         source = [PYTHON, '-c', "import signal,os,time; signal.signal(signal.SIGINT, signal.SIG_IGN); os.close(1); time.sleep(30)"]
         recorder = Recorder(source)

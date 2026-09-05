@@ -19,7 +19,10 @@ def main() -> int:
                              "(stop voicekey.service first: only one input method can be bound)")
     parser.add_argument("--agent", action="store_true",
                         help="with --replay: send the transcript to the agent instead of typing")
+    parser.add_argument("--persistent", action="store_true", help="with --replay: segment and deliver a continuous session")
     args = parser.parse_args()
+    if args.persistent and (not args.replay or args.agent):
+        parser.error("--persistent requires --replay and cannot be combined with --agent")
 
     logging.basicConfig(level=logging.INFO, stream=sys.stderr,
                         format="%(levelname)s %(name)s: %(message)s")
@@ -34,7 +37,7 @@ def main() -> int:
     if args.download:
         from .backends import predownload
         try:
-            predownload(cfg.backend, cfg.streaming, cfg.polish)
+            predownload(cfg.backend, cfg.streaming, cfg.polish, cfg.persistent)
         except Exception as exc:
             print(f"model download failed: {exc}", file=sys.stderr)
             return 1
@@ -52,8 +55,11 @@ def main() -> int:
         if args.replay:
             fix_environment()
             daemon.load()
+            if args.persistent and daemon.vad is None:
+                from .segment import SpeechDetector
+                daemon.vad = SpeechDetector(cfg.persistent.vad_model)
             daemon.start_workers()
-            daemon.replay(args.replay, "agent" if args.agent else "dictate")
+            daemon.replay(args.replay, "persistent" if args.persistent else "agent" if args.agent else "dictate")
         else:
             daemon.run()
     except KeyboardInterrupt:
@@ -83,7 +89,7 @@ def check(cfg) -> int:
     from .polish import PolishError, diagnostic_polisher
 
     fix_environment()
-    key_names = (cfg.dictate_key, cfg.agent_key, cfg.dictate_toggle_key, cfg.agent_toggle_key)
+    key_names = (cfg.dictate_key, cfg.agent_key, cfg.dictate_toggle_key, cfg.agent_toggle_key, cfg.persistent.key)
     chord_key_names = {
         name for chord in key_names if chord for name in key_chord_names(chord)
     }
@@ -99,6 +105,8 @@ def check(cfg) -> int:
     if cfg.dictate_toggle_key or cfg.agent_toggle_key:
         print(f"toggle keys: dictate={cfg.dictate_toggle_key or '(none)'} "
               f"agent={cfg.agent_toggle_key or '(none)'}")
+    if cfg.persistent.key:
+        print(f"persistent key: {cfg.persistent.key}; silence shutoff: {cfg.persistent.silence_seconds:g}s")
     print(f"agent: {cfg.agent.target} transport={cfg.agent.transport} "
           f"tmux session={cfg.agent.tmux_session} cwd={cfg.agent.working_directory}")
     if cfg.agent.transport == "ssh-over-tailscale":
@@ -181,6 +189,10 @@ def check(cfg) -> int:
             print("streaming: OK")
         else:
             print("streaming: disabled (no live preview)")
+        if cfg.persistent.key:
+            from .segment import SpeechDetector
+            SpeechDetector(cfg.persistent.vad_model)
+            print("persistent speech detector: OK")
     except BackendUnavailable as exc:
         print(f"backend unavailable: {exc}", file=sys.stderr)
         return 1

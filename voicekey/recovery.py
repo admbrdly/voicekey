@@ -170,6 +170,11 @@ class Journal:
                 os.fchmod(handle.fileno(), 0o600)
         if event == "outcome":
             self.revoke(identity)
+        if event == "session-closed":
+            # Controller metadata may expire normally. Unresolved utterances
+            # have their own retained records, including session ID and order.
+            with open(self.path(identity, ".done"), "w") as handle:
+                os.fchmod(handle.fileno(), 0o600)
         if event == "outcome" and data.get("outcome") in self.SUCCESS and not data.get("recovery_needed"):
             audio = self.path(identity, ".wav")
             if audio.exists():
