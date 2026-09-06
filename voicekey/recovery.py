@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import tempfile
 import threading
@@ -22,6 +23,7 @@ LAST_RECOVERY = os.path.join(STATE_DIR, "last-recovery.txt")
 
 
 _saving = threading.Lock()
+log = logging.getLogger("voicekey.recovery")
 
 
 def save(text: str) -> str:
@@ -134,16 +136,110 @@ class Journal:
         """Refresh the convenience file; the per-ID journal remains authoritative."""
         destination = self.directory.parent / "last-recovery.txt"
         with self._lock:
-            fd, temporary = tempfile.mkstemp(prefix=".recovery-", dir=destination.parent)
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                    os.fchmod(fd, 0o600)
-                    handle.write(text + "\n")
-                os.replace(temporary, destination)
-            finally:
-                with contextlib.suppress(FileNotFoundError):
-                    os.unlink(temporary)
+            self._write_recovery(destination, text + "\n")
         return str(self.path(identity, ".txt"))
+
+    def recover_interrupted(self) -> list[str]:
+        """At startup, close durable session indexes left by the old process.
+
+        Run before starting capture or delivery workers. This only collects
+        recovery evidence; it never retries an insertion or transcription.
+        """
+        pending = []
+        with self._lock:
+            for path in self.directory.glob("*.jsonl"):
+                entries, _ = self._recovery_records(path)
+                events = {r["event"] for r in entries}
+                if events.intersection({"session-start", "utterance"}) and "session-closed" not in events:
+                    pending.append((path.stat().st_mtime, path.stem))
+        recovered = []
+        # The convenience file should end up holding the most recent session.
+        for _, identity in sorted(pending):
+            path = self.close_session(identity)
+            if path:
+                recovered.append(path)
+        return recovered
+
+    def close_session(self, identity: str) -> str | None:
+        """Collect unresolved utterances from durable records in spoken order."""
+        with self._lock:
+            parts = []
+            manifest = self.path(identity, ".jsonl")
+            entries, damaged = self._recovery_records(manifest) if manifest.exists() else ([], False)
+            if damaged:
+                parts.append((-1, f"[Incomplete session journal; inspect {manifest} before pasting.]"))
+            utterances = {r["utterance_id"]: r["sequence"] for r in entries if r["event"] == "utterance"}
+            for utterance_id, sequence in utterances.items():
+                self.revoke(utterance_id)
+                path = self.path(utterance_id, ".jsonl")
+                if not path.exists():
+                    continue  # successful history may already have expired
+                records, damaged = self._recovery_records(path)
+                if damaged:
+                    parts.append((sequence, f"[Incomplete utterance journal; inspect {path} before pasting. "
+                                  f"Audio, if retained: {path.with_suffix('.wav')}]"))
+                    continue
+                outcome = next((r.get("outcome") for r in reversed(records)
+                                if r["event"] == "outcome"), None)
+                if outcome in self.SUCCESS:
+                    continue
+                text = ""
+                for key in ("final", "raw", "live"):
+                    text = next((r[key] for r in reversed(records) if r.get(key)), "")
+                    if text:
+                        break
+                uncertain = outcome == "unknown" or (outcome is None and any(
+                    r["event"] == "delivery-attempt" for r in records)) or any(
+                    r.get("disposition") == "unknown" for r in records)
+                if not text:
+                    text = f"[Audio awaiting recovery: {path.with_suffix('.wav')}]"
+                if uncertain:
+                    text = "[Delivery uncertain; check the destination before pasting.]\n" + text
+                parts.append((sequence, text))
+            destination = None
+            if parts:
+                text = "\n\n".join(text for _, text in sorted(parts)) + "\n"
+                destination = self.path(identity, ".recovery.txt")
+                self._write_recovery(destination, text)
+                self._write_recovery(self.directory.parent / "last-recovery.txt", text)
+                self.available -= len(text.encode())
+            self._append(identity, "session-closed", recovery=str(destination) if destination else "")
+            return str(destination) if destination else None
+
+    @staticmethod
+    def _recovery_records(path):
+        """A damaged record must not prevent recovery of other utterances.
+
+        Keep the original file intact and make incompleteness explicit in the
+        summary. Actual filesystem errors still propagate to storage handling.
+        """
+        records, damaged = [], False
+        for number, line in enumerate(path.read_text(errors="replace").splitlines(), 1):
+            try:
+                record = json.loads(line)
+                if not isinstance(record, dict) or not isinstance(record.get("event"), str):
+                    raise ValueError("invalid journal record")
+                if record["event"] == "utterance" and (
+                        not isinstance(record.get("utterance_id"), str)
+                        or not isinstance(record.get("sequence"), int)):
+                    raise ValueError("invalid utterance reference")
+                records.append(record)
+            except ValueError as exc:
+                damaged = True
+                log.warning("recovery record %s:%d is unreadable: %s", path, number, exc)
+        return records, damaged
+
+    @staticmethod
+    def _write_recovery(destination, text):
+        fd, temporary = tempfile.mkstemp(prefix=".recovery-", dir=destination.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                os.fchmod(fd, 0o600)
+                handle.write(text)
+            os.replace(temporary, destination)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary)
 
     def revoke(self, identity: str) -> None:
         self.path(identity, ".permit").unlink(missing_ok=True)
@@ -152,9 +248,16 @@ class Journal:
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         entry = {"id": identity, "event": event, "time": time.time(), **data}
         encoded = json.dumps(entry, ensure_ascii=False) + "\n"
-        with open(self.path(identity, ".jsonl"), "a", encoding="utf-8") as handle:
+        with open(self.path(identity, ".jsonl"), "a+b") as handle:
             os.fchmod(handle.fileno(), 0o600)
-            handle.write(encoded)
+            # A crash can leave the previous line unterminated. Separate it
+            # from new events so a recovery close marker remains readable.
+            if handle.tell():
+                handle.seek(-1, os.SEEK_END)
+                if handle.read(1) != b"\n":
+                    handle.write(b"\n")
+                    self.available -= 1
+            handle.write(encoded.encode())
         self.available -= len(encoded.encode())
         # This is a readable append-only companion, not a second mutable truth.
         with open(self.path(identity, ".txt"), "a", encoding="utf-8") as handle:
@@ -165,12 +268,14 @@ class Journal:
                     readable += f"{key}: {value}\n"
             handle.write(readable)
         self.available -= len(readable.encode())
+        if event == "segment":
+            self._append(data["session_id"], "utterance", utterance_id=identity, sequence=data["sequence"])
         if event == "delivery-attempt":
             with open(self.path(identity, ".permit"), "w") as handle:
                 os.fchmod(handle.fileno(), 0o600)
         if event == "outcome":
             self.revoke(identity)
-        if event == "session-closed":
+        if event == "session-closed" and not data.get("recovery"):
             # Controller metadata may expire normally. Unresolved utterances
             # have their own retained records, including session ID and order.
             with open(self.path(identity, ".done"), "w") as handle:

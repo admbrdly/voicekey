@@ -84,6 +84,20 @@ class SessionTargetTests(unittest.TestCase):
         self.ledger.live(identity, text)
         return identity
 
+    def test_empty_notification_preview_is_silent_and_can_show_later_text(self):
+        shared = SessionTarget('session', EmacsTarget(NotifyPreview('dictate'),
+            Window(7, True), 'emacs', Mock(id='pin', valid=True)), self.ledger)
+        with patch('voicekey.target.notify') as notify:
+            shared.render()
+            notify.assert_not_called()
+            first = self.entry('Hello')
+            shared.render()
+            self.assertEqual(notify.call_args.args[1], 'Hello')
+            notify.reset_mock()
+            self.ledger.complete(first, 'confirmed')
+            shared.render()
+            notify.assert_not_called()
+
     def test_repeated_commits_keep_newer_pending_preview_in_same_protocol_transaction(self):
         binding = ImeTarget(self.ime, 1, Window(7, True), 'browser')
         shared = SessionTarget('session', binding, self.ledger)
@@ -179,6 +193,13 @@ class ControlledRecorder:
     def request_stop(self):
         self.finished = True
 
+    def abort(self):
+        self.request_stop()
+        try:
+            self.stop()
+        except RecordingError:
+            pass
+
     def stop(self):
         self.active = False
         samples = self.buffer.read()
@@ -220,6 +241,7 @@ class PersistentTests(unittest.TestCase):
             self.binding, self.vad, Slot('test-vad'), None, device='keyboard', chord=frozenset({ecodes.KEY_F11}))
         self.addCleanup(self.session.close)
         self.assertTrue(self.session.start())
+        wait_for(lambda: self.session.ready.is_set() or self.session.done.is_set())
         return self.session
 
     def speak(self):
@@ -229,6 +251,259 @@ class PersistentTests(unittest.TestCase):
     def finish(self):
         self.session.request_stop()
         self.assertTrue(self.session.done.wait(5))
+
+    def test_failed_binding_aborts_early_audio_without_flush_or_recovery(self):
+        from voicekey.target import ClipboardTarget
+        def bind():
+            self.assertTrue(self.recorder.active)
+            self.recorder.push(np.ones(6400, dtype=np.float32) * .2)
+            return ClipboardTarget(NotifyPreview('dictate'), Window(None, True), None)
+        self.binding = bind
+        with patch.object(self.recorder, 'abort', wraps=self.recorder.abort) as abort, \
+                patch.object(PersistentSession, '_flush') as flush:
+            self.start()
+            self.assertTrue(self.session.done.wait(2))
+        abort.assert_called_once()
+        flush.assert_not_called()
+        self.assertFalse(self.recorder.active)
+        self.backend.transcribe.assert_not_called()
+        self.assertEqual(self.session.reason, 'persistent mode needs an insertion destination')
+        self.assertFalse(list(Path(self.tmp.name).rglob('*.wav')))
+        self.assertFalse(self.pipeline.ledger.busy)
+
+    def test_speech_during_blocked_binding_is_captured_from_first_sample(self):
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        binding = self.binding
+        def bind():
+            self.assertTrue(self.recorder.active)
+            entered.set()
+            release.wait(2)
+            return binding
+        self.session = PersistentSession(self.cfg, self.pipeline, self.recorder,
+            bind, self.vad, Slot('test-vad'), None, device='keyboard', chord=frozenset())
+        self.addCleanup(self.session.close)
+        self.assertTrue(self.session.start())
+        self.assertTrue(entered.wait(1))
+        samples = np.linspace(.1, .9, 5120, dtype=np.float32)
+        self.recorder.push(samples)
+        # Even stopping before binding completes must retain the opening audio.
+        self.session.request_stop()
+        release.set()
+        self.assertTrue(self.session.done.wait(3))
+        np.testing.assert_array_equal(self.backend.transcribe.call_args.args[0], samples)
+
+    def test_microphone_start_failure_releases_admission_without_binding(self):
+        binding = Mock()
+        self.session = PersistentSession(self.cfg, self.pipeline, self.recorder,
+            binding, self.vad, Slot('test-vad'), None, device='keyboard', chord=frozenset())
+        with patch.object(self.recorder, 'start', side_effect=OSError('microphone unavailable')):
+            with self.assertRaisesRegex(OSError, 'microphone unavailable'):
+                self.session.start()
+        binding.assert_not_called()
+        self.assertFalse(self.pipeline.ledger.busy)
+
+    def test_failure_after_classified_silence_does_not_create_an_utterance(self):
+        self.start()
+        self.recorder.push(np.zeros(5120, dtype=np.float32))
+        wait_for(lambda: self.session.segmenter.position == 5120)
+        self.recorder.failure = 'microphone failed'
+        self.finish()
+        self.backend.transcribe.assert_not_called()
+        self.assertFalse(list(Path(self.tmp.name).rglob('*.wav')))
+
+    def test_invalid_pin_aborts_audio_captured_while_waiting_for_acknowledgement(self):
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        def before(wait):
+            self.assertGreater(wait, 0)
+            entered.set()
+            release.wait(2)
+            return None
+        self.binding.pinning.before.side_effect = before
+        self.binding.pinning.valid = False
+        self.session = PersistentSession(self.cfg, self.pipeline, self.recorder,
+            self.binding, self.vad, Slot('test-vad'), None, device='keyboard', chord=frozenset())
+        self.addCleanup(self.session.close)
+        self.assertTrue(self.session.start())
+        self.assertTrue(entered.wait(1))
+        self.assertTrue(self.recorder.active)
+        self.recorder.push(np.ones(5120, dtype=np.float32) * .2)
+        release.set()
+        self.assertTrue(self.session.done.wait(2))
+        self.assertFalse(self.session.ready.is_set())
+        self.assertIn('Emacs did not acknowledge', self.session.reason)
+        self.assertFalse(self.recorder.active)
+        self.assertFalse(list(Path(self.tmp.name).rglob('*.wav')))
+        self.backend.transcribe.assert_not_called()
+
+    def test_microphone_failure_while_idle_is_reported_as_paused_with_actual_error(self):
+        self.start()
+        # Three actual recorder frames leave 192 samples beyond the VAD window.
+        self.recorder.push(np.zeros(4800, dtype=np.float32))
+        wait_for(lambda: self.session.segmenter.position == 4608)
+        with patch('voicekey.persistent.notify') as notify:
+            self.recorder.failure = 'pw-record: microphone disconnected'
+            self.recorder.finished = True
+            self.session.wake.set()
+            self.assertTrue(self.session.done.wait(3))
+            self.session.thread.join(1)
+        self.assertTrue(self.session.paused)
+        self.assertEqual(self.session.reason, self.recorder.failure)
+        self.assertIn('paused', notify.call_args.args[0])
+        self.assertIn(self.recorder.failure, notify.call_args.args[1])
+        self.backend.transcribe.assert_not_called()
+        self.assertFalse(list(Path(self.tmp.name).rglob('*.wav')))
+        self.assertFalse((Path(self.tmp.name) / 'last-recovery.txt').exists())
+
+    def test_wtype_focus_queries_are_spaced_at_least_one_second_apart(self):
+        from voicekey.target import WtypeTarget
+        self.binding = WtypeTarget(NotifyPreview('dictate'), Window(7, True), 'browser')
+        calls = []
+        def focused(**kwargs):
+            calls.append((time.monotonic(), threading.current_thread().name))
+            return 7
+        with patch('voicekey.target.focus.window_id', side_effect=focused):
+            self.start()
+            wait_for(lambda: len(calls) >= 2)
+            self.finish()
+        self.assertTrue(all(name == 'persistent-capture' for _, name in calls))
+        self.assertTrue(all(b[0] - a[0] >= 1 for a, b in zip(calls, calls[1:])))
+
+    def test_microphone_failure_preserves_speech_in_the_partial_window_without_padding(self):
+        self.start()
+        samples = np.concatenate([np.zeros(4608, dtype=np.float32),
+                                  np.full(192, .2, dtype=np.float32)])
+        self.recorder.push(samples)
+        wait_for(lambda: self.session.segmenter.position == 4608)
+        self.recorder.failure = 'microphone failed'
+        self.finish()
+        np.testing.assert_array_equal(self.backend.transcribe.call_args.args[0], samples[-992:])
+        self.assertTrue(self.session.paused)
+        self.assertTrue(list(Path(self.tmp.name).rglob('*.wav')))
+
+    def test_failure_classifying_the_partial_window_preserves_its_audio(self):
+        self.start()
+        self.recorder.push(np.zeros(4800, dtype=np.float32))
+        wait_for(lambda: self.session.segmenter.position == 4608)
+        self.vad.speech = Mock(side_effect=RuntimeError('detector failed'))
+        self.recorder.failure = 'microphone failed'
+        self.finish()
+        self.vad.speech.assert_called_once()
+        self.assertEqual(len(self.vad.speech.call_args.args[0]), WINDOW)
+        self.assertEqual(len(self.backend.transcribe.call_args.args[0]), 992)
+        self.assertTrue(list(Path(self.tmp.name).rglob('*.wav')))
+        self.session.thread.join(1)
+        from voicekey import persistent
+        self.assertIn('microphone failed; final speech detection failed: detector failed', self.session.reason)
+        self.assertIn(self.session.reason, persistent.notify.call_args.args[1])
+
+    def test_segment_bookkeeping_failure_is_not_reported_as_detector_failure(self):
+        self.start()
+        self.session.segmenter.feed = Mock(side_effect=RuntimeError('bookkeeping failed'))
+        self.vad.speech = Mock(wraps=self.vad.speech)
+        with patch.object(self.session, '_flush', wraps=self.session._flush) as flush:
+            self.recorder.push(np.full(5120, .2, dtype=np.float32))
+            self.assertTrue(self.session.done.wait(3))
+        self.assertEqual(self.session.reason, 'speech segmentation failed: bookkeeping failed')
+        self.assertFalse(flush.call_args.kwargs['detector_failed'])
+        # A healthy detector still classifies the remaining audio during flush.
+        self.assertEqual(len(self.vad.speech.call_args.args[0]), 5120)
+        self.assertEqual(len(self.backend.transcribe.call_args.args[0]), 5120)
+
+    def test_detector_initialization_failure_preserves_even_a_subwindow_of_audio(self):
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        def reset():
+            entered.set()
+            release.wait(2)
+            raise RuntimeError('detector initialization failed')
+        self.vad.reset = reset
+        self.vad.speech = Mock()
+        self.session = PersistentSession(self.cfg, self.pipeline, self.recorder,
+            self.binding, self.vad, Slot('test-vad'), None, device='keyboard', chord=frozenset())
+        self.addCleanup(self.session.close)
+        self.assertTrue(self.session.start())
+        self.assertTrue(entered.wait(1))
+        samples = np.full(192, .2, dtype=np.float32)
+        self.recorder.push(samples)
+        release.set()
+        self.assertTrue(self.session.done.wait(3))
+        self.vad.speech.assert_not_called()
+        np.testing.assert_array_equal(self.backend.transcribe.call_args.args[0], samples)
+        self.assertTrue(self.session.paused)
+
+    def test_focus_poll_runs_on_capture_worker_and_tick_does_not_wait(self):
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        self.start()
+        def available():
+            self.assertEqual(threading.current_thread().name, 'persistent-capture')
+            entered.set()
+            release.wait(2)
+            return True
+        with patch.object(self.session.target, 'available', side_effect=available):
+            self.assertTrue(entered.wait(1))
+            self.session.tick()
+            release.set()
+            self.finish()
+
+    def test_backlog_recovery_contains_all_sentences_in_sequence(self):
+        from voicekey.emacs import EmacsRefused
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        def insert(*args, **kwargs):
+            entered.set()
+            release.wait(2)
+            raise EmacsRefused('buffer killed')
+        self.insert.side_effect = insert
+        self.backend.transcribe.side_effect = ['First sentence.', 'Second sentence.', 'Third sentence.']
+        self.start()
+        for _ in range(3):
+            self.speak()
+        self.assertTrue(entered.wait(1))
+        wait_for(lambda: self.backend.transcribe.call_count == 3)
+        release.set()
+        self.assertTrue(self.session.done.wait(3))
+        text = (Path(self.tmp.name) / 'last-recovery.txt').read_text()
+        self.assertEqual(text, 'First sentence.\n\nSecond sentence.\n\nThird sentence.\n')
+        path = self.pipeline.journal.path(self.session.id, '.recovery.txt')
+        self.assertEqual(path.read_text(), text)
+        self.session.thread.join(1)
+        from voicekey import persistent
+        self.assertIn(str(path), persistent.notify.call_args.args[1])
+
+    def test_slow_cancelled_decoder_is_replaced_lazily_with_full_suffix(self):
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        streams = []
+        class Stream:
+            def __init__(self):
+                self.frames = []
+                streams.append(self)
+            def feed(self, samples):
+                self.frames.append(samples.copy())
+                if self is streams[0]:
+                    entered.set()
+                    release.wait(3)
+                return 'live'
+            def finish(self):
+                return 'live'
+        self.start()
+        self.session.streaming = Mock(session=Stream)
+        self.recorder.push(np.full(512, .1, dtype=np.float32))
+        self.assertTrue(entered.wait(1))
+        self.recorder.push(np.full(32768, .2, dtype=np.float32))
+        wait_for(lambda: self.session.sequence == 2 and self.session.active)
+        old = self.session.last_live
+        self.assertTrue(old.stuck)
+        self.assertIsNone(self.session.current.decoder)
+        release.set()
+        old.decoder.join(1)
+        self.recorder.push(np.full(1024, .3, dtype=np.float32))
+        wait_for(lambda: len(streams) == 2 and streams[1].frames)
+        self.assertEqual(streams[1].frames[0][0], np.float32(.2))
+        self.finish()
 
     def test_multiple_utterances_commit_while_capture_continues_and_idle_gate_is_free(self):
         self.start()
@@ -449,6 +724,10 @@ class PersistentTests(unittest.TestCase):
             self.assertIsNotNone(session)
             daemon._on_key('keyboard',ecodes.KEY_F11,0)
             daemon._on_key('keyboard',ecodes.KEY_ESC,1)
+            with patch('voicekey.daemon.notify') as notify:
+                daemon._on_key('keyboard',ecodes.KEY_F9,1)
+                self.assertEqual(notify.call_args.args[0], 'voicekey: busy')
+                daemon._on_key('keyboard',ecodes.KEY_F9,0)
             self.assertFalse(session.stopping.is_set())
             daemon._on_key('keyboard',ecodes.KEY_F11,1)
             self.assertTrue(session.stopping.is_set())
@@ -464,6 +743,7 @@ class PersistentTests(unittest.TestCase):
         with patch('voicekey.daemon.target_mod.bind', return_value=self.binding):
             daemon._on_key('keyboard',ecodes.KEY_F11,1)
             session = daemon.persistent
+            wait_for(lambda: session.ready.is_set())
             session.recorder.push(np.ones(1711,dtype=np.float32)*.2)
             daemon._on_device_lost('keyboard')
             self.assertTrue(session.done.wait(5))

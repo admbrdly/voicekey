@@ -76,6 +76,28 @@ def wait_for(predicate, timeout=3):
         time.sleep(0.005)
 
 
+class StartupRecoveryTests(unittest.TestCase):
+    def test_startup_reports_recovery_before_accepting_new_work_without_model_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = Journal(directory + '/sessions')
+            journal.append('f', 'session-start')
+            journal.append('a', 'segment', session_id='f', sequence=0)
+            journal.append('a', 'final', final='Saved before the crash.')
+            backend, polisher = Mock(), Mock()
+            pipeline = Pipeline(Config(), backend=backend, polisher=polisher, journal=journal)
+            with patch('voicekey.pipeline.notify') as notify:
+                pipeline.start()
+                self.addCleanup(pipeline.close)
+            self.assertIn(str(journal.path('f', '.recovery.txt')), notify.call_args.args[1])
+            backend.assert_not_called()
+            polisher.assert_not_called()
+            self.assertFalse(pipeline._storage_failed)
+            self.assertFalse(pipeline.ledger.busy)
+            identity = pipeline.admit()
+            self.assertIsNotNone(identity)
+            pipeline.ledger.complete(identity, 'dropped')
+
+
 class PipelineTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

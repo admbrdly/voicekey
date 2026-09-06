@@ -94,6 +94,7 @@ class Recorder:
         self.thread: threading.Thread | None = None
         self.frames: list[np.ndarray] = []
         self.started = 0.0
+        self._requested_at = 0.0
         self.stopped_at: float | None = None
         self._errors = deque(maxlen=8)
         self._stderr_thread: threading.Thread | None = None
@@ -118,6 +119,7 @@ class Recorder:
 
     def start(self, on_frame) -> None:
         assert not self.active
+        self._requested_at = time.monotonic()
         self.proc = subprocess.Popen(
             self.argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
@@ -142,6 +144,11 @@ class Recorder:
         count = 0
         try:
             while data := stdout.read(FRAME_SAMPLES * 2):
+                if count == 0:
+                    # Includes the 100 ms PCM frame assembly, not just device
+                    # startup. Keep this evidence off the callback itself.
+                    log.info("first PCM frame after %.0f ms",
+                             (time.monotonic() - self._requested_at) * 1000)
                 if len(data) % 2:
                     self._failure = "audio source returned a partial PCM sample"
                     data = data[:-1]

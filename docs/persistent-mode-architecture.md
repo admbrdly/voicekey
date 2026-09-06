@@ -34,7 +34,7 @@ and measure the laptop separately when its binding is chosen.
 The older `persistent-mode.md` and the audit's original work order are
 historical context.
 
-The implementation passes **227 Python tests**, including a batch run of
+The implementation passes **247 Python tests**, including a batch run of
 **17 Emacs editor tests** and a private-server binding test:
 
 ```sh
@@ -61,7 +61,13 @@ The implementation entry points are:
   detector is independent of the optional live recognizer.
 - `persistent.py`: one continuous capture owner, decoder rollover with suffix
   replay, admission before cuts, silence disposal, stop and bounded drain.
-  Each capture reservation includes four seconds for processing lag.
+  Each capture reservation includes four seconds for processing lag. Capture
+  starts before binding, pin acknowledgement, journal I/O and VAD setup; the
+  bounded buffer retains speech during setup. Failed binding aborts capture
+  and drops that admission without transcription. Focus polling runs on the
+  capture worker, once a second for wtype and every 200 ms for in-memory
+  checks. After a cut, live decoding attaches once the
+  cancelled decoder exits and replays from the new utterance's start.
 - `ledger.py` and `pipeline.py`: session IDs and utterance order, per-utterance
   gate ownership, ordinary FIFO processing, and per-session expiry at stop.
   Persistent queue age does not trigger quick dictation's insertion deadline;
@@ -206,6 +212,23 @@ Unresolved audio/text remain until manually recovered or removed. Successful
 text is retained up to `history_days`, subject to the quota. If preservation
 cannot proceed, new capture is disabled with an error; the pipeline does not
 silently continue on an assumption that recovery succeeded.
+
+At persistent session close, undelivered utterances are collected in sequence
+order into `<session-id>.recovery.txt`, with a copy in `last-recovery.txt`.
+Uncertain deliveries are labelled for inspection; entries without text point
+to their retained audio. The session journal indexes the utterance records,
+including captures preserved at drain expiry. Sessions with recovery remain
+outside automatic successful-history pruning.
+The final notification includes the consolidated path. Unreadable JSON lines
+produce explicit inspection notices in the summary without blocking recovery
+of other utterances or disabling new dictation; source records remain intact.
+
+Before workers start, interrupted session indexes without `session-closed`
+are consolidated in the same way and their recovery paths are reported.
+An attempt without a recorded outcome is labelled uncertain and its permit
+is revoked; recovery never retries delivery or transcription. A readable
+close marker prevents repeat recovery on later starts, even when the crash
+left a truncated line. Only durably indexed records can be reconstructed.
 
 Hold-to-talk uses an absolute insertion deadline from key release, including
 finalization and all queues. Transcription and polish additionally have their

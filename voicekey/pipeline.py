@@ -84,6 +84,12 @@ class Pipeline:
         if self._threads:
             return
         try:
+            recovered = self._journal_slots["startup"].call(self.journal.recover_interrupted,
+                                                time.monotonic() + self.cfg.pipeline.journal_seconds)
+            if recovered:
+                notify("voicekey: interrupted dictation recovered",
+                       f"{len(recovered)} session(s) in {self.journal.directory}; latest: {recovered[-1]}",
+                       channel="persistent", ms=0)
             self._journal_slots["startup"].call(lambda: self.journal.prepare(self._disk_reservation),
                                                 time.monotonic() + self.cfg.pipeline.journal_seconds)
         except Exception as exc:
@@ -135,6 +141,9 @@ class Pipeline:
                 source = recorders.get(item.id)
                 if source is not None:
                     self.journal.capture(item.id, source.samples, getattr(item, "text", ""))
+                    self.journal.append(item.id, "segment", session_id=session_id,
+                        sequence=item.sequence, start_sample=source.start_sample,
+                        end_sample=source.end_sample, reason=source.reason)
                 current = self.ledger.get(item.id)
                 self.journal.append(item.id, "shutdown", disposition="unknown" if current and
                                     current.stage == Stage.DELIVERING else "saved")
@@ -371,14 +380,16 @@ class Pipeline:
             else:
                 notify("✓ Inserted" if landing.outcome == Outcome.CONFIRMED else "✓ Sent to field", channel="dictate")
         elif landing.uncertain:
-            self._save("deliver", lambda: self.journal.recover(job.id, job.final))
+            if not job.session_id:
+                self._save("deliver", lambda: self.journal.recover(job.id, job.final))
             self._complete(job, Outcome.UNKNOWN, landing.reason)
             notify("voicekey: delivery uncertain", f"{landing.reason}; inspect {self.journal.path(job.id, '.txt')}", error=True)
         else:
             # The final text and attempt were already saved before touching the clipboard.
             job.target.clear()
             outcome = Outcome.SAVED
-            self._save("deliver", lambda: self.journal.recover(job.id, job.final))
+            if not job.session_id:
+                self._save("deliver", lambda: self.journal.recover(job.id, job.final))
             if not self._closed.is_set() and not job.session_id:
                 try:
                     inject.copy(job.final)

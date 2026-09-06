@@ -63,6 +63,8 @@ class NotifyPreview:
         self._lock = threading.Lock()
 
     def show(self, text: str):
+        if not text:
+            return
         with self._lock:
             now = time.monotonic()
             if not self.closed and now - self._last >= 0.25:

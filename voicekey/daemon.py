@@ -214,6 +214,8 @@ class Daemon:
             else:
                 if action == "persistent":
                     self.persistent.request_stop()
+                else:
+                    notify("voicekey: busy", "stop persistent dictation before using another dictation key")
                 return
         if session is not None:
             if behavior == TOGGLE and chord == session.chord and device == session.device:
