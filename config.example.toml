@@ -58,6 +58,7 @@ model = "s1-mini"          # name sent in requests (llama-server ignores it; Oll
 format = "s1-mini"         # "s1-mini": the fixed prompt S1-mini by Superwhisper was trained on
                            # "instruct": our own prompt (prompt_file, or the built-in one), any model
 style = "semi-formal"      # s1-mini: casual | semi-casual | semi-formal | formal
+app_styles = {}            # exact app IDs, e.g. { "org.signal.Signal" = "semi-casual" }
 prompt_file = ""           # instruct only: replaces the built-in prompt; {style} is filled in
 api_key_file = ""          # for a server that is not voicekey's own (its child gets a fresh key)
 timeout_seconds = 10.0     # one request

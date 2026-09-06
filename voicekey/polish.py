@@ -171,8 +171,8 @@ class S1MiniFormat:
     def __init__(self, style: str) -> None:
         self.style = style
 
-    def messages(self, text: str) -> tuple[str, str]:
-        return S1_MINI_SYSTEM, f"{S1_MINI_CONTROL % self.style}\n{text}"
+    def messages(self, text: str, style: str | None = None) -> tuple[str, str]:
+        return S1_MINI_SYSTEM, f"{S1_MINI_CONTROL % (style or self.style)}\n{text}"
 
 
 class InstructFormat:
@@ -181,10 +181,11 @@ class InstructFormat:
     extra = {"chat_template_kwargs": {"enable_thinking": False}}
 
     def __init__(self, prompt: str, style: str) -> None:
+        self.prompt = prompt
         self.system = prompt.replace("{style}", style)
 
-    def messages(self, text: str) -> tuple[str, str]:
-        return self.system, text
+    def messages(self, text: str, style: str | None = None) -> tuple[str, str]:
+        return self.prompt.replace("{style}", style) if style else self.system, text
 
 
 def load_prompt(path: str) -> str:
@@ -270,15 +271,17 @@ def judge(raw: str, reply: Reply) -> str | None:
 # --- the pass ---------------------------------------------------------------
 
 class Polisher:
-    def __init__(self, backend, format, timeout: float) -> None:
+    def __init__(self, backend, format, timeout: float, app_styles: dict[str, str] | None = None) -> None:
         self.backend = backend
         self.format = format
         self.timeout = timeout
+        self.app_styles = dict(app_styles or {})
         self._slot = Slot("polish-request")
 
-    def polish(self, text: str, wait: float) -> str | None:
+    def polish(self, text: str, wait: float, *, app_id: str | None = None) -> str | None:
         """Cleaned text or None for raw fallback, within the caller's wait."""
-        system, user = self.format.messages(text)
+        style = self.app_styles.get(app_id)
+        system, user = self.format.messages(text, style)
         started = time.monotonic()
         try:
             timeout = min(self.timeout, wait)
@@ -329,7 +332,7 @@ def create_polisher(cfg: PolishConfig, server: LlamaServer | None = None) -> Pol
         format = InstructFormat(load_prompt(cfg.prompt_file), cfg.style)
     api_key = server.api_key if server is not None else load_api_key(cfg.api_key_file)
     backend = OpenAIChat(cfg.url, cfg.model, format.extra, api_key)
-    return Polisher(backend, format, cfg.timeout_seconds)
+    return Polisher(backend, format, cfg.timeout_seconds, cfg.app_styles)
 
 
 # --- the local server -------------------------------------------------------

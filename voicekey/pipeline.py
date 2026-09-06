@@ -312,7 +312,9 @@ class Pipeline:
             job.target.show(job.raw)
             try:
                 cleaned = self._slots["polish"].call(
-                    lambda: polisher.polish(job.raw, max(0, deadline - time.monotonic())), deadline)
+                    # Persistent utterances inherit the original session target's app ID.
+                    lambda: polisher.polish(job.raw, max(0, deadline - time.monotonic()),
+                                           app_id=job.target.app_id), deadline)
                 if isinstance(cleaned, str) and cleaned.strip() and len(cleaned.encode()) <= MAX_TEXT_BYTES:
                     final = cleaned
             except Exception as exc:

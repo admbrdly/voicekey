@@ -546,6 +546,7 @@ class PersistentTests(unittest.TestCase):
         self.finish()
         self.assertEqual(self.insert.call_args.args[0], 'Is it going to work?')
         self.assertEqual(polisher.polish.call_args.args[0], 'Is it gonna work?')
+        self.assertEqual(polisher.polish.call_args.kwargs, {'app_id': 'emacs'})
         self.copy.assert_not_called()
 
     def test_empty_model_reply_never_discards_meaningful_short_persistent_text(self):

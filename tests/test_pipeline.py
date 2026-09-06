@@ -159,6 +159,7 @@ class PipelineTests(unittest.TestCase):
         second = self.submit()
         self.done()
         self.polisher.polish.assert_called_once()
+        self.assertEqual(self.polisher.polish.call_args.kwargs, {'app_id': 'fake'})
         self.assertEqual(second.target.calls[0][0], 'Hello.')
 
     def test_hung_polish_adopts_raw_and_late_result_never_lands(self):
@@ -166,7 +167,7 @@ class PipelineTests(unittest.TestCase):
         self.addCleanup(release.set)
         self.cfg.polish.min_words = 0
         self.cfg.polish.max_wait_seconds = 0.05
-        def polish(text, wait):
+        def polish(text, wait, *, app_id=None):
             entered.set()
             release.wait(2)
             return 'late rewrite'
@@ -185,7 +186,7 @@ class PipelineTests(unittest.TestCase):
         entered, release = threading.Event(), threading.Event()
         self.addCleanup(release.set)
         self.backend.transcribe.side_effect = ['this is a long enough sentence to receive polish', 'short']
-        def polish(text, wait):
+        def polish(text, wait, *, app_id=None):
             entered.set()
             release.wait(2)
             return 'polished sentence'
@@ -295,7 +296,7 @@ class PipelineTests(unittest.TestCase):
         entered, release = threading.Event(), threading.Event()
         self.addCleanup(release.set)
         self.cfg.polish.min_words = 0
-        def polish(text, wait):
+        def polish(text, wait, *, app_id=None):
             entered.set()
             release.wait(2)
             return 'late'

@@ -21,6 +21,19 @@ from voicekey.polish import (
 
 
 class FormatTests(unittest.TestCase):
+    def test_destination_override_does_not_change_default_or_leak_between_requests(self):
+        for format in (S1MiniFormat('semi-formal'),
+                       InstructFormat('Style: {style}', 'semi-formal')):
+            backend = Mock()
+            backend.chat.return_value = Reply('Hello there.', True)
+            polisher = Polisher(backend, format, 1, {'org.signal.Signal': 'semi-casual'})
+            for app_id, expected in (('org.signal.Signal', 'semi-casual'),
+                                     ('emacs', 'semi-formal'), (None, 'semi-formal'),
+                                     ('org.signal.Signal.other', 'semi-formal')):
+                self.assertEqual(polisher.polish('Hello there.', 1, app_id=app_id), 'Hello there.')
+                system, user = backend.chat.call_args.args[:2]
+                self.assertIn(expected, system + user)
+
     def test_s1_mini_sends_its_trained_prompt_and_control_line(self):
         system, user = S1MiniFormat("formal").messages("so um hello")
         self.assertTrue(system.startswith("You are a text normalizer for speech-to-text transcripts."))

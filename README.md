@@ -209,6 +209,21 @@ under `[polish.server]`), but check its speed: Fedora's `llama-cpp` package
 is a ROCm build whose CPU path took 1.4 s for a sentence where the upstream
 CPU build took 0.4 s on the same machine.
 
+Styles can be overridden per destination app with an exact, case-sensitive
+app ID match. For example, under `[polish]`:
+
+```toml
+style = "semi-formal"
+app_styles = { "org.signal.Signal" = "semi-casual" }
+```
+
+Unknown or unmatched apps use `style`. The app ID comes from the destination
+captured when recording starts; persistent utterances inherit their session's
+original destination, even after focus changes. This applies to both `s1-mini`
+and `instruct` formats and does not change the minimum-word thresholds or agent
+mode's cleanup bypass. On niri, `niri msg -j windows` lists app IDs. Restart
+voicekey after changing these settings.
+
 Any OpenAI-compatible chat endpoint works in place of the child server:
 leave `model_file` empty and point `url` at Ollama, vLLM or a llama-server
 elsewhere. With `format = "instruct"` voicekey sends its own prompt (or

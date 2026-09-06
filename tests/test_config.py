@@ -8,6 +8,15 @@ from voicekey.config import ConfigError, load
 
 
 class ConfigTests(unittest.TestCase):
+    def test_app_styles_are_validated(self):
+        cfg = self._load_text('[polish.app_styles]\n"org.signal.Signal" = "semi-casual"')
+        self.assertEqual(cfg.polish.app_styles, {'org.signal.Signal': 'semi-casual'})
+        self.assertEqual(cfg.polish.style, 'semi-formal')
+        for value in ('"bad"', '[]', '{ "" = "casual" }',
+                      '{ signal = 1 }', '{ signal = "academic" }'):
+            with self.subTest(value=value), self.assertRaises(ConfigError):
+                self._load_text('[polish]\napp_styles = ' + value)
+
     def test_persistent_settings_and_incompatible_bindings_are_validated(self):
         cfg = self._load_text('[persistent]\nkey = "KEY_F11"\nsilence_seconds = 90\n')
         self.assertEqual(cfg.persistent.key, 'KEY_F11')

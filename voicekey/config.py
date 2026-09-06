@@ -105,6 +105,7 @@ class PolishConfig:
     model: str = "s1-mini"  # the name sent in requests; llama-server ignores it, Ollama needs it
     format: str = "s1-mini"  # "s1-mini" (its trained prompt) | "instruct" (our prompt, any model)
     style: str = "semi-formal"
+    app_styles: dict[str, str] = field(default_factory=dict)  # exact destination app IDs
     prompt_file: str = ""  # instruct: a file replacing the built-in prompt
     api_key_file: str = ""  # for a server that is not voicekey's own child
     timeout_seconds: float = 10.0  # one request
@@ -234,6 +235,13 @@ def _validate_polish(cfg: PolishConfig) -> None:
             f"s1-mini format, got {cfg.style!r}"
         )
     cfg.prompt_file = _path("polish.prompt_file", cfg.prompt_file)
+    if not isinstance(cfg.app_styles, dict):
+        raise ConfigError("polish.app_styles must be a table of app IDs to styles")
+    for app_id, style in cfg.app_styles.items():
+        _string("polish.app_styles app ID", app_id)
+        _string(f"polish.app_styles.{app_id}", style)
+        if cfg.format == "s1-mini" and style not in S1_MINI_STYLES:
+            raise ConfigError(f"polish.app_styles.{app_id} must be one of {', '.join(S1_MINI_STYLES)}")
     cfg.api_key_file = _path("polish.api_key_file", cfg.api_key_file)
     cfg.timeout_seconds = _number("polish.timeout_seconds", cfg.timeout_seconds, minimum=0.1)
     cfg.max_wait_seconds = _number("polish.max_wait_seconds", cfg.max_wait_seconds, minimum=0.1)
