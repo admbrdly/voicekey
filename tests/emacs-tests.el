@@ -160,7 +160,9 @@
   (skip-unless (require 'evil nil t))
   (voicekey-test-buffer "old text"
     (evil-local-mode 1)
-    (evil-visual-select 1 4 'char)
+    ;; This API takes a range type (inclusive), not a selection name (char).
+    (evil-visual-select 1 4 evil-visual-char)
+    (should (eq (evil-visual-type) evil-visual-char))
     (voicekey-test-pin)
     (should (equal (voicekey-test-insert "new") "ok"))
     (should (equal (buffer-string) "new text"))
