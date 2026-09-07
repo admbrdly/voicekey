@@ -277,6 +277,7 @@ class Polisher:
         self.timeout = timeout
         self.app_styles = dict(app_styles or {})
         self._slot = Slot("polish-request")
+        self.last_reason = "not run"
 
     def polish(self, text: str, wait: float, *, app_id: str | None = None) -> str | None:
         """Cleaned text or None for raw fallback, within the caller's wait."""
@@ -290,19 +291,24 @@ class Polisher:
                 started + timeout,
             )
         except (WorkBusy, WorkTimeout):
+            self.last_reason = "request busy or deadline expired"
             log.warning("polish skipped: request busy or deadline expired")
             return None
         except PolishError as exc:
+            self.last_reason = str(exc)
             log.warning("polish skipped after %.1fs: %s", time.monotonic() - started, exc)
             return None
         except Exception:
+            self.last_reason = "request failed"
             log.exception("polish failed")
             return None
         reason = judge(text, reply)
         if reason is not None:
+            self.last_reason = reason
             log.warning("polish rejected: %s", reason)
             return None
         cleaned = reply.text.strip()
+        self.last_reason = "applied"
         log.info("polished %d -> %d chars in %.2fs", len(text), len(cleaned),
                  time.monotonic() - started)
         return cleaned

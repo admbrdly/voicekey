@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import shutil
 import signal
 import sys
@@ -20,12 +21,29 @@ def main() -> int:
     parser.add_argument("--agent", action="store_true",
                         help="with --replay: send the transcript to the agent instead of typing")
     parser.add_argument("--persistent", action="store_true", help="with --replay: segment and deliver a continuous session")
+    commands = parser.add_mutually_exclusive_group()
+    commands.add_argument("--last", action="store_true", help="print the latest prepared dictation, verbatim")
+    commands.add_argument("--copy-last", action="store_true", help="copy the latest prepared dictation")
+    commands.add_argument("--explain-last", action="store_true", help="show processing and delivery of the latest dictation")
+    commands.add_argument("--capture-to-stdout", action="store_true", help="record until Ctrl-C and write text to stdout; no desktop delivery")
+    parser.add_argument("--seconds", type=float, help="with --capture-to-stdout: stop after this many seconds (capped by max_seconds)")
     args = parser.parse_args()
+    history = args.last or args.copy_last or args.explain_last
+    if (history or args.capture_to_stdout) and (args.check or args.download or args.agent or args.persistent):
+        parser.error("history and stdout commands cannot be combined with --check, --download, --agent or --persistent")
+    if history and args.replay:
+        parser.error("history commands cannot be combined with --replay")
+    if args.seconds is not None and (not args.capture_to_stdout or not math.isfinite(args.seconds) or args.seconds <= 0):
+        parser.error("--seconds requires --capture-to-stdout and a positive finite duration")
     if args.persistent and (not args.replay or args.agent):
         parser.error("--persistent requires --replay and cannot be combined with --agent")
 
     logging.basicConfig(level=logging.INFO, stream=sys.stderr,
                         format="%(levelname)s %(name)s: %(message)s")
+
+    if history:
+        from .history import show
+        return show(copy=args.copy_last, diagnostic=args.explain_last)
 
     from .config import ConfigError, load
     try:
@@ -45,6 +63,10 @@ def main() -> int:
 
     if args.check:
         return check(cfg)
+
+    if args.capture_to_stdout:
+        from .stdout import capture
+        return capture(cfg, wav=args.replay, seconds=args.seconds)
 
     from .daemon import Daemon, fix_environment
     daemon = Daemon(cfg)

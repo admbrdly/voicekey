@@ -80,6 +80,12 @@ class DictationConfig:
     inject: str = "wtype"
     max_delay_seconds: float = 10.0
     require_same_window: bool = True
+    post_transcription_hook: str = ""
+
+
+@dataclass
+class TextConfig:
+    word_overrides: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -142,6 +148,7 @@ class AgentConfig:
     open_terminal: bool = True
     command_timeout: float = 10.0
     ready_timeout: float = 300.0
+    post_transcription_hook: str = ""
 
 
 @dataclass
@@ -161,6 +168,7 @@ class Config:
     polish: PolishConfig = field(default_factory=PolishConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
     agent: AgentConfig = field(default_factory=AgentConfig)
+    text: TextConfig = field(default_factory=TextConfig)
 
 
 def _table(data: dict[str, Any], key: str) -> dict[str, Any]:
@@ -325,6 +333,19 @@ def _validate(cfg: Config) -> None:
 
     _validate_polish(cfg.polish)
 
+    if not isinstance(cfg.text.word_overrides, dict):
+        raise ConfigError("text.word_overrides must be a table of phrases to replacements")
+    seen = set()
+    for phrase, replacement in cfg.text.word_overrides.items():
+        _string("text.word_overrides phrase", phrase)
+        _string(f"text.word_overrides.{phrase}", replacement)
+        if phrase.lower() in seen:
+            raise ConfigError("text.word_overrides phrases must differ ignoring case")
+        seen.add(phrase.lower())
+    for name in ("dictation", "agent"):
+        section = getattr(cfg, name)
+        _string(f"{name}.post_transcription_hook", section.post_transcription_hook, allow_empty=True)
+
     for name in ("max_pending", "recovery_megabytes", "history_days"):
         setattr(cfg.pipeline, name, _integer(f"pipeline.{name}", getattr(cfg.pipeline, name), minimum=1))
     for name in ("max_audio_seconds", "transcription_seconds", "shutdown_seconds", "journal_seconds"):
@@ -448,6 +469,7 @@ def load(path: str | None = None) -> Config:
         ("dictation", cfg.dictation),
         ("agent", cfg.agent),
         ("pipeline", cfg.pipeline),
+        ("text", cfg.text),
     ):
         _apply(target, _table(data, section), f"{section}.")
     polish = _table(data, "polish")

@@ -8,6 +8,18 @@ from voicekey.config import ConfigError, load
 
 
 class ConfigTests(unittest.TestCase):
+    def test_text_processing_config(self):
+        cfg = self._load_text('[text.word_overrides]\n"hyper whisper" = "hyprwhspr"\n'
+                              '[dictation]\npost_transcription_hook = "cat"\n'
+                              '[agent]\npost_transcription_hook = "cat"')
+        self.assertEqual(cfg.text.word_overrides, {'hyper whisper': 'hyprwhspr'})
+        self.assertEqual(cfg.agent.post_transcription_hook, 'cat')
+        for value in ('[]', '{ "" = "x" }', '{ name = 3 }', '{ name = "" }', '{ Name = "x", name = "y" }'):
+            with self.subTest(value=value), self.assertRaises(ConfigError):
+                self._load_text('[text]\nword_overrides = ' + value)
+        with self.assertRaises(ConfigError):
+            self._load_text('[dictation]\npost_transcription_hook = 42')
+
     def test_app_styles_are_validated(self):
         cfg = self._load_text('[polish.app_styles]\n"org.signal.Signal" = "semi-casual"')
         self.assertEqual(cfg.polish.app_styles, {'org.signal.Signal': 'semi-casual'})

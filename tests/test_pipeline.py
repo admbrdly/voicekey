@@ -99,6 +99,40 @@ class StartupRecoveryTests(unittest.TestCase):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_overrides_and_hook_follow_polish_and_are_journaled(self):
+        self.cfg.polish.min_words = 0
+        self.polisher = Mock()
+        self.polisher.polish.return_value = 'hello hyper whisper'
+        self.cfg.text.word_overrides = {'hyper whisper': 'hyprwhspr'}
+        self.cfg.dictation.post_transcription_hook = "sed 's/^/prepared: /'"
+        session = self.submit()
+        self.done()
+        self.assertEqual(session.target.calls[0][0], 'prepared: hello hyprwhspr')
+        records, _ = self.journal._recovery_records(self.journal.path(session.id, '.jsonl'))
+        final = next(r for r in records if r['event'] == 'final')
+        self.assertEqual(final['raw'], 'hello')
+        self.assertEqual(final['polished'], 'hello hyper whisper')
+        self.assertEqual(final['overridden'], 'hello hyprwhspr')
+        self.assertEqual(final['hook_result'], 'applied')
+
+    def test_agent_uses_own_hook_and_sends_prepared_text(self):
+        self.cfg.dictation.post_transcription_hook = 'printf WRONG'
+        self.cfg.agent.post_transcription_hook = r"sed 's/^/<dictation>/; s/$/<\/dictation>/'"
+        self.cfg.text.word_overrides = {'hello': 'Hermes'}
+        send = self.pipeline._send_agent = Mock()
+        session = self.submit(action='agent')
+        self.done()
+        send.assert_called_once_with('<dictation>Hermes</dictation>')
+        self.assertFalse(session.target.calls)
+
+    def test_hook_timeout_preserves_order_and_next_dictation(self):
+        self.cfg.dictation.post_transcription_hook = 'sleep .4; printf late'
+        with patch('voicekey.text.HOOK_SECONDS', .05):
+            first, second = self.submit(), self.submit()
+            self.done()
+        self.assertEqual(first.target.calls[0][0], 'hello')
+        self.assertEqual(second.target.calls[0][0], 'hello')
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

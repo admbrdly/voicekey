@@ -248,6 +248,76 @@ raw text becomes final. A hung request keeps its one execution slot; later
 utterances use raw text until it returns. Late results never replace text
 that has already moved on.
 
+## Word overrides and transcription hooks
+
+Explicit corrections work with or without polish:
+
+```toml
+[text.word_overrides]
+"hyper whisper" = "hyprwhspr"
+```
+
+Matching ignores case and respects word boundaries, including for single letters.
+At each position the longest matching phrase wins. Replacement strings are literal
+and are never matched again. These are explicit corrections, not a spellchecker;
+a personal Hunspell word list does not supply the wrong-to-right mappings.
+
+The order is recognition → optional polish → word overrides → optional hook →
+delivery. Agent prompts skip polish but receive overrides and their own hook.
+Both hooks are disabled by default. Add a command to the relevant existing table:
+
+```toml
+[dictation]
+post_transcription_hook = ""
+
+[agent]
+post_transcription_hook = "sed 's/^/<dictation>/; s|$|</dictation>|'"
+```
+
+A hook is a trusted shell command receiving UTF-8 text on stdin. Nonblank stdout
+replaces the input verbatim, including trailing newlines. Empty or whitespace-only
+output, any nonzero exit (including 77), invalid UTF-8, NUL bytes, oversized output,
+or a timeout preserves the pre-hook text. Failures are logged without a popup.
+Each hook gets at most five seconds, within the remaining delivery budget. A
+slow hook can still exhaust that budget, causing the text to be saved instead
+of inserted. Ordinary child processes are killed when the hook ends; detached
+processes and external side effects cannot be undone. Hook stderr is discarded.
+
+Raw, polished, overridden and final text are recorded before delivery. Recovery
+reads the prepared text without rerunning polish, replacements or shell commands.
+Restart the daemon after changing these settings.
+
+## Last dictation and scripting
+
+```sh
+python -m voicekey --last          # latest nonempty prepared dictation, verbatim
+python -m voicekey --copy-last     # copy that same text for manual paste
+python -m voicekey --explain-last  # processing stages, fallback reasons, delivery outcome
+```
+
+These commands read retained journal entries without loading models or requiring
+valid model configuration. They select dictations in capture order, skip agent
+prompts and filler-only drops, and report when no text is available. In persistent
+mode, this is the latest prepared utterance, not the whole session. Prepared text
+may still be awaiting delivery; check the explanation before repeating an uncertain
+insertion. Clipboard recovery does not reapply cursor-dependent spacing.
+
+For scripts, record one utterance directly to stdout:
+
+```sh
+python -m voicekey --capture-to-stdout --seconds 10 > transcript.txt
+python -m voicekey --capture-to-stdout --replay recording.wav > transcript.txt
+```
+
+Without `--seconds`, Ctrl-C finishes recording; `max_seconds` always caps capture.
+SIGTERM cancels. The command uses the same transcription and text-processing
+pipeline, with the dictation hook and default polish style. It writes only the
+prepared text to stdout; diagnostics go to stderr. It uses no keyboard listener,
+input method, clipboard, notifications or agent dispatch, and can run alongside
+the daemon. It loads its own final model and, if configured, a separate local
+polish server. Its recovery journal lives in `~/.local/state/voicekey/stdout`
+(respecting `XDG_STATE_HOME`) and is separate from desktop dictation history.
+
 ## Agent key (optional)
 
 Hold the agent key, speak, release: the transcript goes to a persistent

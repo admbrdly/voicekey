@@ -15,7 +15,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from . import agent, inject, polish, recovery
+from . import agent, inject, polish, recovery, text
 from .ledger import Ledger, Stage
 from .notify import notify
 from .recorder import RecordingError
@@ -25,9 +25,9 @@ from .work import Slot, WorkBusy, WorkTimeout
 
 log = logging.getLogger("voicekey.pipeline")
 MAX_TEXT_BYTES = 100000
-# Room for live/raw/final/intent in JSONL and readable form, even if JSON
+# Room for all text stages and delivery intent in JSONL and readable form, even if JSON
 # escapes every byte. Reserved separately from audio before capture starts.
-TEXT_RESERVE = 4 * 1024 * 1024
+TEXT_RESERVE = 8 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -48,8 +48,9 @@ class Job:
 
 
 class Pipeline:
-    def __init__(self, cfg, *, backend, polisher, settled=lambda: None, journal=None, send_agent=None):
+    def __init__(self, cfg, *, backend, polisher, settled=lambda: None, journal=None, send_agent=None, notifier=None):
         self.cfg = cfg
+        self.notify = notifier or (lambda *args, **kwargs: notify(*args, **kwargs))
         self.backend = backend
         self.polisher = polisher
         self.settled = settled
@@ -73,21 +74,21 @@ class Pipeline:
         self._stalled_audio = 0.0
         self._stalled_corpus_audio = 0.0
         self._items_lock = threading.Lock()
-        self._slots = {name: Slot(name) for name in ("transcribe", "polish", "deliver", "agent", "corpus")}
+        self._slots = {name: Slot(name) for name in ("transcribe", "polish", "deliver", "agent", "corpus", "hook")}
         self._journal_slots = {name: Slot("journal-" + name) for name in
                                ("startup", "capture", "transcribe", "polish", "deliver", "agent", "close", "session")}
         self._send_agent = send_agent or (lambda text: agent.send_prompt(
             cfg.agent, text, cancelled=self._closed,
             deadline=min(self._stop_at, time.monotonic() + cfg.agent.ready_timeout)))
 
-    def start(self):
+    def start(self, *, recover=True):
         if self._threads:
             return
         try:
-            recovered = self._journal_slots["startup"].call(self.journal.recover_interrupted,
-                                                time.monotonic() + self.cfg.pipeline.journal_seconds)
+            recovered = (self._journal_slots["startup"].call(self.journal.recover_interrupted,
+                         time.monotonic() + self.cfg.pipeline.journal_seconds) if recover else [])
             if recovered:
-                notify("voicekey: interrupted dictation recovered",
+                self.notify("voicekey: interrupted dictation recovered",
                        f"{len(recovered)} session(s) in {self.journal.directory}; latest: {recovered[-1]}",
                        channel="persistent", ms=0)
             self._journal_slots["startup"].call(lambda: self.journal.prepare(self._disk_reservation),
@@ -182,7 +183,7 @@ class Pipeline:
                 self.ledger.complete(identity, "failed")
                 with self._items_lock:
                     self._items.pop(identity, None)
-                notify("voicekey: pipeline failed", f"{exc}; recovery is in {self.journal.directory}", error=True)
+                self.notify("voicekey: pipeline failed", f"{exc}; recovery is in {self.journal.directory}", error=True)
             finally:
                 source.task_done()
                 self.settled()
@@ -190,7 +191,7 @@ class Pipeline:
 
     def _storage_error(self, exc):
         self._storage_failed = True
-        notify("voicekey: recovery unavailable", f"{exc}; new recordings disabled until restart", error=True)
+        self.notify("voicekey: recovery unavailable", f"{exc}; new recordings disabled until restart", error=True)
 
     def _save(self, lane, function):
         try:
@@ -280,12 +281,13 @@ class Pipeline:
             return
         transcribed_at = time.monotonic()
         log.info("%s transcribed (%d chars)", job.id, len(raw))
+        model = self.cfg.backend.model_dir if self.cfg.backend.type == "parakeet" else self.cfg.backend.model
         self._save("transcribe", lambda: self.journal.append(job.id, "transcribed", raw=raw,
-                                                             live=job.live, failure=failure))
+            live=job.live, failure=failure, action=job.action, backend=self.cfg.backend.type, model=model))
         if not raw:
             self._complete(job, Outcome.SAVED if failure else Outcome.DROPPED, failure, "transcribe")
             if failure:
-                notify("voicekey: recording saved", f"{failure}; audio in {self.journal.directory}", error=True)
+                self.notify("voicekey: recording saved", f"{failure}; audio in {self.journal.directory}", error=True)
             return
         job = replace(job, raw=raw, failure=failure,
                       polish_deadline=min(transcribed_at + self.cfg.polish.max_wait_seconds, job.deadline - 0.15))
@@ -306,8 +308,16 @@ class Pipeline:
         minimum = self.cfg.persistent.polish_min_words if job.session_id else self.cfg.polish.min_words
         eligible = (not drop and job.action == "dictate" and polisher is not None
                     and len(polish.words(job.raw)) >= minimum)
+        polish_result = "below word threshold"
+        if polisher is None:
+            polish_result = "disabled" if self.cfg.polish.backend == "none" else "polisher unavailable"
+        if job.action == "agent":
+            polish_result = "agent bypass"
+        if eligible:
+            polish_result = "deadline reached"
         if drop:
             final = ""
+            polish_result = "filler-only utterance"
         if eligible and time.monotonic() < deadline:
             job.target.show(job.raw)
             try:
@@ -317,11 +327,25 @@ class Pipeline:
                                            app_id=job.target.app_id), deadline)
                 if isinstance(cleaned, str) and cleaned.strip() and len(cleaned.encode()) <= MAX_TEXT_BYTES:
                     final = cleaned
+                    polish_result = "applied"
+                else:
+                    polish_result = "raw fallback: model unavailable or output rejected"
+                    reason = getattr(polisher, "last_reason", None)
+                    if isinstance(reason, str):
+                        polish_result = f"raw fallback: {reason}"
             except Exception as exc:
+                polish_result = f"raw fallback: {exc}"
                 log.warning("polish skipped: %s", exc)
         if self.ledger.get(job.id) is None:
             return
-        self._save("polish", lambda: self.journal.append(job.id, "final", raw=job.raw, final=final))
+        polished = final
+        final, overridden, hook_result = self._prepare_text(job, final) if not drop else (final, final, "disabled")
+        if self.ledger.get(job.id) is None:
+            return
+        style = self.cfg.polish.app_styles.get(job.target.app_id, self.cfg.polish.style)
+        self._save("polish", lambda: self.journal.append(job.id, "final", raw=job.raw, final=final,
+            polished=polished, overridden=overridden, polish_result=polish_result,
+            polish_style=style, hook_result=hook_result, action=job.action))
         if self.cfg.recordings_dir and job.samples is not None:
             try:
                 self._slots["corpus"].call(lambda: recovery.keep(self.cfg.recordings_dir, job.samples,
@@ -338,9 +362,28 @@ class Pipeline:
         self._remember(job)
         if job.action == "agent" and sum(not u.gated for u in self.ledger.snapshots()) > self.cfg.pipeline.max_pending:
             self._complete(job, Outcome.SAVED, "agent backlog full", "polish")
-            notify("voicekey: agent busy", f"prompt saved to {self.journal.path(job.id, '.txt')}", error=True)
+            self.notify("voicekey: agent busy", f"prompt saved to {self.journal.path(job.id, '.txt')}", error=True)
             return
         (self.agents if job.action == "agent" else self.deliveries).put_nowait(job)
+
+    def _prepare_text(self, job, value):
+        """Apply explicit corrections, then the action's hook, within its budget."""
+        try:
+            value = text.override(value, self.cfg.text.word_overrides)
+        except ValueError as exc:
+            log.warning("word overrides skipped: %s", exc)
+        section = self.cfg.agent if job.action == "agent" else self.cfg.dictation
+        if not section.post_transcription_hook:
+            return value, value, "disabled"
+        deadline = min(self._deadline(job) - 0.15, time.monotonic() + text.HOOK_SECONDS)
+        try:
+            final, reason = self._slots["hook"].call(
+                lambda: text.hook(value, section.post_transcription_hook, deadline), deadline)
+            return final, value, reason
+        except (WorkBusy, WorkTimeout) as exc:
+            reason = f"fallback: {exc}"
+            log.warning("transcription hook %s", reason)
+            return value, value, reason
 
     def _deliver(self, job):
         if job.drop_reason:
@@ -378,44 +421,44 @@ class Pipeline:
             self.spacing.inserted(job.target.window_id, job.final, mark)
             self._complete(job, landing.outcome)
             if job.failure:
-                notify("voicekey: recording warning", f"{job.failure}; audio saved in {self.journal.directory}", ms=10000)
+                self.notify("voicekey: recording warning", f"{job.failure}; audio saved in {self.journal.directory}", ms=10000)
             else:
-                notify("✓ Inserted" if landing.outcome == Outcome.CONFIRMED else "✓ Sent to field", channel="dictate")
+                self.notify("✓ Inserted" if landing.outcome == Outcome.CONFIRMED else "✓ Sent to field", channel="dictate")
         elif landing.uncertain:
             if not job.session_id:
                 self._save("deliver", lambda: self.journal.recover(job.id, job.final))
             self._complete(job, Outcome.UNKNOWN, landing.reason)
-            notify("voicekey: delivery uncertain", f"{landing.reason}; inspect {self.journal.path(job.id, '.txt')}", error=True)
+            self.notify("voicekey: delivery uncertain", f"{landing.reason}; inspect {self.journal.path(job.id, '.txt')}", error=True)
         else:
             # The final text and attempt were already saved before touching the clipboard.
             job.target.clear()
             outcome = Outcome.SAVED
             if not job.session_id:
                 self._save("deliver", lambda: self.journal.recover(job.id, job.final))
-            if not self._closed.is_set() and not job.session_id:
+            if not self._closed.is_set() and not job.session_id and getattr(job.target, "clipboard_fallback", True):
                 try:
                     inject.copy(job.final)
                     outcome = Outcome.COPIED
                 except Exception as exc:
                     log.warning("clipboard failed: %s", exc)
             self._complete(job, outcome, landing.reason)
-            notify("📋 Copied" if outcome == Outcome.COPIED else "voicekey: transcript saved",
+            self.notify("📋 Copied" if outcome == Outcome.COPIED else "voicekey: transcript saved",
                    f"{landing.reason}; {self.journal.path(job.id, '.txt')}", channel="dictate", ms=10000)
 
     def _agent(self, job):
         attempt = self.ledger.reserve(job.id)
         if attempt is None:
             return
-        self._save("agent", lambda: self.journal.append(job.id, "agent-attempt", attempt=attempt, raw=job.raw))
+        self._save("agent", lambda: self.journal.append(job.id, "agent-attempt", attempt=attempt, raw=job.raw, final=job.final))
         try:
-            self._slots["agent"].call(lambda: self._send_agent(job.raw),
+            self._slots["agent"].call(lambda: self._send_agent(job.final),
                                        min(self._stop_at, time.monotonic() + self.cfg.agent.ready_timeout))
         except Exception as exc:
             self._complete(job, Outcome.UNKNOWN, str(exc), "agent")
-            notify("voicekey: agent delivery uncertain", str(self.journal.path(job.id, '.txt')), error=True)
+            self.notify("voicekey: agent delivery uncertain", str(self.journal.path(job.id, '.txt')), error=True)
         else:
             self._complete(job, Outcome.SUBMITTED, lane="agent")
-            notify("✓ Sent to agent", channel="agent")
+            self.notify("✓ Sent to agent", channel="agent")
 
     def close(self, timeout=None):
         if self._closed.is_set():

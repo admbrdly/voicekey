@@ -35,6 +35,7 @@ polish_min_words = 0        # F11 cleans short utterances too; independent of [p
 drop_filler_only = true     # omit whole utterances of um/uh/er/etc.; raw text remains journalled
 
 [dictation]
+post_transcription_hook = "" # optional trusted shell command; stdin -> stdout, at most 5s
 ime = true                 # live text and final commit through the Wayland input method
 inject = "wtype"           # when the focused app has no text-input support:
                            # "wtype" (type it) | "clipboard" (copy it and say so)
@@ -71,6 +72,7 @@ threads = 4
 context = 2048
 
 [agent]
+post_transcription_hook = "" # separate from dictation; runs before agent dispatch
 # Hermes lives in its own tmux server, independent of the editor and of
 # voicekey. The agent key opens a terminal only if none is attached; closing
 # it detaches without killing Hermes or losing its conversation.
@@ -89,3 +91,8 @@ terminal_title = "Voicekey Hermes"
 open_terminal = true
 command_timeout = 10.0
 ready_timeout = 300.0      # wait rather than type into a busy/modal/draft TUI
+
+[text.word_overrides]       # optional literal phrases, case-insensitive word boundaries
+# "hyper whisper" = "hyprwhspr"
+# Longest match wins, replacements do not cascade. Applied after polish,
+# before the action's hook. Single letters also require word boundaries.
