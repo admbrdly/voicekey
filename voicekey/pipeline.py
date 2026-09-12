@@ -342,7 +342,10 @@ class Pipeline:
         final, overridden, hook_result = self._prepare_text(job, final) if not drop else (final, final, "disabled")
         if self.ledger.get(job.id) is None:
             return
-        style = self.cfg.polish.app_styles.get(job.target.app_id, self.cfg.polish.style)
+        style = self.cfg.polish.style
+        # Agent prompts use a notification preview, with no application binding.
+        if job.action == "dictate":
+            style = self.cfg.polish.app_styles.get(job.target.app_id, style)
         self._save("polish", lambda: self.journal.append(job.id, "final", raw=job.raw, final=final,
             polished=polished, overridden=overridden, polish_result=polish_result,
             polish_style=style, hook_result=hook_result, action=job.action))

@@ -123,7 +123,22 @@ class PipelineTests(unittest.TestCase):
         session = self.submit(action='agent')
         self.done()
         send.assert_called_once_with('<dictation>Hermes</dictation>')
-        self.assertFalse(session.target.calls)
+        self.assertTrue(session.target.closed)
+
+    def test_agent_notification_target_bypasses_polish_and_is_dispatched(self):
+        self.cfg.polish.min_words = 0
+        self.cfg.polish.app_styles = {'fake': 'formal'}
+        self.polisher = Mock()
+        send = self.pipeline._send_agent = Mock()
+        session = self.submit(action='agent')
+        self.done()
+        self.polisher.polish.assert_not_called()
+        send.assert_called_once_with('hello')
+        final = next(e for e in self.events(session.id) if e['event'] == 'final')
+        self.assertEqual(final['polish_result'], 'agent bypass')
+        self.assertEqual(final['polish_style'], self.cfg.polish.style)
+        self.assertEqual(final['final'], 'hello')
+        self.assertEqual(self.events(session.id)[-1]['outcome'], 'submitted')
 
     def test_hook_timeout_preserves_order_and_next_dictation(self):
         self.cfg.dictation.post_transcription_hook = 'sleep .4; printf late'
@@ -154,7 +169,10 @@ class PipelineTests(unittest.TestCase):
         identity = self.pipeline.admit()
         self.assertIsNotNone(identity)
         session = Session(action, 'hold', frozenset(), 'fake', identity=identity)
-        session.target = target or FakeTarget()
+        if target is not None:
+            session.target = target
+        elif action == 'dictate':
+            session.target = FakeTarget()
         session.text = live
         self.pipeline.submit(session, FakeRecorder(), time.monotonic() - age)
         return session
