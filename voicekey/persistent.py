@@ -198,7 +198,8 @@ class PersistentSession:
                 return
             before = self.target.target.before(emacs.PIN_TIMEOUT)
             if isinstance(self.target.target, EmacsTarget) and not self.target.target.pinning.valid:
-                self.request_stop("Emacs did not acknowledge the session buffer", paused=True)
+                self.request_stop(self.target.target.pinning.reason
+                                  or "Emacs did not acknowledge the session buffer", paused=True)
                 return
             self.target.target.prefix = owed(before,
                 self.pipeline.spacing.prefix(self.target.target.window_id))

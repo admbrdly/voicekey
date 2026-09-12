@@ -110,6 +110,13 @@ state can become commands. Voicekey instead requests a buffer pin through
 `emacsclient`. Emacs must acknowledge it within 250 ms; a late or failed pin
 cannot authorize insertion. The pin identifies the buffer when Emacs handles
 that request, rather than claiming an atomic snapshot at physical key-down.
+`emacsclient` reaches one Emacs server, so the pin request also names the
+process that owns the focused window when the compositor reports it (niri,
+sway and Hyprland do); a window of a second Emacs process is refused rather
+than bound to whatever the server's own selected window shows. The
+acknowledgement names the pinned buffer, its major mode and read-only state;
+the daemon logs it, records it with each delivery attempt in the recovery
+journal, and a refusal names the buffer.
 Once pinned, delivery follows point within that buffer and ignores compositor
 focus. Insert state inserts at point; normal state appends after the cursor;
 visual state replaces the selection; terminal buffers receive process input.
@@ -147,7 +154,12 @@ provisional text without reporting what happened. Voicekey leaves that text
 alone and preserves the final transcript instead of guessing which field or
 text to replace. Check any remaining provisional text before pasting. An IME
 success notification means the request was sent to the compositor; the
-protocol provides no application-level insertion acknowledgement.
+protocol provides no application-level insertion acknowledgement. When a
+bound destination refuses the final text (a read-only buffer, a lost field
+activation, a changed window), the transcript is copied to the clipboard and
+announced with a critical notification that stays until dismissed and names
+the reason. Only a deliberate clipboard destination (`inject = "clipboard"`)
+gets the transient notice.
 
 Spacing uses current surrounding text inside the IME operation, or the
 editor's actual insertion position. Where the application reports no cursor

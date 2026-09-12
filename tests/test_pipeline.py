@@ -39,6 +39,8 @@ class FakeRecorder:
 
 
 class FakeTarget:
+    kind = 'fake'
+
     def __init__(self, outcome=Outcome.CONFIRMED):
         self.window_id = 7
         self.app_id = 'fake'
@@ -66,6 +68,9 @@ class FakeTarget:
     def land(self, text, deadline, **kwargs):
         self.calls.append((text, deadline, kwargs))
         return Landing(self.outcome)
+
+    def describe(self):
+        return 'fake target'
 
 
 def wait_for(predicate, timeout=3):
@@ -201,6 +206,24 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(target.calls[0][0], 'hello')
         self.assertFalse(self.journal.path(session.id, '.wav').exists())
         self.assertEqual(self.events(session.id)[-1]['outcome'], 'confirmed')
+
+    def test_refused_delivery_copies_and_leaves_a_persistent_notice(self):
+        session = self.submit(FakeTarget(Outcome.REFUSED))
+        self.done()
+        self.copy.assert_called_once_with('hello')
+        events = self.events(session.id)
+        self.assertEqual(events[-1]['outcome'], 'copied')
+        self.assertEqual(next(e for e in events if e['event'] == 'delivery-attempt')['target'], 'fake target')
+        summary, body = self.notice.call_args.args
+        self.assertEqual(summary, '📋 Copied, not inserted')
+        self.assertIn(str(self.journal.path(session.id, '.txt')), body)
+        self.assertTrue(self.notice.call_args.kwargs['error'])
+        designed = FakeTarget(Outcome.REFUSED)
+        designed.kind = 'clipboard'
+        self.submit(designed)
+        self.done()
+        self.assertEqual(self.notice.call_args.args[0], '📋 Copied')
+        self.assertNotIn('error', self.notice.call_args.kwargs)
 
     def test_short_text_skips_polish_and_threshold_is_configurable(self):
         self.polisher = Mock(polish=Mock(return_value='Hello.'))

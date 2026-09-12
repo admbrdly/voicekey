@@ -96,7 +96,7 @@ class SessionTarget:
             if isinstance(target, EmacsTarget):
                 target.pinning.before(max(0, deadline - time.monotonic()))
                 if not target.pinning.valid:
-                    landing = Landing(reason="Emacs did not acknowledge the session buffer")
+                    landing = Landing(reason=target.pinning.reason or "Emacs did not acknowledge the session buffer")
                 else:
                     preview = target.preview
                     try:
@@ -181,6 +181,9 @@ class UtteranceTarget(Target):
     def completed(self, outcome):
         if outcome not in (Outcome.CONFIRMED, Outcome.SUBMITTED, Outcome.DROPPED):
             self.session.failed.set()
+
+    def describe(self):
+        return self.session.target.describe()
 
     def _land(self, text, deadline, operation_id, prefix):
         return self.session.deliver(self.identity, text, deadline, operation_id, prefix, self.permit, self.cancelled)

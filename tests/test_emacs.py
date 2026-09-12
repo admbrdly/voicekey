@@ -1,4 +1,5 @@
 import glob
+import json
 import os
 import shutil
 import subprocess
@@ -13,23 +14,73 @@ def result(stdout='"ok"', returncode=0, stderr=''):
     return subprocess.CompletedProcess([], returncode, stdout, stderr)
 
 
+def ack(**fields):
+    """emacsclient prints the pin's JSON description as a Lisp string."""
+    text = json.dumps({'before': '', 'buffer': 'notes.org', 'mode': 'org-mode',
+                       'read_only': False, 'state': 'insert', 'pid': 1, **fields})
+    return result('"' + text.replace('\\', '\\\\').replace('"', '\\"') + '"')
+
+
 class ProtocolTests(unittest.TestCase):
-    @patch('voicekey.emacs.subprocess.run', return_value=result('"\\n"'))
+    @patch('voicekey.emacs.subprocess.run')
     def test_pin_acknowledgement_parses_spacing_and_uses_fresh_id(self, run):
+        run.return_value = ack(before='\n')
         first, second = emacs.pin(), emacs.pin()
         self.assertTrue(first.valid)
         self.assertEqual(first.before, '\n')
+        self.assertEqual((first.buffer, first.mode, first.read_only, first.state),
+                         ('notes.org', 'org-mode', False, 'insert'))
+        self.assertEqual(first.describe(), "buffer 'notes.org' (org-mode, evil insert)")
         self.assertNotEqual(first.id, second.id)
         self.assertIn('voicekey--pin', run.call_args.args[0][2])
+        self.assertTrue(run.call_args.args[0][2].endswith(' nil))'))
         self.assertEqual(run.call_args.kwargs['timeout'], emacs.PIN_TIMEOUT)
+
+    @patch('voicekey.emacs.subprocess.run')
+    def test_pin_names_the_focused_window_process(self, run):
+        run.return_value = ack()
+        emacs.pin(pid=4242)
+        self.assertTrue(run.call_args.args[0][2].endswith(' 4242))'))
+        emacs.PendingPin(4242).before(1)
+        self.assertTrue(run.call_args.args[0][2].endswith(' 4242))'))
+
+    @patch('voicekey.emacs.subprocess.run', return_value=result(
+        '"refused: the focused window belongs to Emacs process 5, not to this server (process 6)"'))
+    def test_refused_pin_keeps_its_reason_and_cannot_authorize_insert(self, run):
+        pinned = emacs.pin(pid=5)
+        self.assertFalse(pinned.valid)
+        self.assertIn('Emacs process 5', pinned.reason)
+        self.assertIn('Emacs process 5', pinned.describe())
+        pending = emacs.PendingPin(5)
+        pending.before(1)
+        self.assertFalse(pending.valid)
+        self.assertIn('Emacs process 5', pending.reason)
+        self.assertIn('Emacs process 5', pending.describe())
+
+    def test_unrecognised_or_legacy_pin_acknowledgement_is_invalid(self):
+        for reply in (result('"\\n"'), result('"[1, 2]"'), result('"{\\"buffer\\": \\"x\\"}"')):
+            with patch('voicekey.emacs.subprocess.run', return_value=reply):
+                pinned = emacs.pin()
+            self.assertFalse(pinned.valid, reply.stdout)
+            self.assertIn('unrecognised', pinned.reason)
+
+    @patch('voicekey.emacs.subprocess.run')
+    def test_read_only_pin_is_described(self, run):
+        run.return_value = ack(buffer='magit: voicekey', mode='magit-status-mode', read_only=True, state='normal')
+        pinned = emacs.pin()
+        self.assertTrue(pinned.valid)
+        self.assertTrue(pinned.read_only)
+        self.assertEqual(pinned.describe(), "buffer 'magit: voicekey' (magit-status-mode, read-only, evil normal)")
 
     @patch('voicekey.emacs.subprocess.run', side_effect=subprocess.TimeoutExpired('emacsclient', 1))
     def test_timed_out_pin_is_invalid_and_cannot_authorize_insert(self, run):
         pinned = emacs.pin()
         self.assertFalse(pinned.valid)
+        self.assertIn('did not acknowledge the buffer pin', pinned.reason)
         pending = emacs.PendingPin()
         pending.before(1)
         self.assertFalse(pending.valid)
+        self.assertIn('did not acknowledge', pending.describe())
 
     @patch('voicekey.emacs.subprocess.run', return_value=result())
     def test_insert_quotes_text_and_carries_expiry_operation_and_permit(self, run):

@@ -322,6 +322,8 @@ class PersistentTests(unittest.TestCase):
             return None
         self.binding.pinning.before.side_effect = before
         self.binding.pinning.valid = False
+        self.binding.pinning.reason = ''
+
         self.session = PersistentSession(self.cfg, self.pipeline, self.recorder,
             self.binding, self.vad, Slot('test-vad'), None, device='keyboard', chord=frozenset())
         self.addCleanup(self.session.close)

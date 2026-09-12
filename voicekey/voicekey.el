@@ -1,10 +1,11 @@
 ;;; voicekey.el --- Dictation transactions -*- lexical-binding: t; -*-
 ;; This library installs no hooks unless voicekey-tracking-mode is enabled.
 (require 'cl-lib)
+(require 'json)
 (require 'seq)
 (require 'subr-x)
 
-(defconst voicekey--protocol-version 2)
+(defconst voicekey--protocol-version 3)
 (defvar voicekey--pins nil)
 (defvar voicekey--operations nil)
 (defvar voicekey--user-buffer nil)
@@ -40,10 +41,22 @@ alter command-loop behavior. This is the anchor groundwork for persistent mode."
     ('normal (min (1+ (point)) (line-end-position)))
     (_ (point))))
 
-(defun voicekey--pin (id expires)
-  "Bind a buffer only when this request is handled before EXPIRES."
-  (if (> (float-time) expires)
-      "refused: buffer binding expired"
+(defun voicekey--identity ()
+  "Name the current buffer and its major mode for refusals."
+  (format "%s (%s)" (buffer-name) major-mode))
+
+(defun voicekey--pin (id expires &optional pid)
+  "Bind a buffer only when this request is handled before EXPIRES.
+PID is the process owning the focused window when the compositor reports
+it. `emacsclient' reaches one server, so a window of another Emacs process
+is refused instead of being bound to whatever this server has selected.
+A successful pin answers with a JSON description of the bound buffer."
+  (cond
+   ((> (float-time) expires) "refused: buffer binding expired")
+   ((and pid (/= pid (emacs-pid)))
+    (format "refused: the focused window belongs to Emacs process %d, not to this server (process %d)"
+            pid (emacs-pid)))
+   (t
     (let ((buffer (if (and (bound-and-true-p voicekey-tracking-mode)
                            (buffer-live-p voicekey--user-buffer))
                       voicekey--user-buffer
@@ -53,7 +66,13 @@ alter command-loop behavior. This is the anchor groundwork for persistent mode."
                   (seq-take (assoc-delete-all id voicekey--pins) 15)))
       (with-current-buffer buffer
         (let ((pos (voicekey--insertion-position)))
-          (if (> pos (point-min)) (string (char-before pos)) ""))))))
+          (json-encode
+           (list (cons "before" (if (> pos (point-min)) (string (char-before pos)) ""))
+                 (cons "buffer" (buffer-name))
+                 (cons "mode" (symbol-name major-mode))
+                 (cons "read_only" (if buffer-read-only t :json-false))
+                 (cons "state" (symbol-name (voicekey--state)))
+                 (cons "pid" (emacs-pid))))))))))
 
 (defun voicekey--spaced (text pos)
   (if (or (string-empty-p text)
@@ -90,7 +109,8 @@ are grouped atomically; terminal writes cannot be rolled back."
                                (terminal (memq major-mode '(vterm-mode term-mode)))
                                (pos (voicekey--insertion-position)))
                           (when (and buffer-read-only (not terminal))
-                            (throw 'answer "refused: buffer is read-only"))
+                            (throw 'answer (format "refused: buffer is read-only: %s"
+                                                   (voicekey--identity))))
                           (when (eq state 'operator)
                             (throw 'answer "refused: an operator is pending"))
                           (when (and (eq state 'visual) (eq (evil-visual-type) 'block))

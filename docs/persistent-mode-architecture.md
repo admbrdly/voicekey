@@ -76,8 +76,10 @@ The implementation entry points are:
   its best tier. Delivery attempts remain single-use. Generic commits carry
   the newer provisional tail in the same protocol transaction. Emacs clears
   the preview, inserts through its retained pin, then renders the current tail.
-- `voicekey.el`: protocol version 2 supports retaining and explicitly releasing
-  a session pin, while each insertion keeps its own expiring operation ID.
+- `voicekey.el`: protocol version 3 supports retaining and explicitly releasing
+  a session pin, while each insertion keeps its own expiring operation ID. A
+  pin names the focused window's process, so a second Emacs process is refused,
+  and answers with a description of the bound buffer for logs and the journal.
 - `daemon.py` and `config.py`: dedicated toggle binding, microphone status and
   conservative focus/failure handling. Pauses stop capture and require a new
   explicit start; there is no automatic resume in this first implementation.

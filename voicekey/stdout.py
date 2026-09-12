@@ -19,6 +19,7 @@ from .target import Landing, Outcome
 
 
 class StdoutTarget:
+    kind = "stdout"
     app_id = None
     window_id = None
     clipboard_fallback = False
@@ -35,6 +36,9 @@ class StdoutTarget:
 
     def cancel(self):
         self.cancelled.set()
+
+    def describe(self):
+        return "standard output"
 
     def land(self, text, deadline, **kwargs):
         if self.cancelled.is_set() or time.monotonic() >= deadline:

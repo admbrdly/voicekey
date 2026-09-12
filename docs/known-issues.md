@@ -38,3 +38,36 @@ so generic final text is preserved/copied instead of automatically rebound.
 Emacs still uses shared Wayland previews, which can deactivate independently
 of its pinned final insertion. Preventing the original focus theft remains
 the outstanding Playwright/compositor work.
+
+## Emacs dictation appears lost after read-only buffer refusal
+
+**Status:** root cause found and fixed in voicekey. Restart the service to
+load the fix.
+
+Dictation in Emacs appeared to disappear instead of being inserted.
+Recording and transcription succeeded, but Emacs refused final insertion
+because the pinned buffer was read-only. Voicekey copied the final transcript
+to the clipboard and preserved it in the recovery files. The fallback was
+not apparent to the user.
+
+Cause: the dictation was aimed at a second Emacs process, but voicekey pins
+buffers through `emacsclient`, which reaches only the server process. The
+pin therefore bound the server's selected buffer instead of the intended
+buffer. The read-only guard prevented insertion into the wrong process;
+with a writable buffer selected there, the text could have been inserted
+silently into the other Emacs. Neither focus theft nor a transcription
+failure was involved.
+
+Fix: the focused window's process ID, which niri, sway and Hyprland report,
+travels with the pin request, and `voicekey--pin` refuses a window owned by
+another Emacs process. The pin acknowledgement now describes
+the bound buffer (name, major mode, read-only state, Evil state); the daemon
+logs it and journals it with each delivery attempt, and the read-only refusal
+names the buffer. A refused insertion that falls back to the clipboard is
+announced with a critical notification that persists until dismissed. The
+read-only insertion guard is unchanged.
+
+Remaining: a second Emacs process is refused rather than served. Open new
+frames from the server Emacs (`emacsclient -c`) instead of launching another
+`emacs`. Under a compositor that reports no process ID the check does not
+apply, and the pin binds the server's selected buffer as before.

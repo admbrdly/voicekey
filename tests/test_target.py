@@ -101,10 +101,13 @@ class TargetTests(unittest.TestCase):
         type_text.assert_not_called()
 
     def test_emacs_requires_acknowledged_pin_and_reports_partial_errors(self):
-        pinning = Mock(id='pin', valid=False)
+        pinning = Mock(id='pin', valid=False,
+                       reason='the focused window belongs to Emacs process 5, not to this server (process 6)')
         target = EmacsTarget(NotifyPreview('dictate'), Window(7, True), 'emacs', pinning)
         with patch('voicekey.target.emacs.insert') as insert:
-            self.assertEqual(self.land(target).outcome, Outcome.REFUSED)
+            landing = self.land(target)
+        self.assertEqual(landing.outcome, Outcome.REFUSED)
+        self.assertEqual(landing.reason, pinning.reason)
         insert.assert_not_called()
         for error, outcome in ((emacs.EmacsRefused('read-only'), Outcome.REFUSED),
                                 (emacs.EmacsError('hook failed'), Outcome.UNKNOWN),
@@ -140,6 +143,20 @@ class TargetTests(unittest.TestCase):
         target.show('live text')
         self.assertEqual(self.ime._preview_pending, ('live text', 1, target.preview.owner))
         rebind.assert_called_once()
+
+    def test_binding_hands_the_focused_window_process_to_the_pin(self):
+        with patch('voicekey.target.focus.focused', return_value=Focus(7, 'emacs', 4242)), \
+                patch('voicekey.target.emacs.PendingPin') as pin:
+            target = bind(None, DictationConfig(ime=False), False)
+        self.assertIsInstance(target, EmacsTarget)
+        pin.assert_called_once_with(4242)
+
+    def test_targets_describe_their_binding_for_the_journal(self):
+        pinning = Mock(id='pin', valid=True, describe=Mock(return_value="buffer 'notes.org' (org-mode)"))
+        self.assertEqual(EmacsTarget(NotifyPreview('dictate'), Window(7, True), 'emacs', pinning).describe(),
+                         "emacs buffer 'notes.org' (org-mode)")
+        self.assertEqual(WtypeTarget(NotifyPreview('dictate'), Window(7, True), 'foot').describe(),
+                         'wtype target in foot')
 
     def test_emacs_falls_back_to_notifications_without_a_usable_ime(self):
         with patch('voicekey.target.focus.focused', return_value=Focus(7, 'emacs')), \

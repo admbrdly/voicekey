@@ -15,8 +15,8 @@ class FocusTests(unittest.TestCase):
     @patch.dict("voicekey.focus.os.environ", {"NIRI_SOCKET": "/run/niri.sock"}, clear=True)
     @patch("voicekey.focus.subprocess.run")
     def test_niri(self, run):
-        run.return_value = _run('{"id": 42, "app_id": "emacs", "title": "private"}')
-        self.assertEqual(focused(), Focus(42, "emacs"))
+        run.return_value = _run('{"id": 42, "app_id": "emacs", "title": "private", "pid": 4242}')
+        self.assertEqual(focused(), Focus(42, "emacs", 4242))
         self.assertEqual(run.call_args.args[0][:2], ["niri", "msg"])
 
     @patch.dict("voicekey.focus.os.environ", {"SWAYSOCK": "/run/sway.sock"}, clear=True)
@@ -25,17 +25,26 @@ class FocusTests(unittest.TestCase):
         run.return_value = _run(
             '{"type": "root", "focused": false, "nodes": [{"type": "output", "nodes": ['
             '{"type": "workspace", "focused": false, "nodes": [], "floating_nodes": ['
-            '{"type": "floating_con", "id": 7, "focused": true, "app_id": "foot"}]}]}]}'
+            '{"type": "floating_con", "id": 7, "focused": true, "app_id": "foot", "pid": 99}]}]}]}'
         )
-        self.assertEqual(focused(), Focus(7, "foot"))
+        self.assertEqual(focused(), Focus(7, "foot", 99))
         self.assertEqual(run.call_args.args[0][:2], ["swaymsg", "-t"])
 
     @patch.dict("voicekey.focus.os.environ", {"HYPRLAND_INSTANCE_SIGNATURE": "abc"}, clear=True)
     @patch("voicekey.focus.subprocess.run")
     def test_hyprland_uses_the_window_address(self, run):
-        run.return_value = _run('{"address": "0x55d1", "class": "firefox"}')
-        self.assertEqual(focused(), Focus("0x55d1", "firefox"))
+        run.return_value = _run('{"address": "0x55d1", "class": "firefox", "pid": 5}')
+        self.assertEqual(focused(), Focus("0x55d1", "firefox", 5))
         self.assertEqual(run.call_args.args[0][:2], ["hyprctl", "-j"])
+
+    @patch.dict("voicekey.focus.os.environ", {"NIRI_SOCKET": "/run/niri.sock"}, clear=True)
+    @patch("voicekey.focus.subprocess.run")
+    def test_missing_or_invalid_process_id_is_unknown(self, run):
+        for pid in ('"7"', "true", "-1", "0", "null"):
+            run.return_value = _run('{"id": 1, "app_id": "a", "pid": %s}' % pid)
+            self.assertEqual(focused(), Focus(1, "a"))
+        run.return_value = _run('{"id": 1, "app_id": "a"}')
+        self.assertIsNone(focused().pid)
 
     @patch.dict("voicekey.focus.os.environ", {"XDG_CURRENT_DESKTOP": "river"}, clear=True)
     @patch("voicekey.focus.subprocess.run")

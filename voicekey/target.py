@@ -154,6 +154,10 @@ class Target:
     def before(self, wait=0.0):
         return None
 
+    def describe(self) -> str:
+        """The bound destination, for logs and the delivery journal."""
+        return f"{self.kind or 'unbound'} target in {self.app_id or 'an unknown application'}"
+
     def land(self, text: str, deadline: float, *, operation_id: str, prefix: str = "") -> Landing:
         with self._attempt_lock:
             if self._attempted:
@@ -199,18 +203,24 @@ class EmacsTarget(Target):
     kind = "emacs"
     capabilities = Capabilities("buffer", acknowledgement=True)
 
-    def __init__(self, preview, window, app_id, pinning=None):
+    def __init__(self, preview, window, app_id, pinning=None, pid=None):
         super().__init__(preview, window, app_id)
-        self.pinning = pinning or emacs.PendingPin()
+        self.pinning = pinning or emacs.PendingPin(pid)
 
     def before(self, wait=0.0):
         return self.pinning.before(wait)
 
+    def describe(self) -> str:
+        return f"emacs {self.pinning.describe()}"
+
     def _land(self, text, deadline, operation_id, prefix):
         self.pinning.before(max(0, deadline - time.monotonic()))
-        if not self.pinning.valid or time.monotonic() >= deadline or self.cancelled.is_set():
+        if not self.pinning.valid:
             self.clear()
-            return Landing(reason="Emacs did not acknowledge the original buffer in time")
+            return Landing(reason=self.pinning.reason or "Emacs did not acknowledge the original buffer in time")
+        if time.monotonic() >= deadline or self.cancelled.is_set():
+            self.clear()
+            return Landing(reason="Emacs insertion expired or cancelled before submission")
         try:
             if not self.preview.clear(timeout=max(0, deadline - time.monotonic())):
                 return Landing(reason="Emacs preview cleanup did not finish before insertion")
@@ -259,10 +269,13 @@ def bind(ime: InputMethod | None, cfg: DictationConfig, landing: bool) -> Target
 
     Emacs shares the Wayland preview. Start its buffer pin before waiting for
     the input method; final insertion remains bound to that acknowledged buffer.
+    The pin names the focused window's process so that a second Emacs process
+    is refused rather than bound to the server's own selected buffer.
     """
     focused = focus.focused(timeout=0.2)
     window = Window(focused.id, cfg.require_same_window)
-    editor = EmacsTarget(NotifyPreview("dictate"), window, focused.app_id) if focused.app_id == "emacs" else None
+    editor = (EmacsTarget(NotifyPreview("dictate"), window, focused.app_id, pid=focused.pid)
+              if focused.app_id == "emacs" else None)
     generation = None
     if ime is not None:
         try:

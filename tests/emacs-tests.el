@@ -1,6 +1,7 @@
 ;;; Tests use only a separate batch Emacs, never the user's server.
 (require 'ert)
 (require 'cl-lib)
+(require 'json)
 (require 'voicekey)
 
 (defmacro voicekey-test-buffer (text &rest body)
@@ -16,6 +17,8 @@
 
 (defun voicekey-test-expiry () (+ (float-time) 60))
 (defun voicekey-test-pin () (voicekey--pin "pin" (voicekey-test-expiry)))
+(defun voicekey-test-ack () (json-read-from-string (voicekey-test-pin)))
+(defun voicekey-test-before () (cdr (assq 'before (voicekey-test-ack))))
 (defun voicekey-test-insert (text &optional operation)
   (voicekey--insert "pin" (or operation "operation") (voicekey-test-expiry) text ""))
 
@@ -84,12 +87,42 @@
     (should (equal (voicekey-test-insert "next") "ok"))
     (should (equal (buffer-string) "old next"))))
 
-(ert-deftest voicekey-readonly-is-a-definite-refusal ()
+(ert-deftest voicekey-readonly-is-a-definite-refusal-naming-the-buffer ()
   (voicekey-test-buffer "old"
     (voicekey-test-pin)
     (setq buffer-read-only t)
-    (should (string-prefix-p "refused:" (voicekey-test-insert "next")))
+    (let ((answer (voicekey-test-insert "next")))
+      (should (string-prefix-p "refused: buffer is read-only" answer))
+      (should (string-match-p (regexp-quote (buffer-name)) answer))
+      (should (string-match-p (symbol-name major-mode) answer)))
     (should (equal (buffer-string) "old"))))
+
+(ert-deftest voicekey-pin-describes-the-bound-buffer ()
+  (voicekey-test-buffer "old"
+    (let ((ack (voicekey-test-ack)))
+      (should (equal (cdr (assq 'before ack)) "d"))
+      (should (equal (cdr (assq 'buffer ack)) (buffer-name)))
+      (should (equal (cdr (assq 'mode ack)) (symbol-name major-mode)))
+      (should (eq (cdr (assq 'read_only ack)) :json-false))
+      (should (equal (cdr (assq 'state ack)) "none"))
+      (should (= (cdr (assq 'pid ack)) (emacs-pid))))
+    (setq buffer-read-only t)
+    (should (eq (cdr (assq 'read_only (voicekey-test-ack))) t))
+    (should (assoc "pin" voicekey--pins))))
+
+(ert-deftest voicekey-pin-for-another-emacs-process-is-refused ()
+  (voicekey-test-buffer "old"
+    (let ((answer (voicekey--pin "pin" (voicekey-test-expiry) (1+ (emacs-pid)))))
+      (should (string-prefix-p "refused:" answer))
+      (should (string-match-p "not to this server" answer)))
+    (should-not voicekey--pins)
+    (should (string-prefix-p "refused:" (voicekey-test-insert "next")))
+    (should (equal (buffer-string) "old"))
+    (should (equal (cdr (assq 'buffer (json-read-from-string
+                                        (voicekey--pin "pin" (voicekey-test-expiry) (emacs-pid)))))
+                   (buffer-name)))
+    (should (equal (voicekey-test-insert "next" "own") "ok"))
+    (should (equal (buffer-string) "old next"))))
 
 (ert-deftest voicekey-mutation-hook-error-is-unknown-and-text-rolls-back ()
   (voicekey-test-buffer "old"
@@ -140,7 +173,7 @@
     (evil-local-mode 1)
     (evil-normal-state)
     (goto-char 3)
-    (should (equal (voicekey-test-pin) "b"))
+    (should (equal (voicekey-test-before) "b"))
     (should (equal (voicekey-test-insert "next") "ok"))
     (should (equal (buffer-string) "a b next"))
     (should (eq evil-state 'normal))))

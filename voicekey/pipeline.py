@@ -219,7 +219,7 @@ class Pipeline:
                 job.target.completed(outcome)
             job.target.clear()
             self.ledger.complete(job.id, str(outcome))
-            log.info("%s outcome=%s", job.id, outcome)
+            log.info("%s outcome=%s%s", job.id, outcome, f" ({reason})" if reason else "")
             with self._items_lock:
                 self._items.pop(job.id, None)
             self.settled()
@@ -402,7 +402,8 @@ class Pipeline:
         if job.session_id:
             deadline = min(deadline, time.monotonic() + self.cfg.persistent.delivery_seconds)
         self._save("deliver", lambda: self.journal.append(job.id, "delivery-attempt", attempt=attempt,
-                                                          final=job.final, deadline=deadline))
+                                                          final=job.final, deadline=deadline,
+                                                          target=job.target.describe()))
         job.target.permit = str(self.journal.path(job.id, ".permit"))
         deadline = min(deadline, self._deadline(job))
         mark = self.spacing.mark()
@@ -445,8 +446,15 @@ class Pipeline:
                 except Exception as exc:
                     log.warning("clipboard failed: %s", exc)
             self._complete(job, outcome, landing.reason)
-            self.notify("📋 Copied" if outcome == Outcome.COPIED else "voicekey: transcript saved",
-                   f"{landing.reason}; {self.journal.path(job.id, '.txt')}", channel="dictate", ms=10000)
+            copied = outcome == Outcome.COPIED
+            body = f"{landing.reason}; {self.journal.path(job.id, '.txt')}"
+            if job.target.kind == "clipboard" or job.session_id:
+                self.notify("📋 Copied" if copied else "voicekey: transcript saved", body, channel="dictate", ms=10000)
+            else:
+                # A bound destination refused the text. A transient notice went
+                # unnoticed in practice; this one persists until dismissed.
+                self.notify("📋 Copied, not inserted" if copied else "voicekey: transcript saved, not inserted",
+                            body, error=True)
 
     def _agent(self, job):
         attempt = self.ledger.reserve(job.id)
