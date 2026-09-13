@@ -47,6 +47,7 @@ class PersistentSession:
         self._stop_lock = threading.Lock()
         self.deadline = float("inf")
         self.reason = ""
+        self.stop_instruction = "press a dictation key to stop"
         self.paused = False
         self.sequence = 0
         self.current = None
@@ -92,7 +93,7 @@ class PersistentSession:
         if self.stopping.is_set():
             return
         self._last_status = time.monotonic()
-        notify("● Persistent listening", "press the persistent key to stop", ms=0, channel="persistent")
+        notify("● Persistent listening", self.stop_instruction, ms=0, channel="persistent")
 
     def request_stop(self, reason="stopped by key", *, paused=False):
         with self._stop_lock:

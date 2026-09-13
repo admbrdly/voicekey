@@ -391,7 +391,7 @@ def predownload(backend: BackendConfig, streaming: StreamingConfig,
         ensure_model(backend.model_dir)
     if streaming.model_dir:
         ensure_model(streaming.model_dir)
-    if persistent is not None and persistent.key:
+    if persistent is not None:
         ensure_file(persistent.vad_model)
     if polish is not None and polish.backend != "none" and polish.server.model_file:
         ensure_file(polish.server.model_file)

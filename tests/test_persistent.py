@@ -714,6 +714,170 @@ class PersistentTests(unittest.TestCase):
         self.assertFalse(any(c[0]=='commit_string' for c in ime._im.calls))
         self.copy.assert_not_called()
 
+    def test_cleanup_uses_only_previous_delivered_batch_and_records_context(self):
+        from voicekey.polish import Polisher, Reply, S1MiniFormat
+        import json
+        backend = Mock(chat=Mock(side_effect=[Reply("I'd like to", True),
+                                              Reply("I'd like to go to the store.", True)]))
+        cleaner = Polisher(backend, S1MiniFormat('semi-formal'), 1)
+        self.pipeline.polisher = lambda: cleaner
+        self.backend.transcribe.side_effect = ["I'd like to", 'Go to the store.']
+        self.start()
+        self.speak()
+        wait_for(lambda: bool(self.pipeline._polish_context.get(self.session.id, ('', ''))[1]))
+        self.speak()
+        wait_for(lambda: self.insert.call_count == 2)
+        self.finish()
+        self.assertEqual([call.args[0] for call in self.insert.call_args_list], ["I'd like to", 'go to the store.'])
+        events = [json.loads(line) for path in Path(self.tmp.name+'/sessions').glob('*.jsonl')
+                  for line in path.read_text().splitlines()]
+        self.assertTrue(any(e.get('polish_context') == "I'd like to" for e in events))
+        self.assertNotIn(self.session.id, self.pipeline._polish_context)
+
+    def test_typing_or_disabled_context_omits_previous_batch(self):
+        for disabled in (False, True):
+            with self.subTest(disabled=disabled):
+                cleaner = Mock(polish=Mock(return_value='Text.'))
+                self.pipeline.polisher = lambda: cleaner
+                self.cfg.persistent.polish_context = not disabled
+                self.start(recorder=ControlledRecorder())
+                self.recorder = self.session.recorder
+                self.speak()
+                wait_for(lambda: bool(self.pipeline._polish_context.get(self.session.id, ('', ''))[1]))
+                if not disabled:
+                    self.pipeline.spacing.user_typed()
+                self.speak()
+                wait_for(lambda: cleaner.polish.call_count == 2)
+                self.finish()
+                self.assertNotIn('context', cleaner.polish.call_args.kwargs)
+
+    def test_typing_during_context_cleanup_falls_back_to_raw(self):
+        cleaner = Mock(polish=Mock(return_value='Text.'))
+        self.pipeline.polisher = lambda: cleaner
+        self.start()
+        self.speak()
+        wait_for(lambda: bool(self.pipeline._polish_context.get(self.session.id, ('', ''))[1]))
+        def clean(*args, **kwargs):
+            self.assertEqual(kwargs.get('context'), 'Text.')
+            self.pipeline.spacing.user_typed()
+            return 'changed'
+        cleaner.polish.side_effect = clean
+        self.backend.transcribe.return_value = 'Raw words.'
+        self.speak()
+        wait_for(lambda: self.insert.call_count == 2)
+        self.finish()
+        self.assertEqual(self.insert.call_args.args[0], 'Raw words.')
+
+    def test_pending_batch_prevents_using_older_delivered_context(self):
+        cleaner = Mock(polish=Mock(return_value='Text.'))
+        self.pipeline.polisher = lambda: cleaner
+        self.start()
+        self.speak()
+        wait_for(lambda: bool(self.pipeline._polish_context.get(self.session.id, ('', ''))[1]))
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        def insert(*args, **kwargs):
+            entered.set()
+            release.wait(3)
+        self.insert.side_effect = insert
+        self.speak()
+        self.assertTrue(entered.wait(1))
+        self.speak()
+        wait_for(lambda: cleaner.polish.call_count == 3)
+        self.assertEqual(cleaner.polish.call_args_list[1].kwargs.get('context'), 'Text.')
+        self.assertNotIn('context', cleaner.polish.call_args_list[2].kwargs)
+        release.set()
+        self.finish()
+
+    def dictation_daemon(self):
+        daemon = Daemon(self.cfg, recorder_factory=ControlledRecorder, journal=self.pipeline.journal)
+        daemon.pipeline = self.pipeline
+        daemon.gate = Gate(self.tmp.name+'/lock')
+        daemon.gate.open()
+        daemon.vad, daemon.backend = self.vad, self.backend
+        self.addCleanup(daemon.close)
+        patch('voicekey.daemon.target_mod.bind', return_value=self.binding).start()
+        return daemon
+
+    def test_f9_works_without_an_extra_persistent_key(self):
+        self.cfg.persistent.key = ''
+        daemon = self.dictation_daemon()
+        with patch('voicekey.daemon.create_backend', return_value=self.backend), \
+                patch('voicekey.daemon.create_streaming', return_value=None), \
+                patch('voicekey.daemon.SpeechDetector', return_value=self.vad) as detector:
+            self.cfg.dictation.ime = False
+            daemon.load()
+        detector.assert_called_once_with(self.cfg.persistent.vad_model)
+        daemon._on_key('keyboard', ecodes.KEY_F9, 1)
+        self.assertIsNotNone(daemon.persistent)
+        daemon._on_device_lost('keyboard')
+        self.assertTrue(daemon.persistent.done.wait(5))
+
+    def test_f9_hold_delivers_before_release_and_flushes_tail(self):
+        daemon = self.dictation_daemon()
+        daemon._on_key('keyboard', ecodes.KEY_F9, 1)
+        session = daemon.persistent
+        wait_for(session.ready.is_set)
+        # Feed one complete batch while the key remains held.
+        session.recorder.push(np.ones(5120, dtype=np.float32)*.2)
+        session.recorder.push(np.zeros(5120, dtype=np.float32))
+        wait_for(lambda: self.insert.call_count == 1)
+        self.assertFalse(session.stopping.is_set())
+        session.recorder.push(np.ones(5120, dtype=np.float32)*.2)
+        daemon._gesture = (session, time.monotonic() - self.cfg.tap_seconds - .1)
+        daemon._on_key('keyboard', ecodes.KEY_F9, 0)
+        self.assertTrue(session.done.wait(5))
+        self.assertEqual(self.insert.call_count, 2)
+        self.copy.assert_not_called()
+
+    def test_f9_tap_latches_repeat_is_ignored_and_next_press_stops(self):
+        daemon = self.dictation_daemon()
+        daemon._on_key('keyboard', ecodes.KEY_F9, 1)
+        session = daemon.persistent
+        daemon._on_key('keyboard', ecodes.KEY_F9, 2)
+        daemon._on_key('keyboard', ecodes.KEY_F9, 1)  # duplicate down
+        self.assertFalse(session.stopping.is_set())
+        self.cfg.tap_seconds = 10  # keep the tap test independent of scheduler delays
+        daemon._gesture = (session, time.monotonic())
+        daemon._on_key('keyboard', ecodes.KEY_F9, 0)
+        self.assertFalse(session.stopping.is_set())
+        daemon._on_key('keyboard', ecodes.KEY_F9, 1)
+        self.assertTrue(session.stopping.is_set())
+        daemon._on_key('keyboard', ecodes.KEY_F9, 0)
+        self.assertTrue(session.done.wait(5))
+        self.assertIsNone(daemon._gesture)
+
+    def test_f9_release_requires_original_device_and_disconnect_stops(self):
+        daemon = self.dictation_daemon()
+        daemon._on_key('keyboard', ecodes.KEY_F9, 1)
+        session = daemon.persistent
+        daemon._gesture = (session, time.monotonic() - 1)
+        daemon._on_key('other', ecodes.KEY_F9, 0)
+        self.assertFalse(session.stopping.is_set())
+        daemon._on_device_lost('keyboard')
+        self.assertTrue(session.stopping.is_set())
+        self.assertIsNone(daemon._gesture)
+        self.assertTrue(session.done.wait(5))
+
+    def test_f9_chord_release_and_additional_toggle_use_same_engine(self):
+        self.cfg.dictate_key = 'KEY_RIGHTALT+KEY_F9'
+        self.cfg.dictate_toggle_key = 'KEY_F12'
+        daemon = self.dictation_daemon()
+        daemon._on_key('keyboard', ecodes.KEY_RIGHTALT, 1)
+        daemon._on_key('keyboard', ecodes.KEY_F9, 1)
+        session = daemon.persistent
+        daemon._gesture = (session, time.monotonic() - 1)
+        daemon._on_key('keyboard', ecodes.KEY_RIGHTALT, 0)
+        self.assertTrue(session.done.wait(5))
+        daemon._on_key('keyboard', ecodes.KEY_F9, 0)
+        daemon._on_key('keyboard', ecodes.KEY_F12, 1)
+        session = daemon.persistent
+        self.assertIsNotNone(session)
+        daemon._on_key('keyboard', ecodes.KEY_F12, 0)
+        self.assertFalse(session.stopping.is_set())
+        daemon._on_key('keyboard', ecodes.KEY_F12, 1)
+        self.assertTrue(session.done.wait(5))
+
     def test_f11_toggles_and_release_or_escape_does_not_stop(self):
         daemon = Daemon(self.cfg, recorder_factory=ControlledRecorder, journal=self.pipeline.journal)
         daemon.pipeline = self.pipeline
@@ -728,9 +892,9 @@ class PersistentTests(unittest.TestCase):
             daemon._on_key('keyboard',ecodes.KEY_F11,0)
             daemon._on_key('keyboard',ecodes.KEY_ESC,1)
             with patch('voicekey.daemon.notify') as notify:
-                daemon._on_key('keyboard',ecodes.KEY_F9,1)
+                daemon._on_key('keyboard',ecodes.KEY_F10,1)
                 self.assertEqual(notify.call_args.args[0], 'voicekey: busy')
-                daemon._on_key('keyboard',ecodes.KEY_F9,0)
+                daemon._on_key('keyboard',ecodes.KEY_F10,0)
             self.assertFalse(session.stopping.is_set())
             daemon._on_key('keyboard',ecodes.KEY_F11,1)
             self.assertTrue(session.stopping.is_set())

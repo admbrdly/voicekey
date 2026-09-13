@@ -71,6 +71,9 @@ class Pipeline:
         self._items = {}
         self._recorders = {}
         self._session_deadlines = {}
+        # Only the immediately preceding, successfully delivered batch is eligible.
+        # A prepared but pending batch invalidates older context without waiting.
+        self._polish_context = {}  # session -> (utterance id, bounded text, activity mark)
         self._stalled_audio = 0.0
         self._stalled_corpus_audio = 0.0
         self._items_lock = threading.Lock()
@@ -122,6 +125,7 @@ class Pipeline:
     def forget_session(self, identity):
         with self._items_lock:
             self._session_deadlines.pop(identity, None)
+            self._polish_context.pop(identity, None)
 
     def _deadline(self, job):
         with self._items_lock:
@@ -308,6 +312,12 @@ class Pipeline:
         minimum = self.cfg.persistent.polish_min_words if job.session_id else self.cfg.polish.min_words
         eligible = (not drop and job.action == "dictate" and polisher is not None
                     and len(polish.words(job.raw)) >= minimum)
+        context = ""
+        if job.session_id and eligible and self.cfg.persistent.polish_context:
+            with self._items_lock:
+                previous = self._polish_context.get(job.session_id)
+            if previous is not None and previous[2] == self.spacing.mark():
+                context = previous[1]
         polish_result = "below word threshold"
         if polisher is None:
             polish_result = "disabled" if self.cfg.polish.backend == "none" else "polisher unavailable"
@@ -324,13 +334,17 @@ class Pipeline:
                 cleaned = self._slots["polish"].call(
                     # Persistent utterances inherit the original session target's app ID.
                     lambda: polisher.polish(job.raw, max(0, deadline - time.monotonic()),
-                                           app_id=job.target.app_id), deadline)
+                                           app_id=job.target.app_id, **({"context": context} if context else {})), deadline)
+                context_stale = bool(context and previous[2] != self.spacing.mark())
+                if context_stale:
+                    cleaned = None  # typing during cleanup made the context stale
                 if isinstance(cleaned, str) and cleaned.strip() and len(cleaned.encode()) <= MAX_TEXT_BYTES:
                     final = cleaned
                     polish_result = "applied"
                 else:
                     polish_result = "raw fallback: model unavailable or output rejected"
-                    reason = getattr(polisher, "last_reason", None)
+                    reason = ("context invalidated by keyboard activity" if context_stale
+                              else getattr(polisher, "last_reason", None))
                     if isinstance(reason, str):
                         polish_result = f"raw fallback: {reason}"
             except Exception as exc:
@@ -348,7 +362,7 @@ class Pipeline:
             style = self.cfg.polish.app_styles.get(job.target.app_id, style)
         self._save("polish", lambda: self.journal.append(job.id, "final", raw=job.raw, final=final,
             polished=polished, overridden=overridden, polish_result=polish_result,
-            polish_style=style, hook_result=hook_result, action=job.action))
+            polish_style=style, polish_context=context, hook_result=hook_result, action=job.action))
         if self.cfg.recordings_dir and job.samples is not None:
             try:
                 self._slots["corpus"].call(lambda: recovery.keep(self.cfg.recordings_dir, job.samples,
@@ -362,6 +376,9 @@ class Pipeline:
         if not self.ledger.transition(job.id, Stage.POLISHING, Stage.READY, final=final,
                                       audio_seconds=0, gated=job.action == "dictate"):
             return
+        if job.session_id and not drop:
+            with self._items_lock:
+                self._polish_context[job.session_id] = (job.id, "", self.spacing.mark())
         self._remember(job)
         if job.action == "agent" and sum(not u.gated for u in self.ledger.snapshots()) > self.cfg.pipeline.max_pending:
             self._complete(job, Outcome.SAVED, "agent backlog full", "polish")
@@ -422,6 +439,11 @@ class Pipeline:
         if self.ledger.get(job.id) is None:
             return
         if landing.landed:
+            if job.session_id:
+                with self._items_lock:
+                    previous = self._polish_context.get(job.session_id)
+                    if previous is not None and previous[0] == job.id:
+                        self._polish_context[job.session_id] = (job.id, polish.context_tail(job.final), mark)
             self.spacing.inserted(job.target.window_id, job.final, mark)
             self._complete(job, landing.outcome)
             if job.failure:

@@ -32,7 +32,7 @@ from .spacing import owed
 from .target import LABEL, ClipboardTarget, NotifyPreview, Window
 
 log = logging.getLogger("voicekey.daemon")
-HOLD, TOGGLE = "hold", "toggle"
+HOLD, TOGGLE, TAP_HOLD = "hold", "toggle", "tap/hold"
 
 def _keycode(name: str) -> int:
     code = ecodes.ecodes.get(name)
@@ -62,9 +62,9 @@ def fix_environment() -> None:
 class Daemon:
     def __init__(self, cfg: Config, *, recorder_factory=Recorder, journal=None):
         self.cfg = cfg
-        self.actions = {_key_chord(cfg.dictate_key): ("dictate", HOLD),
+        self.actions = {_key_chord(cfg.dictate_key): ("persistent", TAP_HOLD),
                         _key_chord(cfg.agent_key): ("agent", HOLD)}
-        for chord, action in ((cfg.dictate_toggle_key, "dictate"), (cfg.agent_toggle_key, "agent")):
+        for chord, action in ((cfg.dictate_toggle_key, "persistent"), (cfg.agent_toggle_key, "agent")):
             if chord:
                 self.actions[_key_chord(chord)] = (action, TOGGLE)
         if cfg.persistent.key:
@@ -73,6 +73,7 @@ class Daemon:
         self.recorder = recorder_factory()
         self.session = None
         self.persistent = None
+        self._gesture = None  # (session, key-down time), until its chord is released
         self.vad = None
         self._vad_slot = Slot("speech-detector")
         self.pressed = {}
@@ -97,11 +98,10 @@ class Daemon:
             log.exception("transcription backend failed to load")
         if self.backend_error:
             notify("voicekey: transcription unavailable", self.backend_error, error=True)
-        if self.cfg.persistent.key:
-            try:
-                self.vad = SpeechDetector(self.cfg.persistent.vad_model)
-            except Exception as exc:
-                notify("voicekey: persistent mode unavailable", str(exc), error=True)
+        try:
+            self.vad = SpeechDetector(self.cfg.persistent.vad_model)
+        except Exception as exc:
+            notify("voicekey: dictation unavailable", str(exc), error=True)
         try:
             self.streaming = create_streaming(self.cfg.streaming)
         except BackendUnavailable as exc:
@@ -167,7 +167,7 @@ class Daemon:
 
     def bindings(self):
         return [f"{key}={action}({behavior})" for key, action, behavior in (
-            (self.cfg.dictate_key, "dictate", HOLD), (self.cfg.agent_key, "agent", HOLD),
+            (self.cfg.dictate_key, "dictate", TAP_HOLD), (self.cfg.agent_key, "agent", HOLD),
             (self.cfg.dictate_toggle_key, "dictate", TOGGLE),
             (self.cfg.agent_toggle_key, "agent", TOGGLE),
             (self.cfg.persistent.key, "persistent", TOGGLE)) if key]
@@ -191,10 +191,22 @@ class Daemon:
         pressed = self.pressed.setdefault(device, set())
         session = self.session
         if value == 0:
+            if self._gesture is not None:
+                persistent, started = self._gesture
+                if device == persistent.device and code in persistent.chord:
+                    self._gesture = None
+                    if persistent is self.persistent and not persistent.stopping.is_set():
+                        if time.monotonic() - started >= self.cfg.tap_seconds:
+                            persistent.request_stop("key released")
+                        else:
+                            persistent.stop_instruction = "press a dictation key to stop"
+                            persistent.status()
             if (session is not None and session.behavior == HOLD
                     and session.device == device and code in session.chord):
                 self._finish()
             pressed.discard(code)
+            return
+        if value != 1 or code in pressed:
             return
         pressed.add(code)
         matches = [(chord, action) for chord, action in self.actions.items()
@@ -222,12 +234,17 @@ class Daemon:
                 self._finish()
             return
         if action == "persistent":
-            self._start_persistent(device, chord)
+            started = time.monotonic()
+            instruction = ("release to stop; tap to keep listening" if behavior == TAP_HOLD
+                           else "press a dictation key to stop")
+            self._start_persistent(device, chord, instruction=instruction)
+            if behavior == TAP_HOLD and self.persistent is not None:
+                self._gesture = (self.persistent, started)
             return
         self._start(device, chord, behavior, action,
                     "press again to stop" if behavior == TOGGLE else "release to stop")
 
-    def _start_persistent(self, device, chord, recorder=None):
+    def _start_persistent(self, device, chord, recorder=None, *, instruction="press a dictation key to stop"):
         if self.vad is None or self.backend is None or self._vad_slot.busy:
             notify("voicekey: persistent mode unavailable", "speech models unavailable or a detector call is still running", error=True)
             return
@@ -238,6 +255,7 @@ class Daemon:
         session = PersistentSession(self.cfg, self.pipeline, recorder or self.recorder_factory(),
             lambda: target_mod.bind(self.ime, self.cfg.dictation, False), self.vad, self._vad_slot,
             self.streaming, device=device, chord=chord)
+        session.stop_instruction = instruction
         self.persistent = session
         try:
             if not session.start():
@@ -301,6 +319,8 @@ class Daemon:
 
     def _on_device_lost(self, device):
         self.pressed.pop(device, None)
+        if self._gesture is not None and self._gesture[0].device == device:
+            self._gesture = None
         if self.persistent is not None and device == self.persistent.device:
             self.persistent.request_stop("keyboard disconnected", paused=True)
         if self.session is not None and device == self.session.device:

@@ -188,6 +188,33 @@ class InstructFormat:
         return self.prompt.replace("{style}", style) if style else self.system, text
 
 
+def context_tail(text: str) -> str:
+    """Bound previous dictation context, preserving its spelling and punctuation."""
+    matches = list(re.finditer(r"\S+", text))
+    if not matches:
+        return ""
+    start = matches[max(0, len(matches) - 50)].start()
+    # Never split a word to satisfy the character limit.
+    start = next((m.start() for m in matches if m.start() >= max(start, len(text) - 800)), len(text))
+    return text[start:].strip()
+
+
+def current_reply(reply: Reply, context: str, raw: str) -> Reply:
+    """Enforce a read-only prefix; only the new suffix can reach insertion."""
+    output = reply.text.strip()
+    if not output.startswith(context):
+        raise PolishError("previous context changed")
+    suffix = output[len(context):]
+    if not suffix or not suffix[0].isspace():
+        raise PolishError("previous context boundary changed")
+    allowed = set(words(raw))
+    for word in list(allowed):
+        allowed.update(EXPANSIONS.get(word, "").split())
+    if set(words(suffix)) & (set(words(context)) - allowed):
+        raise PolishError("previous context leaked into new text")
+    return Reply(suffix.strip(), reply.complete)
+
+
 def load_prompt(path: str) -> str:
     if not path:
         return INSTRUCT_PROMPT
@@ -279,17 +306,21 @@ class Polisher:
         self._slot = Slot("polish-request")
         self.last_reason = "not run"
 
-    def polish(self, text: str, wait: float, *, app_id: str | None = None) -> str | None:
+    def polish(self, text: str, wait: float, *, app_id: str | None = None, context: str = "") -> str | None:
         """Cleaned text or None for raw fallback, within the caller's wait."""
         style = self.app_styles.get(app_id)
-        system, user = self.format.messages(text, style)
+        context = context_tail(context)
+        combined = context + " " + text if context else text
+        system, user = self.format.messages(combined, style)
         started = time.monotonic()
         try:
             timeout = min(self.timeout, wait)
             reply = self._slot.call(
-                lambda: self.backend.chat(system, user, max_tokens_for(text), timeout),
+                lambda: self.backend.chat(system, user, max_tokens_for(combined), timeout),
                 started + timeout,
             )
+            if context:
+                reply = current_reply(reply, context, text)
         except (WorkBusy, WorkTimeout):
             self.last_reason = "request busy or deadline expired"
             log.warning("polish skipped: request busy or deadline expired")

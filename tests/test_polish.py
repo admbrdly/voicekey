@@ -60,6 +60,60 @@ class FormatTests(unittest.TestCase):
             polish.load_prompt("/nonexistent/prompt.md")
 
 
+class ContextTests(unittest.TestCase):
+    def polisher(self, reply):
+        backend = Mock(chat=Mock(return_value=Reply(reply, True)))
+        return Polisher(backend, S1MiniFormat('semi-formal'), 1)
+
+    def test_exact_context_is_removed_and_only_new_text_is_returned(self):
+        p = self.polisher("I'd like to go to the store.")
+        self.assertEqual(p.polish('Go to the store.', 1, context="I'd like to"), 'go to the store.')
+        self.assertTrue(p.backend.chat.call_args.args[1].endswith("I'd like to Go to the store."))
+
+    def test_names_and_i_are_not_mechanically_lowercased(self):
+        for context, raw in [('The person is', 'John Smith.'), ('If so,', 'I agree.')]:
+            p = self.polisher(context + ' ' + raw)
+            self.assertEqual(p.polish(raw, 1, context=context), raw)
+
+    def test_changed_context_missing_context_and_missing_boundary_are_rejected(self):
+        for reply in ('I want to go shopping.', 'go shopping.', "I'd like today.", "I'd like to"):
+            p = self.polisher(reply)
+            self.assertIsNone(p.polish('Go shopping.', 1, context="I'd like to"))
+            self.assertIn('context', p.last_reason)
+        p = self.polisher("I'd like to go shopping.")
+        self.assertIsNone(p.polish('Go shopping.', 1, context="I'd like to."))
+
+    def test_words_copied_from_context_into_suffix_are_rejected(self):
+        p = self.polisher('Send it to Ethan. Tomorrow Ethan.')
+        self.assertIsNone(p.polish('Tomorrow.', 1, context='Send it to Ethan.'))
+        self.assertIn('leaked', p.last_reason)
+        p = self.polisher('We agreed. We will go.')
+        self.assertEqual(p.polish("We'll go.", 1, context='We agreed.'), 'We will go.')
+
+    def test_suffix_is_judged_against_new_text_not_context(self):
+        p = self.polisher('Earlier we agreed. Publish this.')
+        self.assertIsNone(p.polish('Do not publish this.', 1, context='Earlier we agreed.'))
+        p = self.polisher('Earlier we agreed. ' + 'Invented explanation. ' * 20)
+        self.assertIsNone(p.polish('Yes.', 1, context='Earlier we agreed.'))
+        p = self.polisher('Earlier we agreed. Yes.')
+        p.backend.chat.return_value = Reply('Earlier we agreed. Yes.', False)
+        self.assertIsNone(p.polish('Yes.', 1, context='Earlier we agreed.'))
+
+    def test_context_is_bounded_preserves_whitespace_and_does_not_split_words(self):
+        text = ' '.join(str(n) for n in range(70))
+        self.assertEqual(polish.context_tail(text), ' '.join(str(n) for n in range(20, 70)))
+        self.assertEqual(polish.context_tail('a' * 900 + ' tail.'), 'tail.')
+        self.assertEqual(polish.context_tail('a' * 900), '')
+        self.assertEqual(polish.context_tail('  A  sentence,\nwith spacing.  '), 'A  sentence,\nwith spacing.')
+        p = self.polisher('Yes.')
+        self.assertEqual(p.polish('Yes.', 1, context='a' * 900), 'Yes.')
+
+    def test_empty_context_preserves_original_request(self):
+        p = self.polisher('Hello.')
+        self.assertEqual(p.polish('Hello.', 1), 'Hello.')
+        self.assertEqual(p.backend.chat.call_args.args[:2], S1MiniFormat('semi-formal').messages('Hello.'))
+
+
 class JudgeTests(unittest.TestCase):
     def test_filler_only_matches_stretched_noise_but_preserves_meaningful_text(self):
         for text in ('Um', 'er ach um errrr uhhhh ugh gah', 'Uuuummmm…',

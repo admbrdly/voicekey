@@ -215,3 +215,16 @@ class PipelineConfigTests(unittest.TestCase):
         cfg.pipeline.max_audio_seconds = cfg.max_seconds - 1
         with self.assertRaises(ConfigError):
             _validate(cfg)
+
+
+class TapConfigTests(unittest.TestCase):
+    def test_tap_threshold_and_batch_reservation_are_always_validated(self):
+        from voicekey.config import Config, ConfigError, _validate
+        for value in (0, -1, True, float('nan'), 'fast'):
+            cfg = Config(tap_seconds=value)
+            with self.assertRaisesRegex(ConfigError, 'tap_seconds'):
+                _validate(cfg)
+        cfg = Config()
+        cfg.persistent.max_utterance_seconds = cfg.pipeline.max_audio_seconds
+        with self.assertRaises(ConfigError):
+            _validate(cfg)

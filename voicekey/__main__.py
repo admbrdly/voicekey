@@ -211,10 +211,9 @@ def check(cfg) -> int:
             print("streaming: OK")
         else:
             print("streaming: disabled (no live preview)")
-        if cfg.persistent.key:
-            from .segment import SpeechDetector
-            SpeechDetector(cfg.persistent.vad_model)
-            print("persistent speech detector: OK")
+        from .segment import SpeechDetector
+        SpeechDetector(cfg.persistent.vad_model)
+        print("dictation speech detector: OK")
     except BackendUnavailable as exc:
         print(f"backend unavailable: {exc}", file=sys.stderr)
         return 1

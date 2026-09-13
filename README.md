@@ -1,10 +1,11 @@
 # voicekey
 
-Hold-to-talk dictation for Wayland desktops. Hold a key and speak: the words
-appear as you say them, inline in whatever you are typing into. Release the
-key, and a second pass over the whole recording replaces them with the final
-transcript. Speech recognition runs locally. Polish is off by default; configuring
-a remote polish endpoint or agent explicitly sends text to that endpoint.
+Dictation for Wayland desktops. Hold F9 to speak and release to stop, or tap
+F9 to keep listening and press it again to stop. Both gestures use the same
+continuous engine: speech is split at pauses, transcribed, optionally cleaned
+up, and inserted in batches while you keep speaking. Stopping finishes the
+remaining batch. Speech recognition runs locally. Polish is off by default;
+configuring a remote polish endpoint or agent explicitly sends text to it.
 
 - **Live, in place.** The provisional text is drawn by the application
   itself, through the Wayland input-method protocol that CJK input uses,
@@ -12,8 +13,8 @@ a remote polish endpoint or agent explicitly sends text to that endpoint.
   typed and then deleted.
 - **Accurate final text.** Streaming recognizers trade accuracy for
   latency, so the preview comes from a streaming model and the text that
-  lands comes from an offline model with full context and proper
-  punctuation.
+  lands comes from an offline model working on each batch. Cleanup can use the previous delivered batch as read-only context; it cannot
+  repair an unwanted sentence break already inserted.
 - **Bound delivery.** An input-method commit uses the original field's
   activation. If that activation ends, the transcript is saved and copied;
   it is never automatically rebound to another field in the same window.
@@ -22,8 +23,7 @@ a remote polish endpoint or agent explicitly sends text to that endpoint.
   field or prevent focus from changing during typing.
 - **Optional polish pass.** A small language model can clean the transcript
   before it lands: fillers, stutters and self-corrections go, punctuation
-  and numbers can be written out. Quick dictations below eight words skip polish
-  for latency. The raw transcript is retained, and is used whenever the model
+  and numbers can be written out. Dictation batches use `[persistent] polish_min_words` (zero by default). The raw transcript is retained, and is used whenever the model
   is late or its output fails the checks. These checks are heuristics, not a
   guarantee that meaning is preserved.
 - **Optional agent key.** A second key sends the transcript to a persistent
@@ -69,7 +69,10 @@ F10 repeat=false allow-inhibiting=false hotkey-overlay-title="Voice Agent" { spa
 ```
 
 The daemon starts with your next graphical session as `voicekey.service`.
-Hold F9, talk, release. Settings live in `~/.config/voicekey/config.toml`,
+Hold F9, talk, release; or tap F9, talk hands-free, and press F9 again to stop.
+The tap threshold is `tap_seconds` (250 ms by default); audio capture starts
+on key-down. An optional F11 binding remains an additional toggle for the same
+engine. F10 still records one agent prompt until release. Settings live in `~/.config/voicekey/config.toml`,
 created from [`config.example.toml`](config.example.toml); every key is
 documented there. To check the setup:
 
@@ -79,24 +82,24 @@ documented there. To check the setup:
 
 ## How it works
 
-```
-key down  ─ pw-record ─ 100 ms frames ─┬─ streaming model ─ live text ─ preedit in the focused field
-                                       │                               (or a notification)
-                                       └─ buffer
-key up    ─ buffer ─ offline model ─ raw text ─ [polish model ─ clean text] ─ commit in place of the preedit
-                                                 (optional; raw text shown      (or wtype / clipboard)
-                                                  as preedit meanwhile)
+```text
+F9 down → continuous recording → live preview for the current batch
+                  pauses / batch limit → offline transcript → optional polish → insert
+F9 release after a hold / next press after a tap → stop capture and finish the tail
 ```
 
 Keys are read directly from evdev, so press and release work even though
-Wayland has no global hotkeys. Audio streams from `pw-record` into a
-cache-aware streaming transducer (NVIDIA Nemotron Speech Streaming 0.6B, via
-sherpa-onnx) whose output only ever grows; it is shown as *preedit*
-— provisional text the application renders inline but never inserts. On
-release, the whole recording goes to an offline model (NVIDIA Parakeet
-Unified 0.6B, via sherpa-onnx; about a point of word error rate better and
-much better punctuation), and its text is committed in place of the
-preedit.
+Wayland has no global hotkeys. Audio starts on key-down, before deciding
+whether the gesture is a tap or a hold. A short release latches listening on;
+a longer hold stops on release. Key repeats do not toggle recording.
+
+The speech detector cuts at pauses (1.2 seconds by default), with a hard
+30-second batch limit even during uninterrupted speech. The streaming model
+provides provisional text; the offline model and optional cleanup finalize each
+batch. Earlier batches can land while the next one records. There is no
+90-second cap on the dictation session; 120 seconds of silence stops it by
+default. These limits live under `[persistent]` and apply to both F9 gestures
+and any additional dictation toggle keys.
 
 voicekey registers with the compositor as *the* input method. Applications
 that speak `text-input-v3` (GTK, Qt, Firefox, Chromium and Electron,
@@ -150,16 +153,15 @@ repeating it. Buffer text edits are grouped atomically; terminal writes cannot
 be rolled back.
 
 When a generic field loses focus, applications may keep or discard its
-provisional text without reporting what happened. Voicekey leaves that text
-alone and preserves the final transcript instead of guessing which field or
-text to replace. Check any remaining provisional text before pasting. An IME
+provisional text without reporting what happened. Voicekey stops the session
+and preserves pending text instead of guessing which field or text to replace.
+Check any remaining provisional text before recovering saved speech. An IME
 success notification means the request was sent to the compositor; the
-protocol provides no application-level insertion acknowledgement. When a
-bound destination refuses the final text (a read-only buffer, a lost field
-activation, a changed window), the transcript is copied to the clipboard and
-announced with a critical notification that stays until dismissed and names
-the reason. Only a deliberate clipboard destination (`inject = "clipboard"`)
-gets the transient notice.
+protocol provides no application-level insertion acknowledgement. Dictation
+requires an insertion destination: clipboard-only targets cannot start it.
+Failed continuous deliveries are saved for recovery without repeatedly
+replacing the clipboard. Ordinary single-recording replay can still fall back
+to a clipboard copy.
 
 Spacing uses current surrounding text inside the IME operation, or the
 editor's actual insertion position. Where the application reports no cursor
@@ -171,16 +173,17 @@ modifier alone does not. Mouse movement is not tracked.
 
 | key | meaning |
 |---|---|
-| `dictate_key`, `agent_key` | evdev key names or chords to hold (`KEY_F9`, `KEY_RIGHTALT+KEY_F23`) |
+| `dictate_key`, `agent_key` | dictation tap/hold and agent hold keys or chords (`KEY_F9`, `KEY_RIGHTALT+KEY_F23`) |
+| `tap_seconds` | maximum short-tap duration; a release at or above it stops dictation |
 | `dictate_toggle_key`, `agent_toggle_key` | optional press-to-start, press-to-stop keys |
-| `min_seconds`, `max_seconds` | shorter recordings are taps and discarded; longer ones are stopped and transcribed (stuck key?) |
+| `min_seconds`, `max_seconds` | single-recording limits for agent, stdout and ordinary replay |
 | `recordings_dir` | keep the audio and both transcripts of every recording (off by default) |
 | `[backend]` | final pass: `parakeet` (CPU) or `faster-whisper` (CUDA), and its model |
 | `[streaming] model_dir` | live-preview model; `""` disables the preview |
-| `[persistent]` | dedicated toggle key, speech detector, pause and silence thresholds, utterance and delivery limits |
+| `[persistent]` | shared dictation engine: optional extra toggle key, speech detector, pause/silence thresholds and batch/delivery limits |
 | `[dictation] ime` | use the input method for preview and commit (default true) |
 | `[dictation] inject` | without an input method: `wtype` (type it) or `clipboard` (copy it and say so) |
-| `[dictation] max_delay_seconds` | deadline from key release; expired work is saved/copied, outstanding requests may remain uncertain |
+| `[dictation] max_delay_seconds` | single-recording delivery budget; continuous dictation uses `[persistent] delivery_seconds` per insertion |
 | `[dictation] require_same_window` | copy instead of typing if the focused window changed (Emacs is exempt: its buffer is pinned) |
 | `[polish]` | third pass: backend, endpoint, format, style, `min_words` (8), `max_wait_seconds` (4) |
 | `[pipeline]` | pending count/audio limits, transcription and shutdown deadlines, recovery quota and history retention |
@@ -242,10 +245,33 @@ elsewhere. With `format = "instruct"` voicekey sends its own prompt (or
 yours, from `prompt_file`) for a general model that can do more, such as
 LaTeX from a formula described in words.
 
-`min_words = 8` skips the model for short quick-mode corrections; set it to `0`
-to try polish for every nonempty quick dictation. Persistent mode has its own
-`polish_min_words = 0` default. A skipped dictation still waits behind
+`[persistent] polish_min_words = 0` cleans every nonempty dictation batch,
+including held F9 speech. `[polish] min_words = 8` applies to single-recording
+stdout capture and ordinary replay. A skipped dictation still waits behind
 earlier dictations, preserving speech order.
+
+By default, continuous dictation supplies the previous delivered batch's ending
+(up to 50 words and 800 characters) to cleanup. S1-mini cleans the combined
+text using its existing prompt; Voicekey requires the entire supplied prefix
+to remain exactly unchanged, removes it from the reply, and validates only the
+new suffix against the current transcript. Changed or missing prefixes and
+context-only words leaking into the suffix cause raw fallback. Earlier text
+is never reinserted or edited. For example, `I'd like to` followed by `Go to
+the store.` can produce the suffix `go to the store.`; an earlier full stop
+cannot be corrected this way. Insertion spacing remains a separate operation.
+
+Context is confined to the same continuous session. Pending batches are not
+used, and older context is skipped when the immediately preceding batch is
+still awaiting delivery. Detected keyboard activity invalidates context;
+mouse or programmatic cursor movement is not tracked, so this is recent
+Voicekey output, not a snapshot of the editor around the current cursor.
+Model output checks are conservative heuristics, not a guarantee of correct
+cleanup. The larger request uses the existing timeout; a refusal or timeout
+preserves the raw new batch without an additional model call. Set
+`[persistent] polish_context = false` to disable it. The supplied context is
+recorded as `polish_context` in the recovery journal's final event. Agent
+prompts and single-recording stdout/replay do not use this context.
+
 
 Empty or truncated replies, excessive growth or deletion, lost negations or
 qualifications, and changes to already-written numbers trigger raw fallback.
@@ -362,9 +388,9 @@ URL. Transcription, polish and delivery have separate supervised workers;
 a clipboard copy is given three seconds. The polish server's output goes to
 `~/.local/state/voicekey/polish-server.log`.
 
-## Persistent dictation
+## Continuous dictation and optional extra toggle
 
-Set `[persistent] key = "KEY_F11"` (or a dedicated evdev chord), run
+F9 uses this engine by default. To add another toggle key, set `[persistent] key = "KEY_F11"` (or a dedicated evdev chord), run
 `python -m voicekey --download` to fetch the small Silero speech detector, and
 restart the service. Reserve the key in your compositor, as for F9/F10; for niri:
 
@@ -383,7 +409,7 @@ new live text share one preview, and final commits remain in speaking order.
 The speech detector works independently of the optional streaming recognizer.
 Persistent mode sends even short meaningful utterances through the configured
 cleanup model. `[persistent] polish_min_words` controls its threshold separately
-from quick dictation. Whole utterances containing only recognized hesitation or
+from single-recording stdout capture and ordinary replay. Whole utterances containing only recognized hesitation or
 noise interjections (um, uh, er, erm, ah, eh, ach, ugh, gah, hmm, and stretched
 spellings such as errrr or uhhhh) are omitted by default. Their raw text and
 the drop reason remain in the journal. Mixed utterances, quoted words and
@@ -417,8 +443,7 @@ the agent coordination lock once earlier utterances are settled. Overload,
 failed storage, lost keyboard or failed capture stops the microphone and
 preserves available speech. There is no automatic resume after a pause.
 
-Queued persistent text does not inherit quick dictation's ten-second age
-limit. Transcription, polish and insertion calls still have finite deadlines.
+Queued dictation batches have no insertion-age expiry. Transcription, polish and insertion calls still have finite deadlines.
 Stopping signals the microphone immediately, drains for
 `pipeline.shutdown_seconds`, and saves the remainder without repeatedly
 overwriting the clipboard. Session and ordered utterance IDs appear in the

@@ -3,16 +3,17 @@
 # (KEY_F9, KEY_RIGHTALT+KEY_F23, ...). The compositor must not act on them —
 # see README "Install".
 
-dictate_key = "KEY_F9"     # hold: speak, release: text lands in the focused field
+dictate_key = "KEY_F9"     # hold to dictate; tap to keep listening; press again to stop
 agent_key   = "KEY_F10"    # hold: speak, release: transcript goes to the agent
 dictate_toggle_key = ""    # optional: first press starts, second press stops
 agent_toggle_key   = ""
 language    = "en"
-min_seconds = 0.3          # shorter recordings are accidental taps
-max_seconds = 90.0         # stuck-key safety: a longer recording is stopped and transcribed
+tap_seconds = 0.25         # releases before this latch dictation on
+min_seconds = 0.3          # minimum single recording (agent/stdout/replay)
+max_seconds = 90.0         # single-recording cap (agent/stdout/replay); dictation uses batch limits
 recordings_dir = ""        # debug: keep wav + live/final transcripts of every recording
 
-[backend]                  # final pass over the whole recording
+[backend]                  # final pass over each dictation batch
 type = "parakeet"          # "parakeet" (CPU, sherpa-onnx) | "faster-whisper" (CUDA)
 model_dir = "~/.local/share/voicekey/sherpa-onnx-nemo-parakeet-unified-en-0.6b-int8-non-streaming"
 # faster-whisper only:
@@ -24,14 +25,15 @@ model_dir = "~/.local/share/voicekey/sherpa-onnx-nemo-parakeet-unified-en-0.6b-i
 model_dir = "~/.local/share/voicekey/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25"
 
 [persistent]
-key = ""                  # opt in, e.g. "KEY_F11"; same key starts and stops
-vad_model = "~/.local/share/voicekey/silero_vad.onnx" # --download fetches it when key is set
+key = ""                  # optional extra toggle, e.g. "KEY_F11"; F9 already uses this engine
+vad_model = "~/.local/share/voicekey/silero_vad.onnx" # --download fetches it for dictation
 pause_seconds = 1.2        # silence that finishes an utterance; microphone keeps running
 silence_seconds = 120.0    # longer silence turns the mode OFF; key required to start again
 max_utterance_seconds = 30.0 # hard cut even during continuous speech
 pre_roll_seconds = 0.3     # retain this much audio before detected speech
 delivery_seconds = 5.0     # one insertion operation; queued text has no insertion-age expiry
-polish_min_words = 0        # F11 cleans short utterances too; independent of [polish] min_words
+polish_min_words = 0        # all dictation batches; independent of [polish] min_words
+polish_context = true      # read-only previous delivered batch; false disables context
 drop_filler_only = true     # omit whole utterances of um/uh/er/etc.; raw text remains journalled
 
 [dictation]
