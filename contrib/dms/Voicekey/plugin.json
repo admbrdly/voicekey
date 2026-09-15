@@ -1,0 +1,12 @@
+{
+  "id": "voicekey",
+  "name": "Voicekey",
+  "description": "Dictation status, listening controls, and destination policy",
+  "version": "0.1.0",
+  "author": "Voicekey contributors",
+  "type": "widget",
+  "capabilities": ["dankbar-widget"],
+  "component": "./Voicekey.qml",
+  "icon": "mic",
+  "permissions": []
+}

@@ -20,17 +20,16 @@ separate, longer threshold from the pause that ends an utterance. Initial
 defaults are 1.2 seconds to end an utterance and 120 seconds to turn listening
 off; pending work receives bounded drain and preservation when capture stops.
 
-**Key decision (2026-09-06).** F11 starts and stops the desktop's persistent
+**Key decision (2026-09-06).** F11 starts and stops a persistent
 session. Releasing the key does nothing. Escape retains its normal editing
-role. The laptop binding remains a separate per-host choice.
+role. Other bindings are configurable.
 
 ## Handoff for the next session
 
 The first working persistent mode is built. Spend the next few days using F11
 for ordinary writing and record concrete problems before making more changes.
-Keep Nemotron previews and Parakeet final transcription: the user accepted
-the benchmark result and prioritizes speed over modest RAM savings. Configure
-and measure the laptop separately when its binding is chosen.
+Keep Nemotron previews and Parakeet final transcription: the benchmark favors
+speed over modest RAM savings. Measure other hardware separately.
 The older `persistent-mode.md` and the audit's original work order are
 historical context.
 
@@ -47,10 +46,8 @@ the dedicated `[persistent] key` enables continuous listening. Quick dictation
 skips polish below eight words; persistent mode defaults to polishing every
 meaningful utterance and dropping filler-only utterances with raw text retained.
 
-The desktop configuration now uses F11, niri reserves that key, and the
-checksum-verified Silero model is installed. The service was restarted after
-an idle dictation gap and verified active with
-`KEY_F11=persistent(toggle)` in its startup log. It starts with capture off.
+The optional continuous toggle requires a reserved compositor key and the
+checksum-verified Silero model. The service starts with capture off.
 
 The implementation entry points are:
 

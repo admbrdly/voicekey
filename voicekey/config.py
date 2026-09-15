@@ -63,6 +63,7 @@ class StreamingConfig:
 
 @dataclass
 class PersistentConfig:
+    follow_focus: bool = True  # Niri: new speech follows the focused window
     key: str = ""  # optional additional dictation toggle chord
     vad_model: str = f"{MODELS_DIR}/silero_vad.onnx"
     pause_seconds: float = 1.2
@@ -309,6 +310,7 @@ def _validate(cfg: Config) -> None:
             _string(f"backend.{name}", getattr(cfg.backend, name), allow_empty=True),
         )
     cfg.streaming.model_dir = _path("streaming.model_dir", cfg.streaming.model_dir)
+    cfg.persistent.follow_focus = _boolean("persistent.follow_focus", cfg.persistent.follow_focus)
     cfg.persistent.vad_model = _path("persistent.vad_model", cfg.persistent.vad_model)
     cfg.persistent.polish_context = _boolean("persistent.polish_context", cfg.persistent.polish_context)
     cfg.persistent.polish_min_words = _integer("persistent.polish_min_words", cfg.persistent.polish_min_words)

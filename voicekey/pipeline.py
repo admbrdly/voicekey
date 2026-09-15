@@ -316,7 +316,7 @@ class Pipeline:
         if job.session_id and eligible and self.cfg.persistent.polish_context:
             with self._items_lock:
                 previous = self._polish_context.get(job.session_id)
-            if previous is not None and previous[2] == self.spacing.mark():
+            if previous is not None and previous[2] == self.spacing.mark() and (len(previous) < 4 or previous[3] == getattr(job.target, "context_key", None)):
                 context = previous[1]
         polish_result = "below word threshold"
         if polisher is None:
@@ -332,7 +332,7 @@ class Pipeline:
             job.target.show(job.raw)
             try:
                 cleaned = self._slots["polish"].call(
-                    # Persistent utterances inherit the original session target's app ID.
+                    # Each utterance retains the app at its destination boundary.
                     lambda: polisher.polish(job.raw, max(0, deadline - time.monotonic()),
                                            app_id=job.target.app_id, **({"context": context} if context else {})), deadline)
                 context_stale = bool(context and previous[2] != self.spacing.mark())
@@ -378,7 +378,7 @@ class Pipeline:
             return
         if job.session_id and not drop:
             with self._items_lock:
-                self._polish_context[job.session_id] = (job.id, "", self.spacing.mark())
+                self._polish_context[job.session_id] = (job.id, "", self.spacing.mark(), getattr(job.target, "context_key", None))
         self._remember(job)
         if job.action == "agent" and sum(not u.gated for u in self.ledger.snapshots()) > self.cfg.pipeline.max_pending:
             self._complete(job, Outcome.SAVED, "agent backlog full", "polish")
@@ -443,7 +443,7 @@ class Pipeline:
                 with self._items_lock:
                     previous = self._polish_context.get(job.session_id)
                     if previous is not None and previous[0] == job.id:
-                        self._polish_context[job.session_id] = (job.id, polish.context_tail(job.final), mark)
+                        self._polish_context[job.session_id] = (job.id, polish.context_tail(job.final), mark, getattr(job.target, "context_key", None))
             self.spacing.inserted(job.target.window_id, job.final, mark)
             self._complete(job, landing.outcome)
             if job.failure:

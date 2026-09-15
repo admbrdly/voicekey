@@ -204,20 +204,10 @@ whenever the model errors, times out, or returns text whose length differs
 from the input by more than a set fraction, so text is never lost or held
 up; raw and polished text both go to `recordings_dir` for review.
 
-Where it runs:
-
-- Desktop, default: Ollama is already running with 9B to 14B instruct
-  models on the desktop GPU (12 GB). A model of that class does this task
-  well; hold it resident with `keep_alive` during a session, turn thinking
-  off, expect one to two seconds per utterance. Measure before choosing.
-- Laptop: no GPU, so a 9B model on the CPU is too slow per utterance.
-  Route to the desktop's Ollama over Tailscale (the agent path already
-  reaches that host) or use the cloud option.
-- Cloud, opt-in: the Anthropic API through the official SDK, default
-  model `claude-opus-5`. An hour of dictation is on the order of 50k
-  input and 10k output tokens, well under a dollar. This breaks the
-  README's "nothing leaves the machine" promise, so it must be an explicit
-  config choice with a visible indicator, never a fallback.
+Deployment options considered in this early design were a local model, an
+explicitly configured remote server, or an opt-in cloud API. Remote processing
+must be a deliberate choice, never an automatic fallback. See the current
+[reference](reference.md#polish-pass-optional) for implemented cleanup options.
 
 A paragraph-level pass (rewrite a whole paragraph once it is complete,
 using the Emacs markers) is a later step; per-utterance with context gets
@@ -225,8 +215,7 @@ most of the value and works in every application.
 
 ### 2.5 A stronger speech model
 
-The `faster-whisper` CUDA backend is already implemented and installed in
-the venv; on the desktop it is a config change. sherpa-onnx 1.13.6 also
+The `faster-whisper` CUDA backend is implemented as an optional dependency. sherpa-onnx 1.13.6 also
 loads NVIDIA Canary, Qwen3-ASR and Whisper. On a single clear speaker the
 word-error differences between these and Parakeet are about a point, and
 the audible problems in paper dictation are vocabulary (names, terms of
@@ -271,8 +260,7 @@ transducer, which needs beam search and must be timed.
 2. **Emacs**: `voicekey.el` (user target buffer, marker-registered
    insertions), voice commands.
 3. **Polish**: `polish.py` with Ollama, glossary, guard rails, latency
-   measured on the desktop; then laptop routing and the opt-in cloud
-   backend.
+   measured locally; then optional remote processing.
 4. **Later**: paragraph-level polish in Emacs, backend comparison on the
    recordings corpus, hotwords.
 
@@ -288,8 +276,7 @@ either. What is specific:
 - **Editor.** Emacs with evil, delivered through `emacsclient`, and a
   planned `voicekey.el`. Every other editor gets the generic commit.
 - **Agent.** Hermes in tmux inside Ghostty, its state read off the screen.
-- **Polish.** Ollama on a 12 GB desktop GPU, with a laptop routing to it
-  over the tailnet. Two machines, both the author's.
+- **Polish.** An explicitly configured local or remote cleanup endpoint.
 - **Keys, distro, language.** F-keys and a laptop chord; Fedora, PipeWire,
   a systemd user service, `wtype`, `wl-copy`, `notify-send`; English-only
   models.

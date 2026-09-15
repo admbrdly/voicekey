@@ -14,6 +14,9 @@ import time
 
 from evdev import ecodes
 
+from . import focus
+from .control import ControlServer
+from .follow import NiriFocusWatch
 from . import polish as polish_mod
 from . import target as target_mod
 from .backends import BackendUnavailable, create_backend, create_streaming
@@ -85,6 +88,7 @@ class Daemon:
         self._live_session = None
         self._stopping = False
         self._closed = False
+        self.control = None
 
     def load(self) -> None:
         """Load both models and register as the input method; each failure
@@ -133,6 +137,8 @@ class Daemon:
         if self._closed:
             return
         self._closed = self._stopping = True
+        if self.control is not None:
+            self.control.close()
         try:
             if self.persistent is not None:
                 self.persistent.close()
@@ -151,6 +157,8 @@ class Daemon:
     def run(self):
         fix_environment()
         self.gate.open()
+        self.control = ControlServer()
+        self.control.start()
         self.load()
         self.start_workers()
         listener = KeyboardListener(
@@ -254,7 +262,9 @@ class Daemon:
             return
         session = PersistentSession(self.cfg, self.pipeline, recorder or self.recorder_factory(),
             lambda: target_mod.bind(self.ime, self.cfg.dictation, False), self.vad, self._vad_slot,
-            self.streaming, device=device, chord=chord)
+            self.streaming, device=device, chord=chord,
+            watch_factory=NiriFocusWatch if self.cfg.persistent.follow_focus and focus.compositor() == "niri"
+                          and device != "replay" else None)
         session.stop_instruction = instruction
         self.persistent = session
         try:
@@ -333,7 +343,47 @@ class Daemon:
     def _settle_gate(self):
         self.gate.settle(lambda: self.pipeline.ledger.gated)
 
+    def status(self):
+        persistent = self.persistent
+        listening = bool(persistent is not None and not persistent.stopping.is_set()) or self.session is not None
+        state = ("listening" if listening else "finishing" if persistent is not None or self.pipeline.ledger.busy
+                 else "unavailable" if self.backend is None or self.vad is None else "idle")
+        destination = persistent.target.target if persistent is not None else None
+        return {"state": state, "listening": listening,
+                "follow_focus": self.cfg.persistent.follow_focus,
+                "can_follow": focus.compositor() == "niri",
+                "destination": destination.describe() if destination is not None else "",
+                "model": self.cfg.backend.type,
+                "error": self.backend_error or ("Speech detector unavailable" if self.vad is None else "")}
+
+    def command(self, command):
+        if self._stopping:
+            raise ValueError("Voicekey is shutting down")
+        if command == "stop":
+            self._gesture = None
+            if self.persistent is not None:
+                self.persistent.request_stop("stopped from panel")
+            if self.session is not None:
+                self._finish()
+        elif command == "start":
+            if self.persistent is not None or self.session is not None or self.pipeline.ledger.busy:
+                raise ValueError("Finish the current dictation before starting another")
+            self._start_persistent("panel", frozenset())
+            if self.persistent is None:
+                raise ValueError("Could not start dictation; check Voicekey notifications")
+        elif command in ("follow-focus", "pin"):
+            if self.persistent is not None or self.session is not None or self.pipeline.ledger.busy:
+                raise ValueError("Stop dictation before changing destination policy")
+            if command == "follow-focus" and focus.compositor() != "niri":
+                raise ValueError("Follow focus currently requires Niri")
+            self.cfg.persistent.follow_focus = command == "follow-focus"
+        else:
+            raise ValueError("Unknown control command")
+
     def _on_tick(self):
+        if self.control is not None:
+            self.control.drain(self.command)
+            self.control.publish(self.status())
         self._settle_gate()  # retry a shared lock which was occupied at key-down
         if self.persistent is not None:
             self.persistent.tick()

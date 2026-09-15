@@ -219,6 +219,7 @@ class PersistentTests(unittest.TestCase):
         patch('voicekey.session_target.emacs.unpin').start()
         self.copy = patch('voicekey.pipeline.inject.copy').start()
         self.cfg = Config()
+        self.cfg.persistent.follow_focus = False  # these tests exercise pinned sessions
         self.cfg.persistent.key = 'KEY_F11'
         self.cfg.persistent.pause_seconds = .2
         self.cfg.persistent.pre_roll_seconds = .05

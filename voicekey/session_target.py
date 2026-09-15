@@ -25,8 +25,11 @@ def preview_text(text):
 
 
 class SessionTarget:
-    def __init__(self, identity, target, ledger):
+    def __init__(self, identity, target, ledger, *, scoped=False):
         self.id, self.target, self.ledger = identity, target, ledger
+        self.members = set()
+        self.scoped = scoped
+        self.departed = threading.Event()
         self.failed = threading.Event()
         self.closed = False
         self._lock = threading.Lock()
@@ -36,15 +39,19 @@ class SessionTarget:
         self._fallback = NotifyPreview("dictate")
 
     def attempt(self, identity):
+        self.members.add(identity)
         return UtteranceTarget(self, identity)
 
     def _text(self, exclude=""):
         while True:
             try:
-                self._omitted.add(self._retired.get_nowait())
+                retired = self._retired.get_nowait()
+                self._omitted.add(retired)
+                self.members.discard(retired)
             except queue.Empty:
                 break
-        snapshots = [u for u in self.ledger.snapshots() if u.session_id == self.id]
+        snapshots = [u for u in self.ledger.snapshots() if u.session_id == self.id
+                     and (not self.scoped or u.id in self.members)]
         self._omitted.intersection_update(u.id for u in snapshots)
         return preview_text(join_text((u.final if u.stage in (Stage.READY, Stage.DELIVERING)
                                        else u.raw or u.live) for u in snapshots
@@ -60,7 +67,7 @@ class SessionTarget:
         return self.target.window.focused(time.monotonic() + 0.2)
 
     def _show(self, text):
-        if self.closed:
+        if self.closed or self.departed.is_set():
             return
         preview = self.target.preview
         if isinstance(preview, ImePreview) and preview.ime.activation() != preview.generation:
@@ -92,6 +99,8 @@ class SessionTarget:
             if self.closed or self.failed.is_set() or cancelled.is_set() or time.monotonic() >= deadline:
                 return Landing(reason="persistent destination is unavailable")
             target = self.target
+            if self.departed.is_set() and not isinstance(target, EmacsTarget):
+                return Landing(reason="focus moved; pending text kept for recovery")
             tail = self._text(exclude=identity)
             if isinstance(target, EmacsTarget):
                 target.pinning.before(max(0, deadline - time.monotonic()))
@@ -150,6 +159,12 @@ class SessionTarget:
         finally:
             self._lock.release()
 
+    def leave(self):
+        """Retire the preview; pending Emacs text can still use its old pin."""
+        self.departed.set()
+        self.target.preview.clear()
+        self._fallback.clear()
+
     def close(self):
         self.closed = True
         self.target.cancel()
@@ -166,6 +181,7 @@ class UtteranceTarget(Target):
         target = session.target
         super().__init__(target.preview, target.window, target.app_id)
         self.session, self.identity = session, identity
+        self.context_key = id(session)
 
     def show(self, text):
         pass  # the ledger supplies all tiers to the single session renderer

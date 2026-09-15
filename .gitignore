@@ -1,2 +1,18 @@
 __pycache__/
 *.egg-info/
+
+# Local environments and private runtime data
+.venv/
+.pytest_cache/
+.env
+.env.*
+/config.toml
+/config.local.toml
+*.log
+*.wav
+/recordings/
+/sessions/
+/last-recovery.txt
+# Publish only explicitly reviewed, sanitized accessibility reports.
+/contrib/accessibility/results*.json
+!/contrib/accessibility/results-2026-09-15.json

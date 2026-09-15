@@ -29,10 +29,8 @@ backend name denotes its compatible API format, not a cloud destination.
 An agent reached through F10 can independently use external services.
 
 The live daemon and cleanup process used approximately 2.9 GiB combined RSS
-after the first test, with no swap attributed to those processes. The desktop
-has about 31.1 GiB usable RAM (32 GB installed), with about 21.6 GiB available
-at this review. The current cost is affordable on this desktop, while still
-large enough to justify optimization. Models remain loaded when capture is
+after the first test, with no swap attributed to those processes. This cost
+is large enough to justify optimization. Models remain loaded when capture is
 off to avoid repeated loading; they do not all perform inference continuously.
 
 ## One speech model for preview and final transcription
@@ -60,8 +58,7 @@ found stock Parakeet streaming about 13.4 times more expensive than the current
 Nemotron preview. Shared initializers reduced RAM only when runtime packing
 was disabled in the prototype, with an additional performance penalty. Keep
 the current speech models; a production sharing refactor is not justified by
-these measurements. All the user's machines now have 32 GB RAM, so performance
-takes priority over reducing the model count.
+these measurements. Performance takes priority over reducing the model count.
 
 ## S1-mini's editing strength
 

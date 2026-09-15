@@ -5,17 +5,18 @@ Recorder callbacks wake the worker; recognition, disk and desktop I/O never
 run on the audio callback or key listener. Off is irreversible for a session.
 """
 import logging
+import queue
 import threading
 import time
 import uuid
 
 import numpy as np
 
-from . import emacs
+from . import emacs, focus
 from .capture import Session
 from .notify import notify
 from .recorder import AudioBuffer, CutRecording, RecordingError, SAMPLE_RATE
-from .segment import Segmenter, WINDOW
+from .segment import Boundary, Segmenter, WINDOW
 from .session_target import SessionTarget
 from .target import ClipboardTarget, EmacsTarget, NotifyPreview, Window, WtypeTarget
 from .spacing import owed
@@ -30,12 +31,18 @@ class DetectionError(RuntimeError):
 
 class PersistentSession:
     def __init__(self, cfg, pipeline, recorder, target, vad, vad_slot, streaming,
-                 *, device, chord):
+                 *, device, chord, watch_factory=None):
         self.id = uuid.uuid4().hex
         self.cfg, self.pipeline, self.recorder = cfg, pipeline, recorder
         self.device, self.chord = device, chord
         self._bind = target if callable(target) else lambda: target
-        self.target = SessionTarget(self.id, ClipboardTarget(NotifyPreview("dictate"), Window(None, True), None), pipeline.ledger)
+        self.target = SessionTarget(self.id, ClipboardTarget(NotifyPreview("dictate"), Window(None, True), None), pipeline.ledger, scoped=True)
+        self.targets = [self.target]
+        self.watch_factory, self.watcher = watch_factory, None
+        self.focus_events = queue.Queue(maxsize=64)
+        self._focus_lock = threading.Lock()
+        self.focused = None
+        self._focus_serial = 0
         self.ready = threading.Event()
         self.vad, self.vad_slot, self.streaming = vad, vad_slot, streaming
         self.segmenter = Segmenter(cfg.persistent)
@@ -58,6 +65,89 @@ class PersistentSession:
         self.last_live = None
         self.thread = None
         self._last_status = 0.0
+
+    def focus_changed(self, destination):
+        """Called by the event reader; no desktop I/O on this thread."""
+        with self._focus_lock:
+            if (self.focused is not None and (destination.id, destination.app_id) == (self.focused.id, self.focused.app_id)) or self.stopping.is_set():
+                return
+            self.focused = destination
+            self._focus_serial += 1
+            # Immediately prevent an old generic delivery, even if the capture
+            # worker is behind on audio or binding. Emacs retains its buffer pin.
+            self.target.departed.set()
+            try:
+                self.focus_events.put_nowait((self.recorder.buffer.end, destination, self._focus_serial))
+            except queue.Full:
+                self.request_stop("too many focus changes; audio preserved", paused=True)
+        self.wake.set()
+
+    def _drain_audio(self, end):
+        """Classify through a focus boundary, including a partial VAD window."""
+        while self.segmenter.position < end:
+            start = self.segmenter.position
+            count = min(3 * WINDOW, end - start)
+            if not self._process(self.recorder.buffer.read(start, start + count)):
+                return False
+        return True
+
+    def _move_destination(self, end, destination, serial):
+        if not self._drain_audio(end):
+            return False
+        old = self.target
+        old.leave()
+        # An explicit cut owns exactly the prefix before this focus event.
+        if not self._cut(Boundary("focus", self.start_sample, end, end)):
+            return False
+        self.segmenter.start = None
+        self.segmenter.owned = self.segmenter.position = end
+        self.segmenter.last_speech = end
+        self.start_sample = self.live_at = end
+        self.has_speech = False
+        self.vad_slot.call(self.vad.reset, time.monotonic() + 1)
+        # Never bind a historical event to whichever window happens to be
+        # focused now. Rapid switches get recovery-only segments until caught up.
+        candidate = ClipboardTarget(NotifyPreview("dictate"), Window(destination.id, True), destination.app_id)
+        with self._focus_lock:
+            current = serial == self._focus_serial
+        if current and destination.id is not None:
+            proposed = self._bind()
+            before = proposed.before(emacs.PIN_TIMEOUT)
+            with self._focus_lock:
+                stable = serial == self._focus_serial
+            if (stable and proposed.window_id == destination.id
+                    and (not isinstance(proposed, EmacsTarget) or proposed.pinning.valid)):
+                candidate = proposed
+                candidate.window.verify = True
+                candidate.prefix = owed(before, self.pipeline.spacing.prefix(candidate.window_id))
+            else:
+                proposed.cancel()
+                if isinstance(proposed, EmacsTarget):
+                    try:
+                        emacs.unpin(proposed.pinning.id)
+                    except emacs.EmacsError:
+                        pass
+        target = SessionTarget(self.id, candidate, self.pipeline.ledger, scoped=True)
+        with self._focus_lock:
+            if serial != self._focus_serial:
+                target.departed.set()
+            self.target = target
+        self.targets.append(target)
+        # _cut reserved this utterance before releasing the previous one.
+        old.members.discard(self.current.id)
+        self.current.target = target.attempt(self.current.id)
+        self.pipeline._save("session", lambda: self.pipeline.journal.append(
+            self.id, "destination-changed", sample=end, window=destination.id,
+            app_id=destination.app_id, target=candidate.describe()))
+        log.info("persistent destination: %s", candidate.describe())
+        return True
+
+    def _collect_targets(self):
+        pending = {u.id for u in self.pipeline.ledger.snapshots() if u.session_id == self.id}
+        for target in tuple(self.targets):
+            if target is not self.target and not target.members.intersection(pending):
+                target.close()
+                self.targets.remove(target)
 
     def _admit(self):
         identity = self.pipeline.admit(audio_seconds=self.reservation, session_id=self.id,
@@ -149,7 +239,8 @@ class PersistentSession:
             self.request_stop("pending dictation limit reached", paused=True)
             return False
         old = self.current
-        samples = self.recorder.buffer.read(self.start_sample, event.end)
+        samples = (self.recorder.buffer.read(self.start_sample, event.end)
+                   if self.active and self.has_speech else np.zeros(0, dtype=np.float32))
         old.cancel()  # suppress results from a decoder which has seen the suffix
         if self.has_speech and len(samples):
             self.pipeline.submit(old, CutRecording(samples, start=self.start_sample, reason=event.kind),
@@ -165,7 +256,9 @@ class PersistentSession:
     def _process(self, samples):
         # The native detector is supervised in batches (~100 ms of audio).
         def classify():
-            return [self.vad.speech(samples[i:i + WINDOW]) for i in range(0, len(samples), WINDOW)]
+            return [self.vad.speech(np.pad(samples[i:i + WINDOW],
+                        (0, max(0, WINDOW - len(samples[i:i + WINDOW])))))
+                    for i in range(0, len(samples), WINDOW)]
         try:
             labels = self.vad_slot.call(classify, time.monotonic() + 1.0)
         except Exception as exc:
@@ -205,7 +298,12 @@ class PersistentSession:
             self.target.target.prefix = owed(before,
                 self.pipeline.spacing.prefix(self.target.target.window_id))
             self.current.target = self.target.attempt(self.current.id)
+            self.focused = focus.Focus(self.target.target.window_id, self.target.target.app_id,
+                                       getattr(getattr(self.target.target, "pinning", None), "pid", None))
             bound = True
+            if self.watch_factory is not None:
+                self.watcher = self.watch_factory(self.focus_changed,
+                    lambda reason: self.request_stop("focus tracking lost: " + reason, paused=True))
             self.pipeline._save("session", lambda: self.pipeline.journal.append(
                 self.id, "session-start", target=self.target.target.kind,
                 pause_seconds=self.cfg.persistent.pause_seconds,
@@ -221,11 +319,21 @@ class PersistentSession:
             while True:
                 self.wake.wait(0.05)
                 self.wake.clear()
-                if not self.stopping.is_set() and time.monotonic() - last_poll >= poll_seconds:
+                if self.watcher is not None:
+                    while not self.focus_events.empty():
+                        end, destination, serial = self.focus_events.get_nowait()
+                        if not self._move_destination(end, destination, serial):
+                            break
+                    self._collect_targets()
+                elif not self.stopping.is_set() and time.monotonic() - last_poll >= poll_seconds:
                     if not self.target.available():
                         self.request_stop("destination unavailable; start again to bind a destination", paused=True)
                     last_poll = time.monotonic()
-                available = self.recorder.buffer.end - self.segmenter.position
+                with self._focus_lock:
+                    end = self.recorder.buffer.end
+                    if not self.focus_events.empty():
+                        continue
+                    available = end - self.segmenter.position
                 if available >= WINDOW:
                     count = min(3 * WINDOW, available // WINDOW * WINDOW)
                     samples = self.recorder.buffer.read(self.segmenter.position, self.segmenter.position + count)
@@ -242,7 +350,7 @@ class PersistentSession:
                 elif time.monotonic() - last_audio > 2:
                     failure = "microphone stopped producing audio"
                     break
-                if self.target.failed.is_set() or self.pipeline._storage_failed:
+                if (self.watcher is None and self.target.failed.is_set()) or self.pipeline._storage_failed:
                     self.request_stop("delivery or recovery unavailable", paused=True)
                 if self.stopping.is_set() and time.monotonic() >= self.deadline:
                     break
@@ -252,6 +360,8 @@ class PersistentSession:
             log.exception("continuous capture failed")
         finally:
             try:
+                if self.watcher is not None:
+                    self.watcher.close()
                 try:
                     if bound:
                         self.recorder.stop()
@@ -288,7 +398,8 @@ class PersistentSession:
                 log.exception("persistent shutdown failed")
                 self.pipeline._storage_failed = True
             finally:
-                self.target.close()
+                for target in self.targets:
+                    target.close()
                 self.pipeline.forget_session(self.id)
                 self.pipeline.settled()
                 self.done.set()

@@ -10,6 +10,8 @@ import sys
 
 def main() -> int:
     parser = argparse.ArgumentParser("voicekey")
+    parser.add_argument("--control", choices=("status", "start", "stop", "follow-focus", "pin"),
+                        help="query or control the running daemon")
     parser.add_argument("--config", help="config path (default ~/.config/voicekey/config.toml)")
     parser.add_argument("--check", action="store_true",
                         help="load config, models and the input method; list keyboards; exit")
@@ -28,6 +30,20 @@ def main() -> int:
     commands.add_argument("--capture-to-stdout", action="store_true", help="record until Ctrl-C and write text to stdout; no desktop delivery")
     parser.add_argument("--seconds", type=float, help="with --capture-to-stdout: stop after this many seconds (capped by max_seconds)")
     args = parser.parse_args()
+    if args.control:
+        if any((args.check, args.download, args.replay, args.agent, args.persistent,
+                args.last, args.copy_last, args.explain_last, args.capture_to_stdout,
+                args.seconds is not None, args.config)):
+            parser.error("--control cannot be combined with other commands or --config")
+        import json
+        from .control import request
+        try:
+            result = request(args.control)
+        except (OSError, ValueError) as exc:
+            print(f"Voicekey control unavailable: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(result))
+        return 1 if result.get("error") else 0
     history = args.last or args.copy_last or args.explain_last
     if (history or args.capture_to_stdout) and (args.check or args.download or args.agent or args.persistent):
         parser.error("history and stdout commands cannot be combined with --check, --download, --agent or --persistent")
