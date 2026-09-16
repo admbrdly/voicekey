@@ -80,6 +80,12 @@ post_transcription_hook = "" # separate from dictation; runs before agent dispat
 # voicekey. The agent key opens a terminal only if none is attached; closing
 # it detaches without killing Hermes or losing its conversation.
 target = "hermes"
+# Alternative: one local process per prompt, exact UTF-8 transcript on stdin.
+# target = "command"
+# command = ["/absolute/path/to/agent-wrapper", "--read-stdin"]
+# Set working_directory below to an existing project directory for command mode.
+# Arguments are literal (no shell or {text} substitution); output is discarded.
+# command_timeout bounds the process; ready_timeout bounds the whole dispatch.
 transport = "local"
 # For a Hermes on another machine over Tailscale:
 # transport = "ssh-over-tailscale"

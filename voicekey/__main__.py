@@ -145,8 +145,11 @@ def check(cfg) -> int:
               f"agent={cfg.agent_toggle_key or '(none)'}")
     if cfg.persistent.key:
         print(f"persistent key: {cfg.persistent.key}; silence shutoff: {cfg.persistent.silence_seconds:g}s")
-    print(f"agent: {cfg.agent.target} transport={cfg.agent.transport} "
-          f"tmux session={cfg.agent.tmux_session} cwd={cfg.agent.working_directory}")
+    if cfg.agent.target == "command":
+        print(f"agent: command cwd={cfg.agent.working_directory}")
+    else:
+        print(f"agent: {cfg.agent.target} transport={cfg.agent.transport} "
+              f"tmux session={cfg.agent.tmux_session} cwd={cfg.agent.working_directory}")
     if cfg.agent.transport == "ssh-over-tailscale":
         print(f"agent remote: {cfg.agent.remote_user}@{cfg.agent.remote_host}")
 
@@ -164,15 +167,17 @@ def check(cfg) -> int:
         print("WARNING: no niri, sway or Hyprland detected: the focused window cannot be "
               "verified, so dictations will be copied, not typed — set "
               "dictation.require_same_window = false", file=sys.stderr)
-    agent_required = {"systemd-run"}
-    if cfg.agent.transport == "ssh-over-tailscale":
-        agent_required.update({"ssh", "tailscale"})
-        if cfg.agent.open_terminal and focus_tool:
-            agent_required.add(focus_tool)  # the terminal window is found through the compositor
-    else:
-        agent_required.update({"hermes", "tmux"})
-    if cfg.agent.open_terminal:
-        agent_required.add(cfg.agent.terminal)
+    agent_required = set()
+    if cfg.agent.target == "hermes":
+        agent_required.add("systemd-run")
+        if cfg.agent.transport == "ssh-over-tailscale":
+            agent_required.update({"ssh", "tailscale"})
+            if cfg.agent.open_terminal and focus_tool:
+                agent_required.add(focus_tool)
+        else:
+            agent_required.update({"hermes", "tmux"})
+        if cfg.agent.open_terminal:
+            agent_required.add(cfg.agent.terminal)
     missing = sorted(command for command in required if shutil.which(command) is None)
     agent_missing = sorted(command for command in agent_required if shutil.which(command) is None)
     for command in sorted(required - set(missing)):

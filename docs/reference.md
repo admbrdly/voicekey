@@ -110,7 +110,7 @@ modifier alone does not. Mouse movement is not tracked.
 | `[polish]` | third pass: backend, endpoint, format, style, `min_words` (8), `max_wait_seconds` (4) |
 | `[pipeline]` | pending count/audio limits, transcription and shutdown deadlines, recovery quota and history retention |
 | `[polish.server]` | `model_file` makes voicekey run `llama-server` itself, as a child process; `command` names which one |
-| `[agent]` | Hermes target, local or over SSH via Tailscale |
+| `[agent]` | persistent Hermes (local or SSH via Tailscale), or a local command |
 
 `install.sh` downloads the models the config names and verifies their
 SHA-256 digests.
@@ -289,6 +289,45 @@ conversation; closing the window only detaches. With
 `transport = "ssh-over-tailscale"`, recording and transcription stay local
 and Hermes runs on another machine over OpenSSH with strict host-key
 checking. Without Hermes installed, the agent key only shows a notification.
+
+For a different agent, configure a local executable that accepts a prompt on
+stdin. For example (replace the executable and directory with your own):
+
+```toml
+[agent]
+target = "command"
+transport = "local"
+command = ["/absolute/path/to/agent-wrapper", "--read-stdin"]
+working_directory = "~/projects/my-project"
+command_timeout = 120.0
+ready_timeout = 150.0
+```
+
+`command` is a nonempty array: executable first, then literal arguments. A bare
+executable is resolved on PATH; executable paths and the working directory
+expand `~` and become absolute when config is loaded. The directory must already
+exist. Each prompt starts a fresh process in that directory. The prepared
+transcript (after word overrides and the agent hook) is sent unchanged as UTF-8
+on stdin, followed by EOF, without an added newline. VoiceKey performs no shell
+interpolation or `{text}` substitution and never places the transcript in argv.
+The wrapper must read stdin; its exit status zero means successful submission.
+VoiceKey discards stdout and stderr, since either could echo private text.
+
+`command_timeout` limits the process lifetime; `ready_timeout` is the overall
+agent dispatch budget. The earlier deadline wins. Shutdown cancellation and
+timeouts kill the process group and reap the child. Remaining descendants are
+also stopped when the command exits, so wrappers must finish their work before
+returning. Command mode uses no tmux, Hermes, Ghostty, or systemd; terminal and
+tmux options apply only to Hermes. SSH transport is supported only for Hermes.
+
+Failures, timeouts, and cancellation retain the transcript in the existing
+private recovery journal and report uncertain delivery. VoiceKey does not
+retry automatically: a failing process may already have acted on the prompt.
+Later prompts can still be dispatched. Transcript recovery files are distinct
+from application logs; the command backend logs neither transcripts nor child
+output. `--check` checks executable availability and directory access without
+running the configured command, and exits 3 if only the agent is unavailable.
+It does not verify the command's stdin protocol or external service readiness.
 
 ## Diagnostics
 

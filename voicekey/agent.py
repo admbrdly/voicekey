@@ -1,4 +1,4 @@
-"""Dispatch voice prompts to a persistent Hermes TUI.
+"""Dispatch voice prompts to persistent Hermes or a local stdin command.
 
 Hermes runs in a dedicated tmux server supervised by a transient systemd user
 unit.  Ghostty is only a client: closing its window detaches from tmux without
@@ -14,6 +14,8 @@ import os
 import re
 import shlex
 import shutil
+import signal
+import selectors
 import subprocess
 import time
 from pathlib import Path
@@ -170,7 +172,15 @@ def _remote_executable(cfg: AgentConfig, command: str) -> str:
 
 
 def check_target(cfg: AgentConfig) -> str | None:
-    """Return a diagnostic when the configured remote Hermes host is unusable."""
+    """Check availability; never execute the configured command backend."""
+    if cfg.target == "command":
+        if not cfg.command or shutil.which(cfg.command[0]) is None:
+            return "agent command executable not found or not executable"
+        if not Path(cfg.working_directory).is_dir():
+            return "agent command working directory does not exist or is not a directory"
+        if not os.access(cfg.working_directory, os.X_OK):
+            return "agent command working directory is not accessible"
+        return None
     if not _remote(cfg):
         return None
     try:
@@ -565,8 +575,80 @@ def _paste_prompt(cfg: AgentConfig, text: str) -> None:
     _wait_for_submission_started(cfg)
 
 
+def _send_command(cfg: AgentConfig, text: str, *, cancelled=None, deadline=None) -> str:
+    """Send exact UTF-8 text via stdin; child output may contain private text."""
+    if cfg.transport != "local":
+        raise AgentError("command target requires local transport")
+    if not text.strip():
+        raise AgentError("agent transcript was empty")
+    expires = min(time.monotonic() + cfg.command_timeout,
+                  deadline if deadline is not None else time.monotonic() + cfg.ready_timeout)
+
+    def check_operation():
+        if cancelled is not None and cancelled.is_set():
+            raise AgentError("agent command cancelled")
+        if time.monotonic() >= expires:
+            raise AgentError("agent command timed out")
+
+    check_operation()
+    error = check_target(cfg)
+    if error:
+        raise AgentError(error)
+    process = None
+    try:
+        check_operation()
+        process = subprocess.Popen(
+            cfg.command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, cwd=cfg.working_directory,
+            start_new_session=True,
+        )
+        payload = memoryview(text.encode("utf-8"))
+        os.set_blocking(process.stdin.fileno(), False)
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdin, selectors.EVENT_WRITE)
+            while payload:
+                check_operation()
+                if not selector.select(0.05):
+                    continue
+                try:
+                    written = os.write(process.stdin.fileno(), payload[:4096])
+                except BlockingIOError:
+                    continue
+                except BrokenPipeError:
+                    raise AgentError("agent command closed stdin before receiving the transcript") from None
+                payload = payload[written:]
+        process.stdin.close()
+        while True:
+            check_operation()
+            try:
+                process.wait(timeout=0.05)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+        check_operation()
+        if process.returncode != 0:
+            raise AgentError(f"agent command exited with status {process.returncode}")
+    except (OSError, ValueError, UnicodeError):
+        # Do not surface child output, argv, or exception data containing input.
+        raise AgentError("could not run agent command") from None
+    finally:
+        if process is not None:
+            # Include descendants even if the immediate child has already exited.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+            if process.stdin is not None:
+                process.stdin.close()
+    log.info("agent command completed")
+    return "Command"
+
+
 def send_prompt(cfg: AgentConfig, text: str, *, cancelled=None, deadline=None) -> str:
-    """Queue TEXT in persistent Hermes and return the user-visible target."""
+    """Dispatch TEXT and return the user-visible target."""
+    if cfg.target == "command":
+        return _send_command(cfg, text, cancelled=cancelled, deadline=deadline)
     if cfg.target != "hermes":
         raise AgentError(f"unsupported agent target: {cfg.target}")
     token = _operation.set((deadline if deadline is not None else time.monotonic() + cfg.ready_timeout,

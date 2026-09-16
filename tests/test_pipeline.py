@@ -130,6 +130,20 @@ class PipelineTests(unittest.TestCase):
         send.assert_called_once_with('<dictation>Hermes</dictation>')
         self.assertTrue(session.target.closed)
 
+    def test_command_failure_saves_transcript_and_next_prompt_succeeds(self):
+        import sys
+        self.cfg.agent.target = 'command'
+        self.cfg.agent.working_directory = self.tmp.name
+        self.cfg.agent.command = [sys.executable, '-c', 'import sys; sys.stdin.read(); sys.exit(7)']
+        failed = self.submit(action='agent')
+        self.done()
+        self.assertEqual(self.events(failed.id)[-1]['outcome'], 'unknown')
+        self.assertIn('hello', self.journal.path(failed.id, '.txt').read_text())
+        self.cfg.agent.command = [sys.executable, '-c', 'import sys; sys.stdin.read()']
+        success = self.submit(action='agent')
+        self.done()
+        self.assertEqual(self.events(success.id)[-1]['outcome'], 'submitted')
+
     def test_agent_notification_target_bypasses_polish_and_is_dispatched(self):
         self.cfg.polish.min_words = 0
         self.cfg.polish.app_styles = {'fake': 'formal'}

@@ -11,6 +11,11 @@ It is a small, opinionated Linux tool; Fedora with Niri is the tested setup.
 - On Niri, new speech follows window switches; pending text retains its original destination.
 - Optional language-model cleanup, word corrections, and a separate hotkey for Hermes agent prompts.
 
+The agent hotkey supports persistent Hermes sessions or a configurable local
+command. Set `agent.target = "command"` and an `agent.command` argument array
+to send each transcript to a program through stdin; see the
+[agent setup reference](docs/reference.md#agent-key-optional).
+
 ## What you need
 
 | Component | Requirement |

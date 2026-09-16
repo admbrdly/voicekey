@@ -15,7 +15,7 @@ BACKEND_TYPES = {"faster-whisper", "parakeet"}
 POLISH_BACKENDS = {"none", "openai"}
 POLISH_FORMATS = {"s1-mini", "instruct"}
 S1_MINI_STYLES = ("casual", "semi-casual", "semi-formal", "formal")
-AGENT_TARGETS = {"hermes"}
+AGENT_TARGETS = {"hermes", "command"}
 AGENT_TRANSPORTS = {"local", "ssh-over-tailscale"}
 TMUX_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,48}$")
 REMOTE_HOST_RE = re.compile(
@@ -135,9 +135,10 @@ class PipelineConfig:
 
 @dataclass
 class AgentConfig:
-    """Persistent Hermes target; future targets implement the same seam."""
+    """Persistent Hermes or a local command accepting transcripts on stdin."""
 
     target: str = "hermes"
+    command: list[str] = field(default_factory=list)
     transport: str = "local"
     remote_host: str = ""
     remote_user: str = ""
@@ -368,6 +369,18 @@ def _validate(cfg: Config) -> None:
             f"got {cfg.agent.target!r}"
         )
     cfg.agent.transport = _string("agent.transport", cfg.agent.transport)
+    if not isinstance(cfg.agent.command, list) or any(
+        not isinstance(arg, str) or "\0" in arg for arg in cfg.agent.command
+    ):
+        raise ConfigError("agent.command must be an array of strings without NUL bytes")
+    if cfg.agent.command:
+        executable = _string("agent.command executable", cfg.agent.command[0])
+        cfg.agent.command[0] = _path("agent.command executable", executable) if "/" in executable else executable
+    if cfg.agent.target == "command":
+        if not cfg.agent.command:
+            raise ConfigError("agent.command requires an executable and optional arguments")
+        if cfg.agent.transport != "local":
+            raise ConfigError("agent.target = 'command' requires agent.transport = 'local'")
     if cfg.agent.transport not in AGENT_TRANSPORTS:
         raise ConfigError(
             "agent.transport must be one of "
@@ -414,6 +427,8 @@ def _validate(cfg: Config) -> None:
             )
         setattr(cfg.agent, name, value)
     working_directory = _string("agent.working_directory", cfg.agent.working_directory)
+    if "\0" in working_directory:
+        raise ConfigError("agent.working_directory may not contain NUL bytes")
     if working_directory != working_directory.strip():
         raise ConfigError("agent.working_directory may not begin or end with whitespace")
     if cfg.agent.transport == "ssh-over-tailscale":
