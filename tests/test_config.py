@@ -39,7 +39,7 @@ class ConfigTests(unittest.TestCase):
         changed = self._load_text('[persistent]\npolish_min_words = 3\ndrop_filler_only = false')
         self.assertEqual(changed.persistent.polish_min_words, 3)
         self.assertFalse(changed.persistent.drop_filler_only)
-        for text in ('[persistent]\nkey = "KEY_F9"',
+        for text in ('[persistent]\nkey = "KEY_RIGHTMETA"',
                      '[persistent]\nsilence_seconds = 0',
                      '[persistent]\nsilence_seconds = 1',
                      '[persistent]\nmax_utterance_seconds = 1',
@@ -183,7 +183,7 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ConfigError, "configured voice key chords must differ"
         ):
-            self._load_text('dictate_toggle_key = "KEY_F9"\n')
+            self._load_text('dictate_toggle_key = "KEY_RIGHTMETA"\n')
 
     def test_voice_chord_order_does_not_make_duplicate_binding_unique(self):
         with self.assertRaisesRegex(

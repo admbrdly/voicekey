@@ -5,9 +5,9 @@ For requirements and installation, see the [README](../README.md).
 ## How it works
 
 ```text
-F9 down → continuous recording → live preview for the current batch
+Hotkey down → continuous recording → live preview for the current batch
                   pauses / batch limit → offline transcript → optional polish → insert
-F9 release after a hold / next press after a tap → stop capture and finish the tail
+Hotkey release after a hold / next press after a tap → stop capture and finish the tail
 ```
 
 Keys are read directly from evdev, so press and release work even though
@@ -20,7 +20,7 @@ The speech detector cuts at pauses (1.2 seconds by default), with a hard
 provides provisional text; the offline model and optional cleanup finalize each
 batch. Earlier batches can land while the next one records. There is no
 90-second cap on the dictation session; 120 seconds of silence stops it by
-default. These limits live under `[persistent]` and apply to both F9 gestures
+default. These limits live under `[persistent]` and apply to both dictation hotkey gestures
 and any additional dictation toggle keys.
 
 voicekey registers with the compositor as *the* input method. Applications
@@ -95,7 +95,7 @@ modifier alone does not. Mouse movement is not tracked.
 
 | key | meaning |
 |---|---|
-| `dictate_key`, `agent_key` | dictation tap/hold and agent hold keys or chords (`KEY_F9`, `KEY_RIGHTALT+KEY_F23`) |
+| `dictate_key`, `agent_key` | dictation tap/hold and agent hold keys or chords (`KEY_RIGHTMETA`, `KEY_RIGHTALT+KEY_F23`) |
 | `tap_seconds` | maximum short-tap duration; a release at or above it stops dictation |
 | `dictate_toggle_key`, `agent_toggle_key` | optional press-to-start, press-to-stop keys |
 | `min_seconds`, `max_seconds` | single-recording limits for agent, stdout and ordinary replay |
@@ -168,7 +168,7 @@ yours, from `prompt_file`) for a general model that can do more, such as
 LaTeX from a formula described in words.
 
 `[persistent] polish_min_words = 0` cleans every nonempty dictation batch,
-including held F9 speech. `[polish] min_words = 8` applies to single-recording
+including held-hotkey speech. `[polish] min_words = 8` applies to single-recording
 stdout capture and ordinary replay. A skipped dictation still waits behind
 earlier dictations, preserving speech order.
 
@@ -312,9 +312,9 @@ a clipboard copy is given three seconds. The polish server's output goes to
 
 ## Continuous dictation and optional extra toggle
 
-F9 uses this engine by default. To add another toggle key, set `[persistent] key = "KEY_F11"` (or a dedicated evdev chord), run
+The dictation hotkey (Right Win/Super by default) uses this engine. To add another toggle key, set `[persistent] key = "KEY_F11"` (or a dedicated evdev chord), run
 `python -m voicekey --download` to fetch the small Silero speech detector, and
-restart the service. Reserve the key in your compositor, as for F9/F10; for niri:
+restart the service. Reserve the key in your compositor, as for the dictation and agent hotkeys; for niri:
 
 ```kdl
 F11 repeat=false allow-inhibiting=false hotkey-overlay-title="Persistent Dictation" { spawn "true"; }

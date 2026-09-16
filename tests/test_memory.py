@@ -67,7 +67,7 @@ class MemoryTests(unittest.TestCase):
                 raise RuntimeError('broken model')
             self.install_models()
         patch.object(self.d, '_load_models', side_effect=load).start()
-        self.d._on_key('test', ecodes.KEY_F9, 1)
+        self.d._on_key('test', ecodes.KEY_RIGHTMETA, 1)
         self.assertTrue(entered.wait(1))
         session = self.d.persistent
         self.assertIsNotNone(session)
@@ -105,7 +105,7 @@ class MemoryTests(unittest.TestCase):
         session.recorder.push(samples)
         # Model loading must not block key-up or reinterpret a held key as a tap.
         self.d._gesture = (session, time.monotonic() - 1)
-        self.d._on_key('test', ecodes.KEY_F9, 0)
+        self.d._on_key('test', ecodes.KEY_RIGHTMETA, 0)
         self.assertTrue(session.recorder.finished)
         release.set()
         self.settle(session)

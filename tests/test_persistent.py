@@ -802,7 +802,7 @@ class PersistentTests(unittest.TestCase):
         patch('voicekey.daemon.target_mod.bind', return_value=self.binding).start()
         return daemon
 
-    def test_f9_works_without_an_extra_persistent_key(self):
+    def test_default_hotkey_works_without_an_extra_persistent_key(self):
         self.cfg.persistent.key = ''
         daemon = self.dictation_daemon()
         with patch('voicekey.daemon.create_backend', return_value=self.backend), \
@@ -811,14 +811,14 @@ class PersistentTests(unittest.TestCase):
             self.cfg.dictation.ime = False
             daemon.load()
         detector.assert_called_once_with(self.cfg.persistent.vad_model)
-        daemon._on_key('keyboard', ecodes.KEY_F9, 1)
+        daemon._on_key('keyboard', ecodes.KEY_RIGHTMETA, 1)
         self.assertIsNotNone(daemon.persistent)
         daemon._on_device_lost('keyboard')
         self.assertTrue(daemon.persistent.done.wait(5))
 
-    def test_f9_hold_delivers_before_release_and_flushes_tail(self):
+    def test_default_hotkey_hold_delivers_before_release_and_flushes_tail(self):
         daemon = self.dictation_daemon()
-        daemon._on_key('keyboard', ecodes.KEY_F9, 1)
+        daemon._on_key('keyboard', ecodes.KEY_RIGHTMETA, 1)
         session = daemon.persistent
         wait_for(session.ready.is_set)
         # Feed one complete batch while the key remains held.
@@ -828,34 +828,34 @@ class PersistentTests(unittest.TestCase):
         self.assertFalse(session.stopping.is_set())
         session.recorder.push(np.ones(5120, dtype=np.float32)*.2)
         daemon._gesture = (session, time.monotonic() - self.cfg.tap_seconds - .1)
-        daemon._on_key('keyboard', ecodes.KEY_F9, 0)
+        daemon._on_key('keyboard', ecodes.KEY_RIGHTMETA, 0)
         self.assertTrue(session.done.wait(5))
         self.assertEqual(self.insert.call_count, 2)
         self.copy.assert_not_called()
 
-    def test_f9_tap_latches_repeat_is_ignored_and_next_press_stops(self):
+    def test_default_hotkey_tap_latches_repeat_is_ignored_and_next_press_stops(self):
         daemon = self.dictation_daemon()
-        daemon._on_key('keyboard', ecodes.KEY_F9, 1)
+        daemon._on_key('keyboard', ecodes.KEY_RIGHTMETA, 1)
         session = daemon.persistent
-        daemon._on_key('keyboard', ecodes.KEY_F9, 2)
-        daemon._on_key('keyboard', ecodes.KEY_F9, 1)  # duplicate down
+        daemon._on_key('keyboard', ecodes.KEY_RIGHTMETA, 2)
+        daemon._on_key('keyboard', ecodes.KEY_RIGHTMETA, 1)  # duplicate down
         self.assertFalse(session.stopping.is_set())
         self.cfg.tap_seconds = 10  # keep the tap test independent of scheduler delays
         daemon._gesture = (session, time.monotonic())
-        daemon._on_key('keyboard', ecodes.KEY_F9, 0)
+        daemon._on_key('keyboard', ecodes.KEY_RIGHTMETA, 0)
         self.assertFalse(session.stopping.is_set())
-        daemon._on_key('keyboard', ecodes.KEY_F9, 1)
+        daemon._on_key('keyboard', ecodes.KEY_RIGHTMETA, 1)
         self.assertTrue(session.stopping.is_set())
-        daemon._on_key('keyboard', ecodes.KEY_F9, 0)
+        daemon._on_key('keyboard', ecodes.KEY_RIGHTMETA, 0)
         self.assertTrue(session.done.wait(5))
         self.assertIsNone(daemon._gesture)
 
-    def test_f9_release_requires_original_device_and_disconnect_stops(self):
+    def test_default_hotkey_release_requires_original_device_and_disconnect_stops(self):
         daemon = self.dictation_daemon()
-        daemon._on_key('keyboard', ecodes.KEY_F9, 1)
+        daemon._on_key('keyboard', ecodes.KEY_RIGHTMETA, 1)
         session = daemon.persistent
         daemon._gesture = (session, time.monotonic() - 1)
-        daemon._on_key('other', ecodes.KEY_F9, 0)
+        daemon._on_key('other', ecodes.KEY_RIGHTMETA, 0)
         self.assertFalse(session.stopping.is_set())
         daemon._on_device_lost('keyboard')
         self.assertTrue(session.stopping.is_set())

@@ -1,9 +1,9 @@
 # voicekey config — ~/.config/voicekey/config.toml
 # Every key is optional; these are the defaults. Keys are evdev names
-# (KEY_F9, KEY_RIGHTALT+KEY_F23, ...). The compositor must not act on them —
+# (KEY_RIGHTMETA, KEY_RIGHTALT+KEY_F23, ...). The compositor must not act on them —
 # see README "Install".
 
-dictate_key = "KEY_F9"     # hold to dictate; tap to keep listening; press again to stop
+dictate_key = "KEY_RIGHTMETA" # Right Win/Super: hold to dictate; tap to keep listening; press again to stop
 agent_key   = "KEY_F10"    # hold: speak, release: transcript goes to the agent
 dictate_toggle_key = ""    # optional: first press starts, second press stops
 agent_toggle_key   = ""
@@ -26,7 +26,7 @@ model_dir = "~/.local/share/voicekey/sherpa-onnx-nemotron-speech-streaming-en-0.
 
 [persistent]
 follow_focus = true       # Niri: new speech follows window switches; false pins the destination
-key = ""                  # optional extra toggle, e.g. "KEY_F11"; F9 already uses this engine
+key = ""                  # optional extra toggle, e.g. "KEY_F11"; the dictation hotkey already uses this engine
 vad_model = "~/.local/share/voicekey/silero_vad.onnx" # --download fetches it for dictation
 pause_seconds = 1.2        # silence that finishes an utterance; microphone keeps running
 silence_seconds = 120.0    # longer silence turns listening off; key or panel starts it again

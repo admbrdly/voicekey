@@ -23,7 +23,7 @@ class ControllerTests(unittest.TestCase):
         self.daemon = Daemon(self.cfg, recorder_factory=FakeRecorder,
                              journal=Journal(self.tmp.name + '/sessions'))
         # Exercise the single-recording controller used by agent capture/replay.
-        self.daemon.actions[frozenset({ecodes.KEY_F9})] = ('dictate', 'hold')
+        self.daemon.actions[frozenset({ecodes.KEY_RIGHTMETA})] = ('dictate', 'hold')
         self.daemon.gate = Gate(self.tmp.name + '/lock')
         self.daemon.gate.open()
         self.daemon.backend = Mock(transcribe=Mock(return_value='hello'))
@@ -39,7 +39,7 @@ class ControllerTests(unittest.TestCase):
         patch('voicekey.pipeline.notify').start()
         self.addCleanup(patch.stopall)
 
-    def key(self, value, code=ecodes.KEY_F9, device='fake'):
+    def key(self, value, code=ecodes.KEY_RIGHTMETA, device='fake'):
         self.daemon._on_key(device, code, value)
 
     def done(self):
@@ -179,7 +179,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(spacing.prefix(7), '')
 
     def test_bindings_describe_configured_keys(self):
-        self.assertEqual(self.daemon.bindings(), ['KEY_F9=dictate(tap/hold)', 'KEY_F10=agent(hold)'])
+        self.assertEqual(self.daemon.bindings(), ['KEY_RIGHTMETA=dictate(tap/hold)', 'KEY_F10=agent(hold)'])
 
     def test_contended_gate_is_retried_during_capture(self):
         import fcntl

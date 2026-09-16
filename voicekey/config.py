@@ -155,7 +155,7 @@ class AgentConfig:
 
 @dataclass
 class Config:
-    dictate_key: str = "KEY_F9"
+    dictate_key: str = "KEY_RIGHTMETA"
     agent_key: str = "KEY_F10"
     dictate_toggle_key: str = ""
     agent_toggle_key: str = ""

@@ -5,11 +5,11 @@ If that is your desktop, VoiceKey gives you hold-to-talk or hands-free dictation
 Emacs/Evil-aware insertion, and a native DMS bar widget to see and control listening.
 It is a small, opinionated Linux tool; Fedora with Niri is the tested setup.
 
-- **Hold F9** to speak and release to stop, or **tap F9** to listen until the next press.
+- **Hold the hotkey** to speak and release to stop, or **tap it** to listen until the next press.
 - Speech is transcribed locally in batches at pauses, with live previews where supported.
 - Emacs delivery uses a pinned buffer through `emacsclient`, with Evil insertion rules.
 - On Niri, new speech follows window switches; pending text retains its original destination.
-- Optional language-model cleanup, word corrections, and an F10 key for Hermes agent prompts.
+- Optional language-model cleanup, word corrections, and a separate hotkey for Hermes agent prompts.
 
 ## What you need
 
@@ -48,10 +48,12 @@ Membership in `input` allows processes running as your user to read raw keyboard
 Enable Emacs's server with `(server-start)` in your init file, or use an Emacs
 daemon. VoiceKey loads its bundled Lisp integration on demand.
 
-Reserve the keys in your Niri configuration so applications do not also act on them:
+The default dictation hotkey is **Right Win (Right Super)**, configured as
+`KEY_RIGHTMETA`; the agent hotkey defaults to F10. Reserve them in your Niri
+configuration so applications do not also act on them:
 
 ```kdl
-F9  repeat=false allow-inhibiting=false hotkey-overlay-title="Voice Dictation" { spawn "true"; }
+Super_R repeat=false allow-inhibiting=false hotkey-overlay-title="Voice Dictation" { spawn "true"; }
 F10 repeat=false allow-inhibiting=false hotkey-overlay-title="Voice Agent" { spawn "true"; }
 ```
 
