@@ -438,11 +438,14 @@ start/stop controls and a follow-focus toggle; keyboard gestures stay unchanged.
 The policy toggle is available while idle and lasts until the daemon restarts.
 For a permanent default, set `[persistent] follow_focus` in your Voicekey config.
 
-From this checkout, install the widget and enable it:
+`./install.sh` links the widget when DMS is installed and enables it if DMS is
+running. Rerun it after upgrading to add the widget to an existing installation.
+If DMS is stopped, it prints the commands to enable the widget later.
+To install only the widget manually from this checkout:
 
 ```bash
-mkdir -p ~/.config/DankMaterialShell/plugins
-ln -s "$PWD/contrib/dms/Voicekey" ~/.config/DankMaterialShell/plugins/Voicekey
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins"
+ln -s "$PWD/contrib/dms/Voicekey" "${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins/Voicekey"
 dms ipc call plugin-scan scan
 # Once scanning finishes:
 dms ipc call plugins enable voicekey

@@ -1,5 +1,5 @@
 #!/bin/bash
-# install.sh — voicekey: venv, dependencies, models, systemd user unit. Idempotent.
+# install.sh — voicekey: venv, dependencies, models, systemd unit, DMS widget. Idempotent.
 #
 # System prerequisites (Fedora names): pipewire-utils (pw-record), wtype,
 # wl-clipboard, libnotify (notify-send), gcc (evdev builds from source), uv.
@@ -13,10 +13,58 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 VENV="$HOME/.local/share/voicekey/venv"
 CONFIG="$HOME/.config/voicekey/config.toml"
 UNIT="$HOME/.config/systemd/user/voicekey.service"
+WIDGET="${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins/Voicekey"
+
+install_widget() {
+    if ! command -v dms >/dev/null; then
+        echo "  DMS: not installed; skipping the optional widget (rerun install.sh after installing DMS)."
+        return
+    fi
+    if [[ -e "$WIDGET" || -L "$WIDGET" ]]; then
+        if [[ ! -L "$WIDGET" || "$(readlink -f "$WIDGET")" != "$HERE/contrib/dms/Voicekey" ]]; then
+            echo "  DMS: leaving existing $WIDGET untouched; see README.md for manual widget setup."
+            return
+        fi
+    else
+        if ! mkdir -p "$(dirname "$WIDGET")" || ! ln -s "$HERE/contrib/dms/Voicekey" "$WIDGET"; then
+            echo "  DMS: could not link widget; see README.md for manual setup."
+            return
+        fi
+    fi
+    echo "  DMS: $WIDGET -> $HERE/contrib/dms/Voicekey"
+    local reply attempt
+    # IPC can succeed as a command while reporting an application-level error.
+    if reply=$(timeout 3s dms ipc call plugin-scan scan 2>/dev/null) && [[ "$reply" == *SCAN_TRIGGERED:* ]]; then
+        for ((attempt = 0; attempt < 10; attempt++)); do
+            if ! reply=$(timeout 3s dms ipc call plugins status voicekey 2>/dev/null); then
+                break
+            fi
+            case "$reply" in
+                loaded) break ;;
+                disabled)
+                    if reply=$(timeout 3s dms ipc call plugins enable voicekey 2>/dev/null) && [[ "$reply" == *PLUGIN_ENABLE_SUCCESS:* ]]; then
+                        reply=loaded
+                    fi
+                    break ;;
+            esac
+            sleep 0.5
+        done
+        if [[ "$reply" == loaded ]]; then
+            echo "  DMS: Voicekey enabled. Add it in DMS Settings → DankBar → Widgets."
+            return
+        fi
+    fi
+    echo "  DMS: widget linked, but automatic enabling was unavailable. With DMS running, use:"
+    echo "       dms ipc call plugin-scan scan"
+    echo "       # Once scanning finishes:"
+    echo "       dms ipc call plugins enable voicekey"
+    echo "       Then add Voicekey in DMS Settings → DankBar → Widgets."
+}
 
 if [[ "${DRY_RUN:-0}" == "1" ]]; then
     echo "  Would create $VENV (python 3.12 via uv), install $HERE, download models,"
     echo "  link $UNIT -> $HERE/voicekey.service, enable voicekey.service and run --check"
+    echo "  If dms is installed, link $WIDGET and enable the widget when DMS is running."
     exit 0
 fi
 
@@ -67,3 +115,4 @@ if [[ "$status" != 2 ]] && systemctl --user is-active --quiet graphical-session.
     systemctl --user restart voicekey.service
     echo "  voicekey.service restarted"
 fi
+install_widget
