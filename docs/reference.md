@@ -315,10 +315,15 @@ VoiceKey discards stdout and stderr, since either could echo private text.
 
 `command_timeout` limits the process lifetime; `ready_timeout` is the overall
 agent dispatch budget. The earlier deadline wins. Shutdown cancellation and
-timeouts kill the process group and reap the child. Remaining descendants are
-also stopped when the command exits, so wrappers must finish their work before
-returning. Command mode uses no tmux, Hermes, Ghostty, or systemd; terminal and
-tmux options apply only to Hermes. SSH transport is supported only for Hermes.
+timeouts kill the original process group and reap the child. Members of that
+group are also stopped when the command exits. Wrappers must keep all children
+in the original process group: do not daemonize or create new sessions or
+process groups (for example, with `setsid`, `setpgid`, or
+`start_new_session=True`). Detached processes escape cleanup and may continue
+running after cancellation or timeout. Wrappers must finish their work before
+returning. Command mode uses no tmux, Hermes, Ghostty, or systemd; remote,
+terminal, and tmux options are ignored and validated only for Hermes.
+SSH transport is supported only for Hermes.
 
 Failures, timeouts, and cancellation retain the transcript in the existing
 private recovery journal and report uncertain delivery. VoiceKey does not

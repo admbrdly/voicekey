@@ -144,6 +144,33 @@ class CommandAgentTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, 'requires.*local'):
             _validate(cfg)
 
+    def test_hermes_only_settings_are_ignored_by_command_target(self):
+        for name, value in (
+            ('terminal', 'alacritty'), ('terminal_title', ''),
+            ('open_terminal', 'unused'), ('tmux_socket', 'bad/socket'),
+            ('tmux_session', 'bad/session'), ('remote_host', 42),
+            ('remote_user', 42), ('identity_file', 42),
+        ):
+            with self.subTest(name=name):
+                cfg = Config(agent=AgentConfig(target='command', command=[sys.executable]))
+                setattr(cfg.agent, name, value)
+                _validate(cfg)
+                self.assertEqual(getattr(cfg.agent, name), value)
+                cfg.agent.target = 'hermes'
+                with self.assertRaisesRegex(ConfigError, 'agent.' + name):
+                    _validate(cfg)
+
+    def test_command_still_validates_shared_settings(self):
+        for name, value in (
+            ('working_directory', ''), ('command_timeout', 0),
+            ('ready_timeout', 0), ('transport', 'ssh-over-tailscale'),
+        ):
+            with self.subTest(name=name):
+                cfg = Config(agent=AgentConfig(target='command', command=[sys.executable]))
+                setattr(cfg.agent, name, value)
+                with self.assertRaises(ConfigError):
+                    _validate(cfg)
+
     def test_cli_check_has_no_hermes_dependencies_and_does_not_launch_command(self):
         from voicekey.__main__ import check
         cfg = Config(agent=self.fixture('raise RuntimeError("must not execute")'))

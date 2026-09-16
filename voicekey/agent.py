@@ -633,7 +633,8 @@ def _send_command(cfg: AgentConfig, text: str, *, cancelled=None, deadline=None)
         raise AgentError("could not run agent command") from None
     finally:
         if process is not None:
-            # Include descendants even if the immediate child has already exited.
+            # Stop members of the original group even if the child has exited.
+            # Wrappers must not detach children into new groups or sessions.
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:

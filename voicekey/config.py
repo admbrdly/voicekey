@@ -387,45 +387,46 @@ def _validate(cfg: Config) -> None:
             f"{', '.join(sorted(AGENT_TRANSPORTS))}, "
             f"got {cfg.agent.transport!r}"
         )
-    cfg.agent.remote_host = _string(
-        "agent.remote_host", cfg.agent.remote_host, allow_empty=True
-    )
-    cfg.agent.remote_user = _string(
-        "agent.remote_user", cfg.agent.remote_user, allow_empty=True
-    )
-    cfg.agent.identity_file = _string(
-        "agent.identity_file", cfg.agent.identity_file, allow_empty=True
-    )
-    if cfg.agent.transport == "ssh-over-tailscale":
-        if not REMOTE_HOST_RE.fullmatch(cfg.agent.remote_host):
-            raise ConfigError(
-                "agent.remote_host must be a MagicDNS name for "
-                "ssh-over-tailscale"
-            )
-        if not REMOTE_USER_RE.fullmatch(cfg.agent.remote_user):
-            raise ConfigError(
-                "agent.remote_user must be a Linux user name for "
-                "ssh-over-tailscale"
-            )
-        if not cfg.agent.identity_file:
-            raise ConfigError(
-                "agent.identity_file is required for ssh-over-tailscale"
-            )
-        cfg.agent.identity_file = os.path.abspath(
-            os.path.expanduser(cfg.agent.identity_file)
+    if cfg.agent.target == "hermes":
+        cfg.agent.remote_host = _string(
+            "agent.remote_host", cfg.agent.remote_host, allow_empty=True
         )
-    elif cfg.agent.remote_host or cfg.agent.remote_user or cfg.agent.identity_file:
-        raise ConfigError(
-            "agent remote fields require "
-            "agent.transport = 'ssh-over-tailscale'"
+        cfg.agent.remote_user = _string(
+            "agent.remote_user", cfg.agent.remote_user, allow_empty=True
         )
-    for name in ("tmux_socket", "tmux_session"):
-        value = _string(f"agent.{name}", getattr(cfg.agent, name))
-        if not TMUX_NAME_RE.fullmatch(value):
-            raise ConfigError(
-                f"agent.{name} must contain 1-48 letters, digits, '_' or '-'"
+        cfg.agent.identity_file = _string(
+            "agent.identity_file", cfg.agent.identity_file, allow_empty=True
+        )
+        if cfg.agent.transport == "ssh-over-tailscale":
+            if not REMOTE_HOST_RE.fullmatch(cfg.agent.remote_host):
+                raise ConfigError(
+                    "agent.remote_host must be a MagicDNS name for "
+                    "ssh-over-tailscale"
+                )
+            if not REMOTE_USER_RE.fullmatch(cfg.agent.remote_user):
+                raise ConfigError(
+                    "agent.remote_user must be a Linux user name for "
+                    "ssh-over-tailscale"
+                )
+            if not cfg.agent.identity_file:
+                raise ConfigError(
+                    "agent.identity_file is required for ssh-over-tailscale"
+                )
+            cfg.agent.identity_file = os.path.abspath(
+                os.path.expanduser(cfg.agent.identity_file)
             )
-        setattr(cfg.agent, name, value)
+        elif cfg.agent.remote_host or cfg.agent.remote_user or cfg.agent.identity_file:
+            raise ConfigError(
+                "agent remote fields require "
+                "agent.transport = 'ssh-over-tailscale'"
+            )
+        for name in ("tmux_socket", "tmux_session"):
+            value = _string(f"agent.{name}", getattr(cfg.agent, name))
+            if not TMUX_NAME_RE.fullmatch(value):
+                raise ConfigError(
+                    f"agent.{name} must contain 1-48 letters, digits, '_' or '-'"
+                )
+            setattr(cfg.agent, name, value)
     working_directory = _string("agent.working_directory", cfg.agent.working_directory)
     if "\0" in working_directory:
         raise ConfigError("agent.working_directory may not contain NUL bytes")
@@ -447,15 +448,16 @@ def _validate(cfg: Config) -> None:
     if not working_directory.strip(os.path.sep):  # "/", and "//", which normpath keeps
         raise ConfigError("agent.working_directory may not be the filesystem root")
     cfg.agent.working_directory = working_directory
-    cfg.agent.terminal = _string("agent.terminal", cfg.agent.terminal)
-    if cfg.agent.terminal != "ghostty":
-        raise ConfigError("agent.terminal currently supports only 'ghostty'")
-    cfg.agent.terminal_title = _string(
-        "agent.terminal_title", cfg.agent.terminal_title
-    )
-    cfg.agent.open_terminal = _boolean(
-        "agent.open_terminal", cfg.agent.open_terminal
-    )
+    if cfg.agent.target == "hermes":
+        cfg.agent.terminal = _string("agent.terminal", cfg.agent.terminal)
+        if cfg.agent.terminal != "ghostty":
+            raise ConfigError("agent.terminal currently supports only 'ghostty'")
+        cfg.agent.terminal_title = _string(
+            "agent.terminal_title", cfg.agent.terminal_title
+        )
+        cfg.agent.open_terminal = _boolean(
+            "agent.open_terminal", cfg.agent.open_terminal
+        )
     cfg.agent.command_timeout = _number(
         "agent.command_timeout", cfg.agent.command_timeout, minimum=0.1
     )
