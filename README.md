@@ -9,7 +9,7 @@ It is a small, opinionated Linux tool; Fedora with Niri is the tested setup.
 - Speech is transcribed locally in batches at pauses, with live previews where supported.
 - Emacs delivery uses a pinned buffer through `emacsclient`, with Evil insertion rules.
 - On Niri, new speech follows window switches; pending text retains its original destination.
-- Optional language-model cleanup, word corrections, and a separate hotkey for Hermes agent prompts.
+- Optional language-model cleanup, word corrections, and a separate hotkey for [sending prompts to an agent](docs/reference.md#agent-key-optional).
 
 The agent hotkey supports persistent Hermes sessions or a configurable local
 command. Set `agent.target = "command"` and an `agent.command` argument array
