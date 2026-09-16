@@ -6,10 +6,12 @@ the ledger retains its gate token throughout that transfer.
 """
 from __future__ import annotations
 
+import gc
 import glob
 import logging
 import os
 import sys
+import threading
 import time
 
 from evdev import ecodes
@@ -83,16 +85,34 @@ class Daemon:
         self.backend = self.streaming = self.ime = self.polisher = self.polish_server = None
         self.backend_error = None
         self.gate = Gate()
-        self.pipeline = Pipeline(cfg, backend=lambda: self.backend, polisher=lambda: self.polisher,
+        self.pipeline = Pipeline(cfg, backend=lambda: self if self.model_state == "loading" else self.backend, polisher=lambda: self.polisher,
                                  settled=self._settle_gate, journal=journal)
         self._live_session = None
         self._stopping = False
         self._closed = False
         self.control = None
+        self.model_state = "ready"
+        self._models_ready = threading.Event()
+        self._models_ready.set()
+        self._model_thread = None
+        self._model_lock = threading.Lock()
+        self._unload_requested = False
+        self.model_error = ""
 
     def load(self) -> None:
         """Load both models and register as the input method; each failure
         is reported and degrades the daemon rather than stopping it."""
+        self._load_models()
+        if self.cfg.dictation.ime:
+            try:
+                self.ime = InputMethod()
+            except ImeUnavailable as exc:
+                log.info("no in-field preview: %s", exc)
+            except Exception:
+                log.exception("input method failed to start; previews use notifications")
+
+    def _load_models(self):
+        self.backend_error = None
         try:
             self.backend = create_backend(self.cfg.backend, self.cfg.language)
         except BackendUnavailable as exc:
@@ -122,13 +142,95 @@ class Daemon:
             except Exception as exc:
                 log.exception("polish failed to start")
                 notify("voicekey: polish unavailable", f"{type(exc).__name__}: {exc}", error=True)
-        if self.cfg.dictation.ime:
-            try:
-                self.ime = InputMethod()
-            except ImeUnavailable as exc:
-                log.info("no in-field preview: %s", exc)
-            except Exception:
-                log.exception("input method failed to start; previews use notifications")
+    def _ensure_models(self):
+        if self._unload_requested or self.model_state == "unloading":
+            raise ValueError("Wait for memory release to finish")
+        if self.model_state != "unloaded":
+            return
+        self.model_state = "loading"
+        self.model_error = ""
+        self._models_ready.clear()
+        def load():
+            with self._model_lock:
+                try:
+                    self._load_models()
+                except Exception as exc:
+                    self.backend_error = f"Model loading failed: {exc}"
+                    log.exception("model reload failed")
+                finally:
+                    try:
+                        if self._stopping:
+                            self._release_models()
+                    finally:
+                        self.model_state = "ready"
+                        self._models_ready.set()
+        self._model_thread = threading.Thread(target=load, name="model-load", daemon=True)
+        self._model_thread.start()
+
+    def transcribe(self, samples):
+        """Cold agent/replay jobs wait inside the supervised transcription slot."""
+        if not self._models_ready.wait(self.cfg.pipeline.transcription_seconds):
+            raise RuntimeError("Model loading timed out")
+        if self.backend is None:
+            raise RuntimeError(self.backend_error or "Transcription model unavailable")
+        return self.backend.transcribe(samples)
+
+    def _wait_for_models(self, session):
+        # Destination binding and capture already happened. Keep all audio in
+        # the recorder's bounded buffer while waiting, including a released hold.
+        deadline = time.monotonic() + self.cfg.pipeline.transcription_seconds
+        while not self._models_ready.wait(.05):
+            if self._stopping or time.monotonic() >= min(deadline, session.deadline):
+                raise RuntimeError("Model loading interrupted or timed out; audio preserved")
+        if self.vad is None or self.backend is None:
+            raise RuntimeError(self.backend_error or "Speech models unavailable; audio preserved")
+        session.vad, session.streaming = self.vad, self.streaming
+
+    def _release_models(self):
+        # Only called with no model users, or during final process shutdown.
+        if self.polish_server is not None:
+            self.polish_server.stop()
+        self.polisher = self.polish_server = None
+        self.backend = self.streaming = self.vad = None
+        self._live_session = None
+        self.backend_error = None
+        gc.collect()
+        # glibc can retain freed native allocations in its arenas. Returning
+        # free pages is best effort; other allocators need no such call here.
+        try:
+            import ctypes
+            libc = ctypes.CDLL(None)
+            trim = libc.malloc_trim
+            trim.argtypes, trim.restype = [ctypes.c_size_t], ctypes.c_int
+            trim(0)
+        except (AttributeError, OSError):
+            pass
+
+    def _unload_when_idle(self):
+        if not self._unload_requested or self.model_state in ("loading", "unloading"):
+            return
+        if self.persistent is not None or self.session is not None or self.pipeline.ledger.busy:
+            return
+        # Ledger completion does not imply a timed-out native call has exited.
+        if (self._vad_slot.busy or any(slot.busy for slot in self.pipeline._slots.values())
+                or self._live_session is not None and self._live_session.stuck):
+            self.model_error = "Waiting for a background operation before freeing memory"
+            return
+        self.model_state = "unloading"
+        self.model_error = ""
+        def unload():
+            with self._model_lock:
+                try:
+                    self._release_models()
+                    self.model_state = "unloaded"
+                except Exception as exc:
+                    self.model_error = f"Could not free memory: {exc}"
+                    self.model_state = "ready"
+                    log.exception("model unload failed")
+                finally:
+                    self._unload_requested = False
+        self._model_thread = threading.Thread(target=unload, name="model-unload", daemon=True)
+        self._model_thread.start()
 
     def start_workers(self):
         self.pipeline.start()
@@ -151,8 +253,14 @@ class Daemon:
                     self.ime.close()
             finally:
                 self.gate.close()
-                if self.polish_server is not None:
-                    self.polish_server.stop()
+                # A reload finishing after shutdown cleans up its own child.
+                # Never block microphone shutdown on a native model loader.
+                if self._model_lock.acquire(blocking=False):
+                    try:
+                        if self.polish_server is not None:
+                            self.polish_server.stop()
+                    finally:
+                        self._model_lock.release()
 
     def run(self):
         fix_environment()
@@ -253,7 +361,12 @@ class Daemon:
                     "press again to stop" if behavior == TOGGLE else "release to stop")
 
     def _start_persistent(self, device, chord, recorder=None, *, instruction="press a dictation key to stop"):
-        if self.vad is None or self.backend is None or self._vad_slot.busy:
+        try:
+            self._ensure_models()
+        except ValueError as exc:
+            notify("voicekey: busy", str(exc), error=True)
+            return
+        if (self.model_state != "loading" and (self.vad is None or self.backend is None)) or self._vad_slot.busy:
             notify("voicekey: persistent mode unavailable", "speech models unavailable or a detector call is still running", error=True)
             return
         # A new session cannot share the previous gesture's decoder or preview.
@@ -263,6 +376,7 @@ class Daemon:
         session = PersistentSession(self.cfg, self.pipeline, recorder or self.recorder_factory(),
             lambda: target_mod.bind(self.ime, self.cfg.dictation, False), self.vad, self._vad_slot,
             self.streaming, device=device, chord=chord,
+            prepare_models=self._wait_for_models if self.model_state == "loading" else None,
             watch_factory=NiriFocusWatch if self.cfg.persistent.follow_focus and focus.compositor() == "niri"
                           and device != "replay" else None)
         session.stop_instruction = instruction
@@ -277,6 +391,11 @@ class Daemon:
             notify("voicekey: persistent capture failed", str(exc), error=True)
 
     def _start(self, device, chord, behavior, action, instruction):
+        try:
+            self._ensure_models()
+        except ValueError as exc:
+            notify("voicekey: busy", str(exc), error=True)
+            return
         identity = self.pipeline.admit()
         if identity is None:
             notify("voicekey: busy", "recording did not start; pending work or recovery storage is full", error=True)
@@ -346,20 +465,32 @@ class Daemon:
     def status(self):
         persistent = self.persistent
         listening = bool(persistent is not None and not persistent.stopping.is_set()) or self.session is not None
-        state = ("listening" if listening else "finishing" if persistent is not None or self.pipeline.ledger.busy
-                 else "unavailable" if self.backend is None or self.vad is None else "idle")
+        busy = persistent is not None or self.pipeline.ledger.busy
+        state = ("listening" if listening else "finishing" if busy else
+                 "unloading" if self._unload_requested else
+                 self.model_state if self.model_state in ("loading", "unloading", "unloaded") else
+                 "unavailable" if self.backend is None or self.vad is None else "idle")
         destination = persistent.target.target if persistent is not None else None
         return {"state": state, "listening": listening,
+                "models": self.model_state, "unload_pending": self._unload_requested,
                 "follow_focus": self.cfg.persistent.follow_focus,
                 "can_follow": focus.compositor() == "niri",
                 "destination": destination.describe() if destination is not None else "",
                 "model": self.cfg.backend.type,
-                "error": self.backend_error or ("Speech detector unavailable" if self.vad is None else "")}
+                "error": self.model_error or (self.backend_error or
+                    ("Speech detector unavailable" if self.vad is None else "")
+                    if self.model_state == "ready" else "")}
 
     def command(self, command):
         if self._stopping:
             raise ValueError("Voicekey is shutting down")
-        if command == "stop":
+        if command == "free-memory":
+            if self.model_state == "unloaded":
+                return
+            self._unload_requested = True
+            self.command("stop")
+            self._unload_when_idle()
+        elif command == "stop":
             self._gesture = None
             if self.persistent is not None:
                 self.persistent.request_stop("stopped from panel")
@@ -390,6 +521,7 @@ class Daemon:
             if self.persistent.done.is_set():
                 self._live_session = self.persistent.last_live or self._live_session
                 self.persistent = None
+        self._unload_when_idle()
         if self.session is None:
             return
         if self.recorder.finished or self.recorder.elapsed >= self.cfg.max_seconds:

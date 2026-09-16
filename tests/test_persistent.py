@@ -497,7 +497,9 @@ class PersistentTests(unittest.TestCase):
         self.recorder.push(np.full(512, .1, dtype=np.float32))
         self.assertTrue(entered.wait(1))
         self.recorder.push(np.full(32768, .2, dtype=np.float32))
-        wait_for(lambda: self.session.sequence == 2 and self.session.active)
+        # Admission increments the session counter before _cut replaces current.
+        # Wait for the new utterance itself, not the reservation counter.
+        wait_for(lambda: self.session.current.sequence == 1 and self.session.active)
         old = self.session.last_live
         self.assertTrue(old.stuck)
         self.assertIsNone(self.session.current.decoder)

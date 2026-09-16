@@ -31,7 +31,8 @@ class DetectionError(RuntimeError):
 
 class PersistentSession:
     def __init__(self, cfg, pipeline, recorder, target, vad, vad_slot, streaming,
-                 *, device, chord, watch_factory=None):
+                 *, device, chord, watch_factory=None, prepare_models=None):
+        self.prepare_models = prepare_models
         self.id = uuid.uuid4().hex
         self.cfg, self.pipeline, self.recorder = cfg, pipeline, recorder
         self.device, self.chord = device, chord
@@ -309,6 +310,8 @@ class PersistentSession:
                 pause_seconds=self.cfg.persistent.pause_seconds,
                 silence_seconds=self.cfg.persistent.silence_seconds))
             phase = "speech detector initialization"
+            if self.prepare_models is not None:
+                self.prepare_models(self)
             self.vad_slot.call(self.vad.reset, time.monotonic() + 1.0)
             self.ready.set()
             self.status()

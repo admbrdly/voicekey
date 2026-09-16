@@ -84,6 +84,12 @@ The toggle changes policy until restart. Set `[persistent] follow_focus = false`
 to keep dictation pinned to its starting destination by default. Following is
 by window, not by tabs, terminal panes, or buffers within the same Emacs window.
 
+**Free memory** stops listening, finishes pending speech, and unloads the speech
+models and managed cleanup server. Hotkeys stay available: the next dictation
+captures immediately while models reload, with a delayed first preview.
+**Disable VoiceKey** stops the user service and hotkeys for this login session;
+**Enable VoiceKey** starts it without recording. Other apps can still use the mic.
+
 ## Privacy and recovery
 
 Speech recognition runs locally. Cleanup is off by default; configuring a remote

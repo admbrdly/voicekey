@@ -424,6 +424,43 @@ socket at `$XDG_RUNTIME_DIR/voicekey/control.sock`. The DMS widget uses this
 socket directly, so there are no polling subprocesses. Model selection and
 per-app settings remain in the configuration file for this first version.
 
+### Free memory and disable
+
+The widget's **Free memory** action stops capture, finishes or preserves pending
+speech, then releases the final recognizer, streaming recognizer, speech detector,
+and VoiceKey's managed cleanup server. An independently hosted cleanup endpoint
+is not stopped. The input method and hotkey listener stay registered.
+
+On the next dictation, capture and destination binding begin immediately while
+models load in a background thread. The widget shows **Listening · loading models**.
+Audio remains in the existing bounded buffer; key release and stop controls still
+work. Focus changes retain their audio boundaries during loading. Reload failure
+or timeout stops capture and preserves accepted audio for recovery.
+
+```sh
+~/.local/share/voicekey/venv/bin/python -m voicekey --control free-memory
+```
+
+The command acknowledges the request; status reports `unload_pending` and
+`models` (`ready`, `loading`, `unloading`, or `unloaded`). Unloading waits for
+native calls that are still running after a timeout. The widget reports this
+wait; it does not claim memory has been freed. Memory release depends on the
+runtime and allocator; model files remain on disk. No automatic idle timer is
+currently enabled.
+
+**Disable VoiceKey** runs `systemctl --user stop voicekey.service`. This stops
+VoiceKey's capture, drains/preserves pending speech, releases its input method,
+and disables its hotkeys. The widget stays available to **Enable VoiceKey** with
+`systemctl --user start voicekey.service`; enabling never starts recording.
+The widget confirms the service is inactive before labeling it disabled; a lost
+socket alone means unavailable. These service commands run only for user actions
+and status checks, not as a continuous polling loop.
+
+Stopping applies to this login session; the installed service still starts on
+next login. To change that separately, use `systemctl --user disable voicekey.service`.
+This control does not mute the microphone system-wide or stop separate stdout
+capture, replay, or other applications.
+
 ## Recovery and limits
 
 Each accepted recording is saved before transcription under

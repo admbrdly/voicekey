@@ -15,18 +15,33 @@ PluginComponent {
     property string controlError: ""
     property bool requestPending: false
     property int requestId: 0
+    property string serviceState: "unknown"
+    property string serviceAction: ""
+    property bool servicePending: false
+    property bool serviceQueryAgain: false
+    readonly property bool disabled: !online && serviceState === "inactive"
+    readonly property bool starting: servicePending && serviceAction === "start"
+    readonly property bool stopping: servicePending && serviceAction === "stop"
+    readonly property bool canStart: idle || (online && status.state === "unloaded")
+    readonly property bool controlsBusy: requestPending || servicePending
     readonly property bool online: control.linkUp && status.state !== "offline"
     readonly property bool listening: online && status.listening === true
     readonly property bool idle: online && status.state === "idle"
     readonly property bool muted: AudioService.source?.audio?.muted ?? false
     readonly property bool noMicrophone: !AudioService.source
     readonly property string stateText: {
-        if (!online) return "Voicekey offline";
+        if (stopping) return "Disabling VoiceKey…";
+        if (starting && !online) return "Starting VoiceKey…";
+        if (disabled) return "VoiceKey disabled";
+        if (!online) return "VoiceKey unavailable";
         if (listening && noMicrophone) return "Listening · no microphone";
         if (listening && muted) return "Listening · microphone muted";
+        if (listening && status.models === "loading") return "Listening · loading models";
         if (listening) return "Listening";
         if (status.state === "finishing") return "Finishing dictation";
         if (status.state === "loading") return "Loading models";
+        if (status.state === "unloading") return "Freeing memory…";
+        if (status.state === "unloaded") return "Models unloaded · ready on next use";
         if (status.state === "unavailable") return "Dictation unavailable";
         return "Dictation off";
     }
@@ -38,12 +53,65 @@ PluginComponent {
         : status.state === "finishing" ? "hourglass_top" : "mic_none"
 
     function send(command) {
-        if (!control.linkUp || requestPending) return;
+        if (!control.linkUp || controlsBusy) return;
         requestPending = true;
         controlError = "";
         requestId++;
         control.send({command: command, id: requestId});
         requestTimeout.restart();
+    }
+
+    function checkService() {
+        if (serviceQuery.running) serviceQueryAgain = true;
+        else serviceQuery.running = true;
+    }
+
+    function setService(action) {
+        if (servicePending) return;
+        startAfterClose.stop();
+        serviceAction = action;
+        servicePending = true;
+        serviceState = "unknown";
+        controlError = "";
+        serviceCommand.command = ["systemctl", "--user", action, "voicekey.service"];
+        serviceCommand.running = true;
+        serviceTimeout.restart();
+    }
+
+    Component.onCompleted: checkService()
+
+    Process {
+        id: serviceQuery
+        command: ["systemctl", "--user", "show", "voicekey.service", "--property=ActiveState", "--value"]
+        stdout: StdioCollector { id: serviceOutput }
+        onExited: exitCode => {
+            root.serviceState = exitCode === 0 ? serviceOutput.text.trim() : "unknown";
+            if (root.serviceQueryAgain) {
+                root.serviceQueryAgain = false;
+                Qt.callLater(root.checkService);
+            }
+        }
+    }
+    Process {
+        id: serviceCommand
+        stderr: StdioCollector { id: serviceErrors }
+        onExited: exitCode => {
+            serviceTimeout.stop();
+            root.servicePending = false;
+            if (exitCode !== 0)
+                root.controlError = serviceErrors.text.trim() || "Could not change VoiceKey service state";
+            root.checkService();
+        }
+    }
+    Timer {
+        id: serviceTimeout
+        interval: 35000
+        onTriggered: {
+            root.servicePending = false;
+            root.controlError = "Service change not confirmed; check VoiceKey service status";
+            if (serviceCommand.running) serviceCommand.signal(15);
+            root.checkService();
+        }
     }
 
     DankSocket {
@@ -55,6 +123,8 @@ PluginComponent {
                 root.status = {state: "offline", listening: false};
                 root.requestPending = false;
                 requestTimeout.stop();
+                root.serviceState = "unknown";
+                root.checkService();
             }
         }
         parser: SplitParser {
@@ -137,7 +207,8 @@ PluginComponent {
 
                 StyledText {
                     width: parent.width
-                    text: root.status.destination || "Tap the dictation key to keep listening; hold to talk."
+                    text: root.disabled ? "VoiceKey is stopped. Enable it here to use dictation again."
+                        : root.status.destination || "Tap the dictation key to keep listening; hold to talk."
                     wrapMode: Text.Wrap
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
@@ -146,7 +217,7 @@ PluginComponent {
                     width: parent.width
                     text: root.listening ? "Stop listening" : "Start listening"
                     iconName: root.listening ? "stop" : "mic"
-                    enabled: !root.requestPending && (root.listening || root.idle)
+                    enabled: !root.controlsBusy && (root.listening || root.canStart)
                     onClicked: {
                         if (root.listening) root.send("stop");
                         else {
@@ -163,8 +234,40 @@ PluginComponent {
                         ? "Stop dictation to change this."
                         : "Off pins the starting destination. Until Voicekey restarts."
                     checked: root.status.follow_focus === true
-                    enabled: root.idle && root.status.can_follow && !root.requestPending
+                    enabled: root.canStart && root.status.can_follow === true && !root.controlsBusy
                     onToggled: checked => root.send(checked ? "follow-focus" : "pin")
+                }
+                DankButton {
+                    width: parent.width
+                    text: root.status.unload_pending ? "Freeing memory…" : "Free memory"
+                    iconName: "memory"
+                    enabled: root.online && !root.controlsBusy && !root.status.unload_pending
+                        && root.status.state !== "unloaded" && root.status.state !== "loading"
+                    onClicked: root.send("free-memory")
+                }
+                StyledText {
+                    width: parent.width
+                    text: "Finishes pending speech and unloads models. The next dictation reloads them."
+                    wrapMode: Text.Wrap
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
+                }
+                DankButton {
+                    width: parent.width
+                    text: root.stopping ? "Disabling…" : root.starting ? "Starting…"
+                        : root.online || root.serviceState === "active" || root.serviceState === "activating"
+                            ? "Disable VoiceKey" : "Enable VoiceKey"
+                    iconName: "power_settings_new"
+                    enabled: !root.servicePending && !serviceCommand.running
+                    onClicked: root.setService(root.online || root.serviceState === "active"
+                        || root.serviceState === "activating" ? "stop" : "start")
+                }
+                StyledText {
+                    width: parent.width
+                    text: "Disabling stops VoiceKey and its hotkeys for this login session. Other apps can still use the microphone."
+                    wrapMode: Text.Wrap
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
                 }
                 StyledText {
                     width: parent.width
