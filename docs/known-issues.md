@@ -1,5 +1,67 @@
 # Known issues
 
+## Dictated control characters can trigger unintended actions
+
+**Status:** open; design undecided (2026-09-17). No mitigation implemented
+as part of this note.
+
+Ordinary dictation must not accidentally send an unfinished message or execute
+a terminal command. Currently, `inject.type_text` passes the prepared transcript
+unchanged to `wtype`, which explicitly maps newlines to Return keypresses
+([upstream source](https://github.com/atx/wtype/blob/master/main.c#L150-L175)).
+Paragraph breaks introduced by transcription, polish, word overrides, or hooks
+can therefore become submission keystrokes. Model instructions are not an
+enforcement boundary. A separate investigation reported three polished
+transcripts containing paragraph breaks; their `submitted` outcomes indicate
+delivery, not proof that a message was sent or a command executed.
+
+Input-method delivery commits text without generating Enter key events, avoiding
+that specific mechanism in GUI composers. It is not universally safe: terminals
+can interpret newline/control bytes as commands. Clipboard paste is also
+application-dependent; bracketed paste can protect shell editing, but requires
+terminal/application cooperation ([Bash documentation](https://www.gnu.org/software/bash/manual/html_node/Readline-Init-File-Syntax.html),
+[Ghostty paste protection](https://ghostty.org/docs/config/reference#clipboard-paste-protection)).
+Emacs's pinned-buffer insertion inserts text rather than invoking Return.
+The separate agent key intentionally submits prompts and is outside this issue.
+
+Observed delivery records included input-method insertion for Signal and Ghostty,
+both input-method and `wtype` delivery for Firefox, and buffer insertion for Emacs.
+These are observations, not permanent app classifications: availability and
+focus determine the chosen path.
+
+Possible solutions (not mutually exclusive):
+
+- **Filter at the delivery boundary:** after all transforms, flatten line breaks
+  and tabs and reject other control characters before generic automatic delivery,
+  including input-method and paste paths. Preserve original text for recovery.
+  This is a smaller change but loses paragraph/code formatting and does not
+  prevent arbitrary applications from acting on ordinary characters.
+- **Replace simulated typing with automatic clipboard paste:** retain direct
+  insertion where available; otherwise send a fixed, appropriate paste shortcut.
+  This avoids translating transcript newlines into Return keypresses and can
+  preserve formatting, but requires destination checks, clipboard ownership and
+  consumption handling, and a policy for terminal/control-character risks.
+- **Restrict automatic delivery:** permit multiline text only through trusted
+  integrations; use manual paste/recovery for uncertain destinations. This gives
+  the user more control but adds friction. Manual paste still requires care in
+  terminals.
+
+Implementation plan once a policy is selected: share preparation/enforcement
+across `target.py` and `session_target.py`; cover continuous batches, cancellation,
+focus changes, and uncertain outcomes without duplicate retries. Automatic paste
+must target the intended destination, not merely leave text on the clipboard;
+window identity alone does not prove field identity. Preserve newer user clipboard
+contents and avoid restoring the clipboard before the recipient reads it. The
+current continuous engine refuses clipboard targets, so a paste fallback needs
+implementation rather than only a configuration change. Handle existing
+`inject = "wtype"` configurations explicitly.
+
+Preserve in-field live previews. The user disables notifications; no visible
+preview in fallback-only destinations is acceptable for this work, and a new
+overlay is not decided. Validate control-character handling and delivery races
+with controlled fixtures, not real conversations. No approach should claim
+universal safety for arbitrary applications.
+
 ## Headed Playwright MCP work steals compositor focus
 
 **Status:** open on the Playwright side (observed 2026-09-04). Following
