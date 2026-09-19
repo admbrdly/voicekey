@@ -72,11 +72,17 @@ systemctl --user restart voicekey.service
 
 ## Add the DMS widget
 
-From the checkout:
+`./install.sh` links and enables the widget when DMS is installed and running.
+Add **Voicekey** in DMS Settings → DankBar → Widgets to put it on your bar.
+After upgrading an existing checkout, rerun `./install.sh` to get this setup;
+restarting VoiceKey alone does not install the widget. If DMS is not running,
+the installer links the widget and prints commands to enable it later.
+
+To install only the widget manually, run from the checkout:
 
 ```sh
-mkdir -p ~/.config/DankMaterialShell/plugins
-ln -s "$PWD/contrib/dms/Voicekey" ~/.config/DankMaterialShell/plugins/Voicekey
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins"
+ln -s "$PWD/contrib/dms/Voicekey" "${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins/Voicekey"
 dms ipc call plugin-scan scan
 # Once scanning finishes:
 dms ipc call plugins enable voicekey
