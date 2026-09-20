@@ -8,6 +8,14 @@ from voicekey.config import ConfigError, load
 
 
 class ConfigTests(unittest.TestCase):
+    def test_multiline_apps_require_explicit_app_ids(self):
+        self.assertEqual(self._load_text('').dictation.multiline_apps, [])
+        cfg = self._load_text('[dictation]\nmultiline_apps = ["example.composer"]')
+        self.assertEqual(cfg.dictation.multiline_apps, ['example.composer'])
+        for value in ('"browser"', '{}', '[1]', '[""]', '[true]'):
+            with self.subTest(value=value), self.assertRaises(ConfigError):
+                self._load_text('[dictation]\nmultiline_apps = ' + value)
+
     def test_text_processing_config(self):
         cfg = self._load_text('[text.word_overrides]\n"hyper whisper" = "hyprwhspr"\n'
                               '[dictation]\npost_transcription_hook = "cat"\n'

@@ -24,7 +24,7 @@ from pathlib import Path
 log = logging.getLogger("voicekey.emacs")
 TIMEOUT = 5.0
 PIN_TIMEOUT = 0.25
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 LIBRARY = str(Path(__file__).with_name("voicekey.el"))
 
 
@@ -74,6 +74,9 @@ def _form(body: str) -> str:
 def _eval(form: str, timeout: float = TIMEOUT) -> str:
     if timeout <= 0:
         raise EmacsRefused("operation expired before submission")
+    if "\x00" in form:
+        # NUL cannot travel in argv, so it never reaches the Lisp validator.
+        raise EmacsRefused("emacsclient request contains control character U+0000")
     try:
         result = subprocess.run(["emacsclient", "-e", form], capture_output=True,
                                 text=True, timeout=timeout)

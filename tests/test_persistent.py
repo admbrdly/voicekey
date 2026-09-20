@@ -21,7 +21,7 @@ from voicekey.recorder import AudioBuffer, Recorder, RecordingError
 from voicekey.recovery import Journal
 from voicekey.segment import Segmenter, WINDOW
 from voicekey.session_target import SessionTarget
-from voicekey.target import EmacsTarget, ImeTarget, ImePreview, NotifyPreview, Window, Outcome
+from voicekey.target import EmacsTarget, ImeTarget, ImePreview, NotifyPreview, Window, Outcome, WtypeTarget
 from voicekey.work import Slot
 from tests.test_ime import _offline_input_method
 from tests.test_pipeline import wait_for
@@ -83,6 +83,36 @@ class SessionTargetTests(unittest.TestCase):
         identity = self.ledger.admit(1, session_id='session')
         self.ledger.live(identity, text)
         return identity
+
+    def test_continuous_batches_and_preview_tail_keep_only_authorized_formatting(self):
+        self.ime._on_content_type(None, 0x200, 0)
+        self.ime._on_done(None)
+        binding = ImeTarget(self.ime, 1, Window(7, True), 'composer', allow_formatting=True)
+        shared = SessionTarget('session', binding, self.ledger)
+        first, second = self.entry('one\nparagraph'), self.entry('next\nparagraph')
+        result = shared.attempt(first).land('one\nparagraph', time.monotonic()+1, operation_id='one')
+        self.assertTrue(result.landed)
+        self.assertIn(('commit_string', 'one\nparagraph'), self.ime._im.calls)
+        self.assertEqual(self.ime._shown, ' next\nparagraph')
+        self.ime._on_content_type(None, 0x200, 13)
+        self.ime._on_done(None)
+        result = shared.attempt(second).land('next\nparagraph', time.monotonic()+1, operation_id='two')
+        self.assertTrue(result.landed)
+        self.assertIn(('commit_string', 'next paragraph'), self.ime._im.calls)
+
+    def test_continuous_wtype_flattens_and_control_refusal_stops_later_batches(self):
+        binding = WtypeTarget(NotifyPreview('dictate'), Window(7, True), 'terminal')
+        shared = SessionTarget('session', binding, self.ledger)
+        first, second, third = self.entry('one'), self.entry('two'), self.entry('three')
+        with patch('voicekey.inject._run') as run:
+            self.assertTrue(shared.attempt(first).land('one\nline', time.monotonic()+1, operation_id='one').landed)
+            self.assertEqual(run.call_args.args[1], 'one line')
+            result = shared.attempt(second).land('two\x1b', time.monotonic()+1, operation_id='two')
+            self.assertEqual(result.outcome, Outcome.REFUSED)
+            self.assertTrue(shared.failed.is_set())
+            self.assertEqual(shared.attempt(third).land('three', time.monotonic()+1, operation_id='three').outcome,
+                             Outcome.REFUSED)
+            self.assertEqual(run.call_count, 1)
 
     def test_empty_notification_preview_is_silent_and_can_show_later_text(self):
         shared = SessionTarget('session', EmacsTarget(NotifyPreview('dictate'),

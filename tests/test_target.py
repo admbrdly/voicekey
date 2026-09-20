@@ -34,6 +34,29 @@ class TargetTests(unittest.TestCase):
     def land(self, target, text='hello', **kwargs):
         return target.land(text, time.monotonic() + 1, operation_id='operation', **kwargs)
 
+    def test_bound_app_permission_applies_only_to_input_method(self):
+        cfg = DictationConfig(multiline_apps=['composer'])
+        self.ime._on_content_type(None, 0x200, 0)
+        self.ime._on_done(None)
+        with patch('voicekey.target.focus.focused', return_value=Focus(7, 'composer')):
+            target = bind(self.ime, cfg, True)
+            self.assertEqual(self.land(target, 'first\nsecond').outcome, Outcome.SUBMITTED)
+            self.assertIn(('commit_string', 'first\nsecond'), self.ime._im.calls)
+            fallback = bind(None, cfg, True)
+        with patch('voicekey.inject._run') as run:
+            self.assertEqual(self.land(fallback, 'first\nsecond').outcome, Outcome.SUBMITTED)
+        self.assertEqual(run.call_args.args[1], 'first second')
+
+    def test_control_characters_are_definite_refusals_without_partial_typing(self):
+        for target in (ImeTarget(self.ime, 1, Window(7, True), 'browser'),
+                       WtypeTarget(NotifyPreview('dictate'), Window(7, True), 'terminal')):
+            with self.subTest(target=target.kind), patch('voicekey.inject._run') as run:
+                result = self.land(target, 'before\x1bafter')
+                self.assertEqual(result.outcome, Outcome.REFUSED)
+                self.assertIn('U+001B', result.reason)
+                run.assert_not_called()
+        self.assertFalse(any(c[0] == 'commit_string' for c in self.ime._im.calls))
+
     def test_changed_field_in_same_window_is_refused(self):
         target = ImeTarget(self.ime, 1, Window(7, True), 'browser')
         self.deactivate()

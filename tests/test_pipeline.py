@@ -14,7 +14,7 @@ from voicekey.capture import Session
 from voicekey.config import Config
 from voicekey.pipeline import Pipeline
 from voicekey.recovery import Journal
-from voicekey.target import Landing, Outcome
+from voicekey.target import Landing, Outcome, WtypeTarget, NotifyPreview, Window
 
 
 class FakeRecorder:
@@ -104,6 +104,24 @@ class StartupRecoveryTests(unittest.TestCase):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_delivery_filters_after_transforms_and_journals_original_formatting(self):
+        self.cfg.polish.min_words = 0
+        self.polisher = Mock(polish=Mock(return_value='hello paragraph'))
+        self.cfg.text.word_overrides = {'paragraph': '\n\nsecond'}
+        self.cfg.dictation.post_transcription_hook = "printf 'first\\n\\tsecond\\n'"
+        target = WtypeTarget(NotifyPreview('dictate'), Window(7, False), 'unknown')
+        with patch('voicekey.inject._run') as run, patch('voicekey.target.notify'):
+            session = self.submit(target)
+            self.done()
+        self.assertEqual(run.call_args.args[1], 'first second ')
+        events = self.events(session.id)
+        final = next(e for e in events if e['event'] == 'final')
+        self.assertEqual(final['overridden'], 'hello \n\nsecond')
+        self.assertEqual(final['final'], 'first\n\tsecond\n')
+        self.assertEqual(next(e for e in events if e['event'] == 'delivery-attempt')['final'],
+                         'first\n\tsecond\n')
+        self.assertEqual(events[-1]['outcome'], 'submitted')
+
     def test_overrides_and_hook_follow_polish_and_are_journaled(self):
         self.cfg.polish.min_words = 0
         self.polisher = Mock()

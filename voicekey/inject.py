@@ -6,6 +6,8 @@ from __future__ import annotations
 import subprocess
 import tempfile
 
+from .delivery import prepare
+
 
 # A wl-copy that has not returned in a few seconds will not; the caller has
 # a recovery file for that case and must not hold up later deliveries (on
@@ -34,7 +36,7 @@ def _run(argv: list[str], text: str, timeout: float = TYPE_TIMEOUT) -> None:
 
 
 def type_text(text: str, *, timeout: float = TYPE_TIMEOUT) -> None:
-    _run(["wtype", "-"], text, min(TYPE_TIMEOUT, timeout))
+    _run(["wtype", "-"], prepare(text), min(TYPE_TIMEOUT, timeout))
 
 
 def copy(text: str) -> None:

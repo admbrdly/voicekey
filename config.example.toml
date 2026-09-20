@@ -44,6 +44,9 @@ inject = "wtype"           # when the focused app has no text-input support:
                            # "wtype" (type it) | "clipboard" (copy it and say so)
 max_delay_seconds = 10.0   # insertion deadline from key release; expired text is saved/copied
 require_same_window = true # verify window before generic delivery (Emacs uses its pinned buffer)
+multiline_apps = []        # exact app IDs of checked text composers; IME only,
+                          # and only fields reporting ordinary multiline text
+                          # Emacs buffers preserve formatting without this setting
 
 [pipeline]
 max_pending = 8            # capture/transcription/dictation limit; agent dispatch has the same separate cap

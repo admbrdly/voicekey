@@ -4,6 +4,7 @@ import time
 import queue
 
 from . import emacs, inject
+from .delivery import UnsafeText
 from .ime import ImeHung
 from .ledger import Stage
 from .spacing import spaced
@@ -131,8 +132,11 @@ class SessionTarget:
                     try:
                         sent = target.ime.commit(text, target.preview.generation,
                             timeout=max(0, deadline - time.monotonic()), owner=target.preview.owner,
-                            prefix=prefix, cancelled=cancelled, tail=spaced(" " if text else "", tail))
+                            prefix=prefix, cancelled=cancelled, tail=spaced(" " if text else "", tail),
+                            allow_formatting=target.preview.allow_formatting)
                         landing = Landing(Outcome.SUBMITTED) if sent else Landing(reason="the original field activation ended")
+                    except UnsafeText as exc:
+                        landing = Landing(reason=str(exc))
                     except ImeHung as exc:
                         landing = Landing(Outcome.UNKNOWN, str(exc))
             elif isinstance(target, WtypeTarget):
@@ -142,6 +146,8 @@ class SessionTarget:
                     try:
                         inject.type_text(spaced(prefix, text), timeout=max(0, deadline - time.monotonic()))
                         landing = Landing(Outcome.SUBMITTED)
+                    except UnsafeText as exc:
+                        landing = Landing(reason=str(exc))
                     except FileNotFoundError as exc:
                         landing = Landing(reason=str(exc))
                     except Exception as exc:

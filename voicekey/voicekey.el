@@ -5,7 +5,7 @@
 (require 'seq)
 (require 'subr-x)
 
-(defconst voicekey--protocol-version 3)
+(defconst voicekey--protocol-version 4)
 (defvar voicekey--pins nil)
 (defvar voicekey--operations nil)
 (defvar voicekey--user-buffer nil)
@@ -87,6 +87,22 @@ A successful pin answers with a JSON description of the bound buffer."
   (setq voicekey--pins (assoc-delete-all id voicekey--pins))
   "ok")
 
+(defun voicekey--prepare-text (text terminal)
+  "Preserve buffer formatting, flatten terminal input, refuse other controls.
+Keep this policy in step with delivery.prepare in the Python backends.
+Run inside the insertion transaction: a buffer can change mode after pinning."
+  (setq text (replace-regexp-in-string "\r\n\\|[\r\013\014\u0085\u2028\u2029]" "\n" text t t))
+  (when (string-match "[\u0000-\u0008\u000b-\u001f\u007f-\u009f]" text)
+    (error "dictation contains control character U+%04X"
+           (aref text (match-beginning 0))))
+  (if terminal
+      (replace-regexp-in-string
+       "[ \t\n]+"
+       (lambda (whitespace)
+         (if (string-match-p "[\t\n]" whitespace) " " whitespace))
+       text t t)
+    text))
+
 (defun voicekey--insert (id operation expires text fallback &optional permit keep-pin)
   "Insert once for OPERATION; refuse expiry before any mutation.
 An error after mutation begins is reported as unknown. Buffer text changes
@@ -118,12 +134,13 @@ are grouped atomically; terminal writes cannot be rolled back."
                           (when (or (> (float-time) expires)
                                     (and permit (not (file-exists-p permit))))
                             (throw 'answer "refused: insertion expired"))
+                          (setq text (voicekey--prepare-text
+                                      (if terminal (concat fallback text) text) terminal))
                           (setq started t)
                           (if terminal
-                              (let ((value (concat fallback text)))
-                                (if (eq major-mode 'vterm-mode)
-                                    (vterm-send-string value)
-                                  (term-send-raw-string value)))
+                              (if (eq major-mode 'vterm-mode)
+                                  (vterm-send-string text)
+                                (term-send-raw-string text))
                             (setq text (voicekey--spaced text pos))
                             (undo-boundary)
                             (atomic-change-group

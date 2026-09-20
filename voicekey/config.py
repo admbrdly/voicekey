@@ -83,6 +83,7 @@ class DictationConfig:
     max_delay_seconds: float = 10.0
     require_same_window: bool = True
     post_transcription_hook: str = ""
+    multiline_apps: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -337,6 +338,10 @@ def _validate(cfg: Config) -> None:
     cfg.dictation.require_same_window = _boolean(
         "dictation.require_same_window", cfg.dictation.require_same_window
     )
+    if not isinstance(cfg.dictation.multiline_apps, list):
+        raise ConfigError("dictation.multiline_apps must be a list of exact app IDs")
+    for app in cfg.dictation.multiline_apps:
+        _string("dictation.multiline_apps entry", app)
 
     _validate_polish(cfg.polish)
 

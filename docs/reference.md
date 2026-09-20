@@ -91,6 +91,45 @@ context, a leading space is added only when voicekey was the last thing to
 type in that window. A keystroke on any keyboard resets that fallback; a
 modifier alone does not. Mouse movement is not tracked.
 
+### Formatting and unintended Return protection
+
+Automatic delivery checks text after polish, word overrides, and hooks. Ordinary
+Emacs buffers preserve paragraphs and tabs. Emacs `term`/`vterm`, simulated typing
+through `wtype`, and unclassified input-method destinations replace line breaks
+and tabs with spaces. Other C0/C1 control characters, including Escape, Backspace,
+and DEL, refuse the entire insertion before any text is sent. Unicode letters,
+emoji, and their joining characters are preserved. Line endings are normalized
+to LF before applying the policy. Flattening absorbs spaces adjacent to line
+breaks or tabs without changing ordinary repeated spaces.
+
+To preserve formatting in a checked GUI composer, add its exact compositor app ID
+to `[dictation] multiline_apps`. The list is empty by default. This permission
+applies only when delivery actually uses the input method **and** the current
+field reports the Wayland `multiline` hint with `normal` purpose. Missing hints,
+terminal purpose, and `wtype` fallback still get filtering. Check a composer's
+behavior with disposable text before adding it; an app ID covers the whole app,
+so a browser-wide entry also trusts embedded fields such as web terminals if they
+report ordinary multiline input. Field hints are application claims, not proof
+that insertion cannot trigger actions.
+
+The same policy covers continuous batches and in-field previews, including the
+pending preview sent alongside a commit. Emacs's shared Wayland preview remains
+single-line; its final pinned-buffer insertion preserves formatting. Emacs checks
+the buffer's current mode during insertion, even if it changed after pinning.
+If the current field's hints become restrictive, an already-visible multiline
+preview is flattened immediately; newer queued previews remain intact. A preview
+containing other controls is cleared, with its control code logged without the
+dictated text. NUL is refused before launching `emacsclient`, since it cannot be
+passed in a process argument.
+
+The journal and recovery retain the original formatted transcript. Clipboard
+recovery and `--copy-last` also retain it for deliberate manual use; copying
+does not automatically paste. Agent dispatch and stdout output are unaffected.
+Existing `inject = "wtype"` configurations gain filtering automatically. This
+prevents transcript formatting from becoming Return/Tab keystrokes or terminal
+newline input on restricted paths; it cannot prevent arbitrary applications
+from assigning actions to ordinary characters.
+
 ## Configuration
 
 | key | meaning |
@@ -105,6 +144,7 @@ modifier alone does not. Mouse movement is not tracked.
 | `[persistent]` | shared dictation engine: optional extra toggle key, speech detector, pause/silence thresholds and batch/delivery limits |
 | `[dictation] ime` | use the input method for preview and commit (default true) |
 | `[dictation] inject` | without an input method: `wtype` (type it) or `clipboard` (copy it and say so) |
+| `[dictation] multiline_apps` | exact app IDs allowed formatting through IME in fields reporting ordinary multiline text; default `[]` |
 | `[dictation] max_delay_seconds` | single-recording delivery budget; continuous dictation uses `[persistent] delivery_seconds` per insertion |
 | `[dictation] require_same_window` | copy instead of typing if the focused window changed (Emacs is exempt: its buffer is pinned) |
 | `[polish]` | third pass: backend, endpoint, format, style, `min_words` (8), `max_wait_seconds` (4) |

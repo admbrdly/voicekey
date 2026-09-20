@@ -6,7 +6,8 @@ import unittest
 from unittest.mock import patch
 
 from voicekey import ime as ime_mod
-from voicekey.ime import ImeHung, InputMethod
+from voicekey.ime import ImeHung, InputMethod, MULTILINE, NORMAL
+from voicekey.delivery import UnsafeText
 
 
 class FakeProxy:
@@ -304,3 +305,141 @@ class RevisionTests(unittest.TestCase):
         self.assertFalse(self.ime.clear_preedit(1, 'old', timeout=0.01))
         self.ime._commands.get_nowait()()
         self.assertEqual(self.ime._im.calls, [])
+
+
+class FormattingTests(unittest.TestCase):
+    def setUp(self):
+        self.ime = _offline_input_method()
+        self.addCleanup(self.ime._close_pipe)
+        self.ime._post = lambda fn: (fn() or True)
+        self.ime._on_activate(None)
+        self.ime._on_done(None)
+
+    def field(self, hint=MULTILINE, purpose=NORMAL):
+        self.ime._on_content_type(None, hint, purpose)
+        self.ime._on_done(None)
+
+    def test_formatting_needs_app_permission_and_current_multiline_normal_field(self):
+        for trusted, hint, purpose, expected in (
+                (True, MULTILINE, NORMAL, 'one\n\ttwo'),
+                (False, MULTILINE, NORMAL, 'one two'),
+                (True, 0, NORMAL, 'one two'),
+                (True, MULTILINE, 13, 'one two'),
+                (True, MULTILINE, 99, 'one two')):
+            with self.subTest(trusted=trusted, hint=hint, purpose=purpose):
+                self.field(hint, purpose)
+                self.ime._im.calls.clear()
+                self.assertTrue(self.ime.commit('one\n\ttwo', 1, allow_formatting=trusted))
+                self.assertEqual(self.ime._im.calls[0], ('commit_string', expected))
+
+    def test_content_type_is_double_buffered_and_resets_on_new_activation(self):
+        self.ime._on_content_type(None, MULTILINE, NORMAL)
+        self.ime.commit('one\ntwo', 1, allow_formatting=True)
+        self.assertIn(('commit_string', 'one two'), self.ime._im.calls)
+        self.ime._on_done(None)
+        self.ime.commit('three\nfour', 1, allow_formatting=True)
+        self.assertIn(('commit_string', 'three\nfour'), self.ime._im.calls)
+        self.ime._on_activate(None)
+        self.ime._on_done(None)
+        self.ime.commit('five\nsix', 2, allow_formatting=True)
+        self.assertIn(('commit_string', 'five six'), self.ime._im.calls)
+
+    def test_queued_commit_rechecks_field_type_at_execution(self):
+        self.field()
+        def post(fn):
+            self.field(purpose=13)
+            fn()
+            return True
+        self.ime._post = post
+        self.ime.commit('one\ntwo', 1, allow_formatting=True)
+        self.assertIn(('commit_string', 'one two'), self.ime._im.calls)
+
+    def test_control_refusal_sends_nothing_and_keeps_connection_usable(self):
+        self.field()
+        for bad in ('one\x00two', 'one\x1btwo', 'one\x7ftwo'):
+            with self.assertRaises(UnsafeText):
+                self.ime.commit(bad, 1, allow_formatting=True)
+        self.assertEqual(self.ime._im.calls, [])
+        self.assertFalse(self.ime._dead)
+        self.assertTrue(self.ime.commit('next', 1))
+
+    def test_preview_tail_and_retained_newer_preview_use_the_same_policy(self):
+        self.field()
+        self.ime.claim_preview('owner', allow_formatting=True)
+        self.ime._apply(1, preedit='one\ntwo', owner='owner')
+        self.assertEqual(self.ime._shown, 'one\ntwo')
+        self.field(purpose=13)
+        self.ime.commit('first\n', 1, owner='owner', tail='next\nline', allow_formatting=True)
+        self.assertEqual(self.ime._shown, 'next line')
+        self.ime.preedit('newer\npreview', 1, 'owner')
+        self.ime.commit('older', 1, owner='old-owner')
+        self.assertEqual(self.ime._shown, 'newer preview')
+        self.ime._apply(1, preedit='bad\x1bpreview', owner='owner')
+        self.assertEqual(self.ime._shown, '')
+
+    def test_unsafe_replacement_never_deletes_existing_text(self):
+        self.ime._on_surrounding_text(None, 'old', 3, 3)
+        self.ime._on_done(None)
+        with self.assertRaises(UnsafeText):
+            self.ime.replace(3, 'bad\x1b', 1, expected=self.ime.snapshot())
+        self.assertEqual(self.ime._im.calls, [])
+
+    def test_hint_downgrade_refreshes_visible_preview_without_waiting_for_more_text(self):
+        for hint, purpose in ((0, NORMAL), (MULTILINE, 13)):
+            with self.subTest(hint=hint, purpose=purpose):
+                self.field()
+                self.ime.claim_preview('owner', allow_formatting=True)
+                self.ime._apply(self.ime.activation(), preedit='one \n  two', owner='owner')
+                self.ime._im.calls.clear()
+                self.ime._on_content_type(None, hint, purpose)
+                self.assertEqual(self.ime._shown, 'one \n  two', 'hints wait for done')
+                self.ime._on_done(None)
+                self.assertEqual(self.ime._shown, 'one two')
+                self.assertEqual(self.ime._im.calls,
+                                 [('preedit', 'one two', 7, 7), ('commit', self.ime._serial)])
+                self.ime._im.calls.clear()
+                self.ime._on_done(None)
+                self.assertEqual(self.ime._im.calls, [], 'unchanged hints must not resend previews')
+                self.ime._on_deactivate(None)
+                self.ime._on_done(None)
+                self.assertEqual(self.ime.left_showing(), 'one two')
+                self.ime._on_activate(None)
+                self.ime._on_done(None)
+
+    def test_hint_downgrade_preserves_a_newer_owners_queued_preview(self):
+        self.field()
+        self.ime.claim_preview('old', allow_formatting=True)
+        self.ime._apply(1, preedit='old\npreview', owner='old')
+        self.ime.claim_preview('new', allow_formatting=True)
+        self.ime.preedit('new\npreview', 1, 'new')
+        queued = self.ime._preview_pending
+        self.field(purpose=13)
+        self.assertEqual(self.ime._shown, 'old preview')
+        self.assertEqual(self.ime._preview_pending, queued)
+        text, generation, owner = queued
+        self.ime._preview_pending = None
+        self.ime._apply(generation, preedit=text, owner=owner)
+        self.assertEqual(self.ime._shown, 'new preview')
+
+    def test_hint_change_never_refreshes_an_old_preview_into_another_activation(self):
+        self.field()
+        self.ime.claim_preview('owner', allow_formatting=True)
+        self.ime._apply(1, preedit='old\npreview', owner='owner')
+        self.ime._im.calls.clear()
+        self.ime._on_activate(None)
+        self.ime._on_content_type(None, MULTILINE, 13)
+        self.ime._on_done(None)
+        self.assertEqual(self.ime._shown, '')
+        self.assertEqual(self.ime._im.calls, [])
+        self.assertFalse(self.ime._apply(1, preedit='late\npreview', owner='owner'))
+
+    def test_unsafe_preview_logs_the_control_code_without_logging_dictation(self):
+        self.ime.claim_preview('owner')
+        self.ime._apply(1, preedit='visible', owner='owner')
+        self.ime._im.calls.clear()
+        with self.assertLogs('voicekey.ime', level='WARNING') as logs:
+            self.ime._apply(1, preedit='private words\x1b', owner='owner')
+        self.assertEqual(self.ime._shown, '')
+        self.assertEqual(self.ime._im.calls, [('commit', self.ime._serial)])
+        self.assertIn('U+001B', logs.output[0])
+        self.assertNotIn('private words', logs.output[0])

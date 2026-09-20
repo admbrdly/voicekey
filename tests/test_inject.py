@@ -6,9 +6,20 @@ import unittest
 from unittest.mock import patch
 
 from voicekey import inject
+from voicekey.delivery import UnsafeText
 
 
 class InjectTests(unittest.TestCase):
+    def test_typing_flattens_formatting_before_starting_wtype(self):
+        with patch('voicekey.inject._run') as run:
+            inject.type_text('first\r\n\n\tsecond', timeout=1)
+        run.assert_called_once_with(['wtype', '-'], 'first second', 1)
+
+    def test_controls_never_start_wtype(self):
+        with patch('voicekey.inject._run') as run, self.assertRaises(UnsafeText):
+            inject.type_text('some text\x1bmore text')
+        run.assert_not_called()
+
     def test_a_forking_clipboard_server_does_not_hold_the_call(self):
         # wl-copy exits at once but leaves a child, holding stderr, to serve
         # the clipboard; the call must return with the parent.

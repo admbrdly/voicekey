@@ -14,6 +14,7 @@ from enum import StrEnum
 
 from . import emacs, focus, inject
 from .config import DictationConfig
+from .delivery import UnsafeText
 from .ime import ImeHung, InputMethod
 from .notify import notify
 from .spacing import owed, spaced
@@ -80,12 +81,13 @@ class NotifyPreview:
 class ImePreview:
     name = "in-field"
 
-    def __init__(self, ime: InputMethod, generation: int, prefix: str = ""):
+    def __init__(self, ime: InputMethod, generation: int, prefix: str = "", *, allow_formatting=False):
         self.ime, self.generation, self.prefix = ime, generation, prefix
+        self.allow_formatting = allow_formatting
         self.owner = uuid.uuid4().hex
         self.closed = False
         self._lock = threading.Lock()
-        ime.claim_preview(self.owner)
+        ime.claim_preview(self.owner, allow_formatting=allow_formatting)
 
     def show(self, text: str):
         with self._lock:
@@ -175,8 +177,8 @@ class ImeTarget(Target):
     kind = "input method"
     capabilities = Capabilities("activation")
 
-    def __init__(self, ime, generation, window, app_id):
-        super().__init__(ImePreview(ime, generation), window, app_id)
+    def __init__(self, ime, generation, window, app_id, *, allow_formatting=False):
+        super().__init__(ImePreview(ime, generation, allow_formatting=allow_formatting), window, app_id)
         self.ime = ime
 
     def before(self, wait=0.0):
@@ -190,7 +192,11 @@ class ImeTarget(Target):
         try:
             sent = self.ime.commit(text, self.preview.generation,
                                    timeout=max(0, deadline - time.monotonic()), owner=self.preview.owner,
-                                   prefix=prefix, cancelled=self.cancelled)
+                                   prefix=prefix, cancelled=self.cancelled,
+                                   allow_formatting=self.preview.allow_formatting)
+        except UnsafeText as exc:
+            self.clear()
+            return Landing(reason=str(exc))
         except ImeHung as exc:
             return Landing(Outcome.UNKNOWN, str(exc))
         if sent:
@@ -249,6 +255,8 @@ class WtypeTarget(Target):
             return Landing(reason="focus changed or delivery expired")
         try:
             inject.type_text(spaced(prefix, text), timeout=max(0, deadline - time.monotonic()))
+        except UnsafeText as exc:
+            return Landing(reason=str(exc))
         except FileNotFoundError as exc:
             return Landing(reason=f"typing could not start: {exc}")
         except Exception as exc:
@@ -295,6 +303,7 @@ def bind(ime: InputMethod | None, cfg: DictationConfig, landing: bool) -> Target
     if not stable:
         return ClipboardTarget(NotifyPreview("dictate"), window, focused.app_id)
     if in_field:
-        return ImeTarget(ime, generation, window, focused.app_id)
+        return ImeTarget(ime, generation, window, focused.app_id,
+                         allow_formatting=focused.app_id in cfg.multiline_apps)
     factory = WtypeTarget if cfg.inject == "wtype" else ClipboardTarget
     return factory(NotifyPreview("dictate"), window, focused.app_id)

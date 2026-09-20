@@ -2,11 +2,12 @@
 
 ## Dictated control characters can trigger unintended actions
 
-**Status:** open; design undecided (2026-09-17). No mitigation implemented
-as part of this note.
+**Status:** delivery-boundary mitigation implemented (2026-09-21). Restart
+the service to load it. Per-app formatting permissions are empty by default;
+checking and enabling additional GUI composers remains a separate task.
 
 Ordinary dictation must not accidentally send an unfinished message or execute
-a terminal command. Currently, `inject.type_text` passes the prepared transcript
+a terminal command. Previously, `inject.type_text` passed the prepared transcript
 unchanged to `wtype`, which explicitly maps newlines to Return keypresses
 ([upstream source](https://github.com/atx/wtype/blob/master/main.c#L150-L175)).
 Paragraph breaks introduced by transcription, polish, word overrides, or hooks
@@ -21,7 +22,8 @@ can interpret newline/control bytes as commands. Clipboard paste is also
 application-dependent; bracketed paste can protect shell editing, but requires
 terminal/application cooperation ([Bash documentation](https://www.gnu.org/software/bash/manual/html_node/Readline-Init-File-Syntax.html),
 [Ghostty paste protection](https://ghostty.org/docs/config/reference#clipboard-paste-protection)).
-Emacs's pinned-buffer insertion inserts text rather than invoking Return.
+Emacs's ordinary pinned-buffer insertion inserts text rather than invoking Return;
+its `term` and `vterm` paths send process input and need terminal filtering.
 The separate agent key intentionally submits prompts and is outside this issue.
 
 Observed delivery records included input-method insertion for Signal and Ghostty,
@@ -29,38 +31,38 @@ both input-method and `wtype` delivery for Firefox, and buffer insertion for Ema
 These are observations, not permanent app classifications: availability and
 focus determine the chosen path.
 
-Possible solutions (not mutually exclusive):
+Implemented policy:
 
-- **Filter at the delivery boundary:** after all transforms, flatten line breaks
-  and tabs and reject other control characters before generic automatic delivery,
-  including input-method and paste paths. Preserve original text for recovery.
-  This is a smaller change but loses paragraph/code formatting and does not
-  prevent arbitrary applications from acting on ordinary characters.
-- **Replace simulated typing with automatic clipboard paste:** retain direct
-  insertion where available; otherwise send a fixed, appropriate paste shortcut.
-  This avoids translating transcript newlines into Return keypresses and can
-  preserve formatting, but requires destination checks, clipboard ownership and
-  consumption handling, and a policy for terminal/control-character risks.
-- **Restrict automatic delivery:** permit multiline text only through trusted
-  integrations; use manual paste/recovery for uncertain destinations. This gives
-  the user more control but adds friction. Manual paste still requires care in
-  terminals.
+- Ordinary Emacs buffers preserve paragraphs and tabs. Emacs checks the current
+  mode inside the insertion transaction; `term` and `vterm` flatten formatting.
+- `wtype` always flattens line breaks and tabs, including existing configurations.
+- Input-method delivery preserves formatting only for exact app IDs listed in
+  `[dictation] multiline_apps`, and only while the field reports ordinary
+  multiline input. Unknown/single-line fields and terminal purpose are restricted.
+  Content-type updates are applied on Wayland `done` and checked again at delivery.
+- All automatic insertion paths refuse other C0/C1 controls before sending text.
+  Shared backend enforcement covers both single recordings and continuous batches,
+  after polish, overrides, and hooks. A refusal does not retry the insertion.
+- In-field previews remain enabled and follow the generic formatting policy;
+  unsafe previews are cleared with a diagnostic identifying the control code.
+  A restrictive hint change also flattens an already-visible multiline preview
+  without overwriting a newer queued preview. Emacs's Wayland previews remain
+  single-line while its ordinary buffer insertion preserves final formatting.
+- Original transcripts remain in the journal/recovery. Clipboard recovery retains
+  formatting for manual use, without automatic paste. Agent dispatch is unchanged.
 
-Implementation plan once a policy is selected: share preparation/enforcement
-across `target.py` and `session_target.py`; cover continuous batches, cancellation,
-focus changes, and uncertain outcomes without duplicate retries. Automatic paste
-must target the intended destination, not merely leave text on the clipboard;
-window identity alone does not prove field identity. Preserve newer user clipboard
-contents and avoid restoring the clipboard before the recipient reads it. The
-current continuous engine refuses clipboard targets, so a paste fallback needs
-implementation rather than only a configuration change. Handle existing
-`inject = "wtype"` configurations explicitly.
+The Python backends share `delivery.prepare`; Emacs mirrors the small policy in
+its insertion transaction. Controlled tests cover control characters, formatting,
+queued field changes, preview tails, continuous batches, and terminal mode changes.
+Follow-up checks cover adjacent-space flattening, preview hint downgrades, and
+NUL refusal before starting `emacsclient` (a definite refusal, not uncertain delivery).
 
-Preserve in-field live previews. The user disables notifications; no visible
-preview in fallback-only destinations is acceptable for this work, and a new
-overlay is not decided. Validate control-character handling and delivery races
-with controlled fixtures, not real conversations. No approach should claim
-universal safety for arbitrary applications.
+Remaining limits: field hints are application claims. Do not add an app to the
+formatting list without checking its behavior; a browser entry also trusts web
+terminals that advertise ordinary multiline fields. Unclassified destinations
+lose automatic paragraph formatting. Manual paste still needs care in terminals,
+and arbitrary applications can act on ordinary characters. Automatic clipboard
+paste and stronger field-specific integrations remain possible future work.
 
 ## Headed Playwright MCP work steals compositor focus
 

@@ -167,6 +167,49 @@
     (cl-letf (((symbol-function 'vterm-send-string) (lambda (_) (error "partial terminal send"))))
       (should (string-prefix-p "unknown:" (voicekey-test-insert "next"))))))
 
+(ert-deftest voicekey-ordinary-buffer-preserves-paragraphs-and-tabs ()
+  (voicekey-test-buffer ""
+    (voicekey-test-pin)
+    (should (equal (voicekey-test-insert "first\r\n\r\n\tsecond") "ok"))
+    (should (equal (buffer-string) "first\n\n\tsecond"))))
+
+(ert-deftest voicekey-terminal-formatting-is-filtered-even-after-mode-change ()
+  (dolist (mode '(vterm-mode term-mode))
+    (voicekey-test-buffer ""
+      (voicekey-test-pin)
+      ;; Classification must happen during insertion, not when pinned.
+      (setq major-mode mode)
+      (let (sent)
+        (cl-letf (((symbol-function 'vterm-send-string) (lambda (text) (push text sent)))
+                  ((symbol-function 'term-send-raw-string) (lambda (text) (push text sent))))
+          (should (equal (voicekey-test-insert "first\r\n\tsecond\u2028last\n") "ok"))
+          (should (equal sent '("first second last ")))
+          (should (equal (buffer-string) "")))))))
+
+(ert-deftest voicekey-controls-refuse-before-any-buffer-or-terminal-mutation ()
+  (dolist (mode '(fundamental-mode vterm-mode term-mode))
+    (voicekey-test-buffer "old"
+      (setq major-mode mode)
+      (voicekey-test-pin)
+      (cl-letf (((symbol-function 'vterm-send-string) (lambda (_) (ert-fail "terminal write")))
+                ((symbol-function 'term-send-raw-string) (lambda (_) (ert-fail "terminal write"))))
+        (should (string-prefix-p "refused: dictation contains control character U+001B"
+                                  (voicekey-test-insert "before\eafter")))
+        (should (equal (buffer-string) "old"))))))
+
+(ert-deftest voicekey-preparation-covers-all-control-characters ()
+  (dolist (code (append (number-sequence 0 31) (number-sequence 127 159)))
+    (unless (memq code '(9 10 11 12 13 133))
+      (should-error (voicekey--prepare-text (string code) nil))
+      (should-error (voicekey--prepare-text (string code) t))))
+  (dolist (separator '("\n" "\r" "\r\n" "\013" "\014" "\u0085" "\u2028" "\u2029" "\t"))
+    (should (equal (voicekey--prepare-text (concat "one" separator "two") t) "one two"))))
+
+(ert-deftest voicekey-flattening-absorbs-only-spaces-next-to-formatting ()
+  (should (equal (voicekey--prepare-text "one  \r\n\n  \t  two" t) "one two"))
+  (should (equal (voicekey--prepare-text "one  two   " t) "one  two   "))
+  (should (equal (voicekey--prepare-text "one \n  two" nil) "one \n  two")))
+
 (ert-deftest voicekey-evil-normal-spaces-after-character-at-point ()
   (skip-unless (require 'evil nil t))
   (voicekey-test-buffer "a b"

@@ -28,10 +28,14 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 
+from .delivery import UnsafeText, prepare
+
 log = logging.getLogger("voicekey.ime")
 
 CALL_TIMEOUT = 2.0  # seconds a call may stay pending before it is cancelled
 STARTED_TIMEOUT = 10.0  # seconds a started call may run before the connection is written off
+MULTILINE = 0x200  # text-input-v3 content_hint.multiline
+NORMAL = 0  # text-input-v3 content_purpose.normal; terminal is 13
 
 EVENTS = (
     "activate", "deactivate", "surrounding_text", "text_change_cause",
@@ -109,6 +113,8 @@ class InputMethod:
         self._unavailable = False
         self._surrounding: tuple[str, int] | None = None
         self._pending_surrounding: tuple[str, int] | None = None
+        self._content_type = (0, NORMAL)
+        self._pending_content_type = (0, NORMAL)
         self._activated = False
         self._snapshot = Snapshot(None, 0, None)
         self._shown = ""  # preedit the field is showing now (applied requests only)
@@ -121,6 +127,7 @@ class InputMethod:
         os.set_blocking(self._wake_w, False)
         self._preview_lock = threading.Lock()
         self._preview_owner = None
+        self._preview_formatting_owner = None
         self._preview_text = ""
         self._preview_pending = None
 
@@ -189,9 +196,10 @@ class InputMethod:
     def shown_for(self, generation: int) -> str:
         return self._shown if generation == self.activation() else self._history.get(generation, "")
 
-    def claim_preview(self, owner: str) -> None:
+    def claim_preview(self, owner: str, *, allow_formatting: bool = False) -> None:
         with self._preview_lock:
             self._preview_owner = owner
+            self._preview_formatting_owner = owner if allow_formatting else None
             self._preview_text = ""
             self._preview_pending = None
 
@@ -231,12 +239,12 @@ class InputMethod:
 
     def commit(self, text: str, generation: int, *, timeout: float | None = None,
                owner: str | None = None, prefix: str | None = None, cancelled=None,
-               tail: str | None = None) -> bool:
+               tail: str | None = None, allow_formatting: bool = False) -> bool:
         """Insert TEXT in place of the preedit. False if the field went away."""
         deadline = time.monotonic() + (CALL_TIMEOUT if timeout is None else max(0, timeout))
         return self._call(lambda: self._apply(generation, commit=text, deadline=deadline,
                                              owner=owner, prefix=prefix, cancelled=cancelled,
-                                             preedit=tail), timeout=timeout)
+                                             preedit=tail, allow_formatting=allow_formatting), timeout=timeout)
 
     def replace(self, before: int, text: str, generation: int, *, expected: Snapshot,
                 timeout: float | None = None) -> bool:
@@ -291,6 +299,10 @@ class InputMethod:
                 self._sever()
                 raise ImeHung("the input method stopped responding; in-field text is off until restart")
         if errors:
+            if isinstance(errors[0], UnsafeText):
+                # Validation runs before any protocol mutation. This is a
+                # definite refusal, not a broken connection or partial send.
+                raise errors[0]
             self._dead = True
             self._sever()
             raise ImeHung(f"a started input-method request failed: {errors[0]}") from errors[0]
@@ -321,6 +333,7 @@ class InputMethod:
         self._pending_active = True
         self._activated = True
         self._pending_surrounding = None
+        self._pending_content_type = (0, NORMAL)
 
     def _on_deactivate(self, im) -> None:
         self._pending_active = False
@@ -332,11 +345,13 @@ class InputMethod:
         pass
 
     def _on_content_type(self, im, hint, purpose) -> None:
-        pass
+        self._pending_content_type = (hint, purpose)
 
     def _on_done(self, im) -> None:
         self._serial += 1
         self._surrounding = self._pending_surrounding
+        content_type_changed = self._content_type != self._pending_content_type
+        self._content_type = self._pending_content_type
         if self._pending_active != self._active or self._activated:
             if self._active:
                 self._left_showing = self._shown
@@ -354,6 +369,13 @@ class InputMethod:
             self._shown = ""
         self._activated = False
         self._snapshot = Snapshot(self.activation(), self._serial, self._surrounding)
+        if content_type_changed and self._active and self._shown and not self._formatting_allowed(True):
+            # A field can change its hints without starting a new activation.
+            # Refresh what is already visible; leave any newer queued preview
+            # intact. Otherwise focus loss could retain the old multiline text.
+            flattened = prepare(self._shown)
+            if flattened != self._shown:
+                self._apply(self._generation, preedit=flattened)
 
     def _on_unavailable(self, im) -> None:
         self._unavailable = True
@@ -364,10 +386,25 @@ class InputMethod:
 
     # --- requests (loop thread) ---
 
+    def _formatting_allowed(self, trusted: bool) -> bool:
+        hint, purpose = self._content_type
+        return trusted and bool(hint & MULTILINE) and purpose == NORMAL
+
+    def _prepare_preview(self, text: str, owner: str | None) -> str:
+        # Some applications retain preedit on focus loss. Apply the same
+        # policy as final text, and clear previews containing other controls.
+        try:
+            trusted = owner is not None and owner == self._preview_formatting_owner
+            return prepare(text, formatting=self._formatting_allowed(trusted))
+        except UnsafeText as exc:
+            log.warning("preview cleared: %s", exc)
+            return ""
+
     def _apply(self, generation: int, *, preedit: str | None = None,
                commit: str | None = None, delete_before: int = 0,
                expected: Snapshot | None = None, deadline: float | None = None,
-               owner: str | None = None, prefix: str | None = None, cancelled=None) -> bool:
+               owner: str | None = None, prefix: str | None = None, cancelled=None,
+               allow_formatting: bool = False) -> bool:
         if (self._dead or self._closing or self._unavailable or not self._active or self._generation != generation
                 or (deadline is not None and time.monotonic() >= deadline)
                 or (cancelled is not None and cancelled.is_set())):
@@ -387,6 +424,12 @@ class InputMethod:
         if commit is not None and prefix is not None:
             from .spacing import owed, spaced
             commit = spaced(owed(self.before_cursor(), prefix), commit)
+        # Recheck the current field hints on the Wayland thread, immediately
+        # before sending. A trusted app alone does not authorize formatting.
+        if commit is not None:
+            commit = prepare(commit, formatting=self._formatting_allowed(allow_formatting))
+        if preedit is not None:
+            preedit = self._prepare_preview(preedit, owner)
         if any(value is not None and len(value.encode()) > 4000 for value in (commit, preedit)):
             return False
         # Text-input state is double-buffered and resets on every commit, so a
@@ -408,7 +451,7 @@ class InputMethod:
                         self._im.set_preedit_string(preedit, end, end)
                         self._shown = preedit
                 else:
-                    tail = self._preview_text
+                    tail = self._prepare_preview(self._preview_text, self._preview_owner)
                     if tail:
                         end = len(tail.encode())
                         self._im.set_preedit_string(tail, end, end)

@@ -107,6 +107,14 @@ class ProtocolTests(unittest.TestCase):
             emacs.insert('x', 'pin', timeout=0)
         run.assert_not_called()
 
+    @patch('voicekey.emacs.subprocess.run')
+    def test_nul_is_a_definite_refusal_before_process_launch(self, run):
+        for text, prefix in (('first\x00second', ''), ('text', '\x00')):
+            with self.subTest(text=text, prefix=prefix):
+                with self.assertRaisesRegex(emacs.EmacsRefused, 'U\\+0000'):
+                    emacs.insert(text, 'pin', prefix=prefix)
+        run.assert_not_called()
+
 
 @unittest.skipUnless(shutil.which('emacs'), 'batch Emacs unavailable')
 class EditorTests(unittest.TestCase):
