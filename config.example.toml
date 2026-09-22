@@ -25,11 +25,11 @@ model_dir = "~/.local/share/voicekey/sherpa-onnx-nemo-parakeet-unified-en-0.6b-i
 model_dir = "~/.local/share/voicekey/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25"
 
 [persistent]
-follow_focus = true       # Niri: new speech follows window switches; false pins the destination
+destination_policy = "pause" # "pause" on window switch (default), "follow" (Niri), or "pin"
 key = ""                  # optional extra toggle, e.g. "KEY_F11"; the dictation hotkey already uses this engine
 vad_model = "~/.local/share/voicekey/silero_vad.onnx" # --download fetches it for dictation
 pause_seconds = 1.2        # silence that finishes an utterance; microphone keeps running
-silence_seconds = 120.0    # longer silence turns listening off; key or panel starts it again
+silence_seconds = 60.0    # longer silence turns listening off; key or panel starts it again
 max_utterance_seconds = 30.0 # hard cut even during continuous speech
 pre_roll_seconds = 0.3     # retain this much audio before detected speech
 delivery_seconds = 5.0     # one insertion operation; queued text has no insertion-age expiry
@@ -42,6 +42,8 @@ post_transcription_hook = "" # optional trusted shell command; stdin -> stdout, 
 ime = true                 # live text and final commit through the Wayland input method
 inject = "wtype"           # when the focused app has no text-input support:
                            # "wtype" (type it) | "clipboard" (copy it and say so)
+                           # Persistent dictation requires a verified field; the panel offers
+                           # simulated typing explicitly for one session in one window.
 max_delay_seconds = 10.0   # insertion deadline from key release; expired text is saved/copied
 require_same_window = true # verify window before generic delivery (Emacs uses its pinned buffer)
 multiline_apps = []        # exact app IDs of checked text composers; IME only,

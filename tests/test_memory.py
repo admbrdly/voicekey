@@ -15,7 +15,7 @@ from voicekey.config import Config
 from voicekey.daemon import Daemon
 from voicekey.gate import Gate
 from voicekey.recovery import Journal
-from voicekey.target import NotifyPreview, Window, WtypeTarget
+from voicekey.target import NotifyPreview, Window, ImeTarget
 from tests.test_persistent import ControlledRecorder
 from tests.test_pipeline import FakeRecorder, wait_for
 
@@ -29,9 +29,8 @@ class MemoryTests(unittest.TestCase):
             patch(f'voicekey.{module}.notify').start()
         patch('voicekey.daemon.focus.compositor', return_value='none').start()
         patch('voicekey.target.focus.window_id', return_value=1).start()
-        self.bind = patch('voicekey.daemon.target_mod.bind', side_effect=lambda *a:
-            WtypeTarget(NotifyPreview('dictate'), Window(1, True), 'terminal')).start()
-        self.insert = patch('voicekey.session_target.inject.type_text').start()
+        self.insert = Mock(return_value=True)
+        self.bind = patch('voicekey.daemon.target_mod.bind', side_effect=lambda *a, **kw: self.binding(1)).start()
         cfg = Config()
         cfg.pipeline.shutdown_seconds = .5
         self.d = Daemon(cfg, recorder_factory=ControlledRecorder,
@@ -41,6 +40,11 @@ class MemoryTests(unittest.TestCase):
         self.install_models()
         self.d.start_workers()
         self.addCleanup(self.cleanup)
+
+    def binding(self, window):
+        ime = Mock(activation=Mock(return_value=1), before_cursor=Mock(return_value=None),
+                   commit=self.insert)
+        return ImeTarget(ime, 1, Window(window, True), 'terminal')
 
     def cleanup(self):
         self.d.close()
@@ -110,7 +114,8 @@ class MemoryTests(unittest.TestCase):
         release.set()
         self.settle(session)
         np.testing.assert_array_equal(self.d.backend.transcribe.call_args.args[0], samples)
-        self.insert.assert_called_once_with('Saved words.', timeout=unittest.mock.ANY)
+        self.insert.assert_called_once()
+        self.assertEqual(self.insert.call_args.args[0], 'Saved words.')
         self.bind.assert_called_once()
 
     def test_failed_reload_preserves_audio_and_never_inserts(self):
@@ -196,8 +201,8 @@ class MemoryTests(unittest.TestCase):
         patch('voicekey.daemon.NiriFocusWatch', ManualWatch).start()
         destination = [1]
         patch('voicekey.target.focus.window_id', side_effect=lambda **kw: destination[0]).start()
-        self.bind.side_effect = lambda *a: WtypeTarget(
-            NotifyPreview('dictate'), Window(destination[0], True), 'terminal')
+        self.d.cfg.persistent.destination_policy = 'follow'
+        self.bind.side_effect = lambda *a, **kw: self.binding(destination[0])
         session, release = self.cold_start()
         wait_for(lambda: session.watcher is not None)
         a = np.ones(1637, dtype=np.float32) * .2
@@ -214,6 +219,26 @@ class MemoryTests(unittest.TestCase):
         np.testing.assert_array_equal(calls[0].args[0], a)
         np.testing.assert_array_equal(calls[1].args[0], b)
         self.insert.assert_called_once()  # old terminal speech is recovery-only
+
+    def test_panel_wait_is_used_only_for_initial_binding_in_follow_mode(self):
+        from voicekey.focus import Focus
+        from tests.test_follow import ManualWatch
+        self.d.cfg.persistent.destination_policy = 'follow'
+        destination = [1]
+        self.bind.side_effect = lambda *a, **kw: self.binding(destination[0])
+        with patch('voicekey.daemon.focus.compositor', return_value='niri'), \
+                patch('voicekey.daemon.NiriFocusWatch', ManualWatch), \
+                patch('voicekey.target.focus.window_id', side_effect=lambda **kw: destination[0]):
+            self.d.command('start')
+            session = self.d.persistent
+            wait_for(session.ready.is_set)
+            for identity in (2, 3):
+                destination[0] = identity
+                session.watcher.changed(Focus(identity, 'terminal'))
+                wait_for(lambda: session.target.target.window_id == identity)
+            self.d.command('stop')
+            self.settle(session)
+        self.assertEqual([c.kwargs['activation_wait'] for c in self.bind.call_args_list], [1.0, .2, .2])
 
     def test_free_memory_during_reload_finishes_capture_then_unloads(self):
         session, release = self.cold_start()

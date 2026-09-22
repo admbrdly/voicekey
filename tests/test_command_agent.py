@@ -105,9 +105,15 @@ class CommandAgentTests(unittest.TestCase):
         for pid in (self.root / 'pids').read_text().split():
             stat = Path('/proc') / pid / 'stat'
             expires = time.monotonic() + 2
-            while stat.exists() and stat.read_text().split()[2] != 'Z' and time.monotonic() < expires:
+            while True:
+                try:
+                    running = stat.read_text().split()[2] != 'Z'
+                except (FileNotFoundError, ProcessLookupError):
+                    running = False  # Reaped between opening and reading /proc.
+                if not running or time.monotonic() >= expires:
+                    break
                 time.sleep(.01)
-            self.assertTrue(not stat.exists() or stat.read_text().split()[2] == 'Z')
+            self.assertFalse(running)
 
     def test_pre_cancelled_or_expired_never_spawns(self):
         cfg = self.fixture('raise RuntimeError("must not execute")')

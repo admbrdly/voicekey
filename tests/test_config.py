@@ -8,6 +8,21 @@ from voicekey.config import ConfigError, load
 
 
 class ConfigTests(unittest.TestCase):
+    def test_destination_defaults_and_legacy_migration(self):
+        cfg = self._load_text('')
+        self.assertEqual(cfg.persistent.destination_policy, 'pause')
+        self.assertEqual(cfg.persistent.silence_seconds, 60)
+        for value, expected in (('true', 'follow'), ('false', 'pin')):
+            cfg = self._load_text('[persistent]\nfollow_focus = ' + value)
+            self.assertEqual(cfg.persistent.destination_policy, expected)
+        for policy in ('pause', 'follow', 'pin'):
+            cfg = self._load_text(f'[persistent]\ndestination_policy = "{policy}"')
+            self.assertEqual(cfg.persistent.destination_policy, policy)
+        for text in ('destination_policy = "other"', 'destination_policy = true',
+                     'follow_focus = "yes"', 'follow_focus = true\ndestination_policy = "pause"'):
+            with self.subTest(text=text), self.assertRaises(ConfigError):
+                self._load_text('[persistent]\n' + text)
+
     def test_multiline_apps_require_explicit_app_ids(self):
         self.assertEqual(self._load_text('').dictation.multiline_apps, [])
         cfg = self._load_text('[dictation]\nmultiline_apps = ["example.composer"]')

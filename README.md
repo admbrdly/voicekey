@@ -89,13 +89,33 @@ dms ipc call plugins enable voicekey
 ```
 
 Add **Voicekey** in DMS Settings → DankBar → Widgets. The widget shows listening
-status, microphone warnings, start/stop controls, and a follow-focus toggle.
+status, microphone warnings, start/stop controls, and three destination choices.
 It talks directly to the daemon over a private local socket; both must run as
 the same user with the same `XDG_RUNTIME_DIR`. Startup never enables recording.
 
-The toggle changes policy until restart. Set `[persistent] follow_focus = false`
-to keep dictation pinned to its starting destination by default. Following is
-by window, not by tabs, terminal panes, or buffers within the same Emacs window.
+- **Pause on window switch** (default): switching away stops the microphone.
+  Speech already captured for Emacs finishes in its pinned buffer; other
+  pending text stays in recovery. Tap to start a new session; returning does
+  not resume it.
+- **Follow focused window** (Niri): new speech follows window switches.
+- **Stay at original destination**: retain the starting destination. Emacs can
+  receive text in its pinned buffer in the background; other destinations
+  pause when their original field becomes unavailable.
+
+These choices last until restart. Set `[persistent] destination_policy` to
+`"pause"`, `"follow"`, or `"pin"` for a permanent default. Existing explicit
+`follow_focus = true/false` settings still load as `"follow"`/`"pin"`.
+Listening stops after **60 seconds of silence** by default (`silence_seconds`).
+
+Persistent dictation requires a verified input-method field or Emacs buffer.
+If none is detected, it pauses and preserves pending speech for recovery.
+For unsupported fields, the panel offers **Use simulated typing this session**:
+focus the field first, because these keystrokes can trigger shortcuts elsewhere.
+This exception always pauses on window switches and expires with the session.
+The bar shows the destination while listening and **Off · reason** after an
+automatic stop. Clipboard-only configurations do not offer simulated typing.
+Window policies do not distinguish tabs or panes inside one window; loss of
+an input-method field activation also pauses dictation.
 
 **Free memory** stops listening, finishes pending speech, and unloads the speech
 models and managed cleanup server. Hotkeys stay available: the next dictation

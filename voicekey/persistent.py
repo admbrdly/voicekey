@@ -31,13 +31,16 @@ class DetectionError(RuntimeError):
 
 class PersistentSession:
     def __init__(self, cfg, pipeline, recorder, target, vad, vad_slot, streaming,
-                 *, device, chord, watch_factory=None, prepare_models=None):
+                 *, device, chord, watch_factory=None, prepare_models=None, allow_typing=False):
         self.prepare_models = prepare_models
         self.id = uuid.uuid4().hex
         self.cfg, self.pipeline, self.recorder = cfg, pipeline, recorder
+        # The compatibility escape hatch is local to one window and one session.
+        self.policy = "pause" if allow_typing else cfg.persistent.destination_policy
+        self.allow_typing = allow_typing
         self.device, self.chord = device, chord
         self._bind = target if callable(target) else lambda: target
-        self.target = SessionTarget(self.id, ClipboardTarget(NotifyPreview("dictate"), Window(None, True), None), pipeline.ledger, scoped=True)
+        self.target = self._new_target(ClipboardTarget(NotifyPreview("dictate"), Window(None, True), None))
         self.targets = [self.target]
         self.watch_factory, self.watcher = watch_factory, None
         self.focus_events = queue.Queue(maxsize=64)
@@ -66,6 +69,15 @@ class PersistentSession:
         self.last_live = None
         self.thread = None
         self._last_status = 0.0
+        self._destination_issue = None
+        self._last_focus_poll = float("-inf")
+        self._focus_unknown = False
+        self.typing_fallback = False
+        self.tracking_notice = ""
+
+    def _new_target(self, target):
+        return SessionTarget(self.id, target, self.pipeline.ledger, scoped=True,
+                             allow_typing=self.allow_typing)
 
     def focus_changed(self, destination):
         """Called by the event reader; no desktop I/O on this thread."""
@@ -77,10 +89,13 @@ class PersistentSession:
             # Immediately prevent an old generic delivery, even if the capture
             # worker is behind on audio or binding. Emacs retains its buffer pin.
             self.target.departed.set()
-            try:
-                self.focus_events.put_nowait((self.recorder.buffer.end, destination, self._focus_serial))
-            except queue.Full:
-                self.request_stop("too many focus changes; audio preserved", paused=True)
+            if self.policy == "follow":
+                try:
+                    self.focus_events.put_nowait((self.recorder.buffer.end, destination, self._focus_serial))
+                except queue.Full:
+                    self.request_stop("too many focus changes; audio preserved", paused=True)
+        if self.policy == "pause":
+            self.request_stop("Window changed", paused=True)
         self.wake.set()
 
     def _drain_audio(self, end):
@@ -128,7 +143,7 @@ class PersistentSession:
                         emacs.unpin(proposed.pinning.id)
                     except emacs.EmacsError:
                         pass
-        target = SessionTarget(self.id, candidate, self.pipeline.ledger, scoped=True)
+        target = self._new_target(candidate)
         with self._focus_lock:
             if serial != self._focus_serial:
                 target.departed.set()
@@ -141,7 +156,52 @@ class PersistentSession:
             self.id, "destination-changed", sample=end, window=destination.id,
             app_id=destination.app_id, target=candidate.describe()))
         log.info("persistent destination: %s", candidate.describe())
+        self._destination_issue = None
+        if current and not target.departed.is_set():
+            self.status()
         return True
+
+    def _check_destination(self):
+        """Debounce field/failure observations across independent focus and IME events.
+
+        Delivery still checks its original field immediately. Only stopping
+        capture is delayed; a stale observation must never stop a new target.
+        Window subprocesses run at most once a second, separately from fields.
+        """
+        if self.stopping.is_set():
+            return
+        with self._focus_lock:
+            target, serial = self.target, self._focus_serial
+            if not self.focus_events.empty():
+                self._destination_issue = None
+                return
+        if self.watcher is None and self.policy == "pause":
+            now = time.monotonic()
+            if target.target.window_id is not None and now - self._last_focus_poll >= 1:
+                identity = focus.window_id(timeout=0.2)
+                self._last_focus_poll = time.monotonic()
+                if identity is not None and identity != target.target.window_id:
+                    target.departed.set()
+                    self.request_stop("Window changed", paused=True)
+                    return
+                if identity is None and self._focus_unknown:
+                    self.request_stop("Window tracking unavailable", paused=True)
+                    return
+                self._focus_unknown = identity is None
+        issue = target.field_issue()
+        if not issue and target.failed.is_set():
+            issue = "Delivery unavailable"
+        with self._focus_lock:
+            if serial != self._focus_serial or not self.focus_events.empty():
+                self._destination_issue = None
+                return
+            observation = (target, issue) if issue else None
+            persistent = observation is not None and observation == self._destination_issue
+            self._destination_issue = observation
+            if persistent:
+                self.typing_fallback = (issue == "No text field detected" and
+                                       isinstance(target.target, WtypeTarget) and not self.allow_typing)
+                self.request_stop(issue, paused=True)
 
     def _collect_targets(self):
         pending = {u.id for u in self.pipeline.ledger.snapshots() if u.session_id == self.id}
@@ -184,7 +244,10 @@ class PersistentSession:
         if self.stopping.is_set():
             return
         self._last_status = time.monotonic()
-        notify("● Persistent listening", self.stop_instruction, ms=0, channel="persistent")
+        destination = self.target.target.application_name
+        detail = self.tracking_notice or self.stop_instruction
+        summary = f"● Listening → {destination}" if destination else "● Listening · no destination"
+        notify(summary, detail, ms=0, channel="persistent")
 
     def request_stop(self, reason="stopped by key", *, paused=False):
         with self._stop_lock:
@@ -254,14 +317,17 @@ class PersistentSession:
         self.start_sample = event.end
         return True
 
-    def _process(self, samples):
+    def _classify(self, samples):
         # The native detector is supervised in batches (~100 ms of audio).
         def classify():
             return [self.vad.speech(np.pad(samples[i:i + WINDOW],
                         (0, max(0, WINDOW - len(samples[i:i + WINDOW])))))
                     for i in range(0, len(samples), WINDOW)]
+        return self.vad_slot.call(classify, time.monotonic() + 1.0)
+
+    def _process(self, samples):
         try:
-            labels = self.vad_slot.call(classify, time.monotonic() + 1.0)
+            labels = self._classify(samples)
         except Exception as exc:
             raise DetectionError(f"speech detection failed: {exc}") from exc
         for offset, speech in zip(range(0, len(samples), WINDOW), labels):
@@ -281,18 +347,25 @@ class PersistentSession:
     def _run(self):
         failure = ""
         detector_failed = False
+        detector_ready = False
         bound = False
         recovery_path = None
         phase = "destination binding"
         try:
             self.target.target = self._bind()
+            bound = True  # A refused destination still owns its captured audio for recovery.
             if not isinstance(self.target.target, EmacsTarget):
                 self.target.target.window.verify = True
-            if isinstance(self.target.target, ClipboardTarget):
-                self.request_stop("persistent mode needs an insertion destination", paused=True)
+            if issue := self.target.field_issue():
+                # Capture already started. Preserve opening speech for recovery,
+                # but the same guard in delivery prevents it becoming keystrokes.
+                self.typing_fallback = isinstance(self.target.target, WtypeTarget) and not self.allow_typing
+                self.request_stop(issue, paused=True)
                 return
             before = self.target.target.before(emacs.PIN_TIMEOUT)
             if isinstance(self.target.target, EmacsTarget) and not self.target.target.pinning.valid:
+                # A late acknowledgement cannot authorize a session already refused.
+                self.target.failed.set()
                 self.request_stop(self.target.target.pinning.reason
                                   or "Emacs did not acknowledge the session buffer", paused=True)
                 return
@@ -301,22 +374,26 @@ class PersistentSession:
             self.current.target = self.target.attempt(self.current.id)
             self.focused = focus.Focus(self.target.target.window_id, self.target.target.app_id,
                                        getattr(getattr(self.target.target, "pinning", None), "pid", None))
-            bound = True
+            if (self.policy == "pause" and self.target.target.window_id is None
+                    and isinstance(self.target.target, EmacsTarget)):
+                self.tracking_notice = "Window tracking unavailable; dictating to the original buffer"
             if self.watch_factory is not None:
                 self.watcher = self.watch_factory(self.focus_changed,
                     lambda reason: self.request_stop("focus tracking lost: " + reason, paused=True))
             self.pipeline._save("session", lambda: self.pipeline.journal.append(
                 self.id, "session-start", target=self.target.target.kind,
+                destination_policy=self.policy, allow_typing=self.allow_typing,
                 pause_seconds=self.cfg.persistent.pause_seconds,
                 silence_seconds=self.cfg.persistent.silence_seconds))
             phase = "speech detector initialization"
             if self.prepare_models is not None:
                 self.prepare_models(self)
             self.vad_slot.call(self.vad.reset, time.monotonic() + 1.0)
+            detector_ready = True
             self.ready.set()
             self.status()
             phase = "speech segmentation"
-            poll_seconds = 1.0 if isinstance(self.target.target, WtypeTarget) else 0.2
+            poll_seconds = 0.2
             last_poll = 0.0
             last_audio = time.monotonic()
             while True:
@@ -328,9 +405,8 @@ class PersistentSession:
                         if not self._move_destination(end, destination, serial):
                             break
                     self._collect_targets()
-                elif not self.stopping.is_set() and time.monotonic() - last_poll >= poll_seconds:
-                    if not self.target.available():
-                        self.request_stop("destination unavailable; start again to bind a destination", paused=True)
+                if time.monotonic() - last_poll >= poll_seconds:
+                    self._check_destination()
                     last_poll = time.monotonic()
                 with self._focus_lock:
                     end = self.recorder.buffer.end
@@ -353,8 +429,8 @@ class PersistentSession:
                 elif time.monotonic() - last_audio > 2:
                     failure = "microphone stopped producing audio"
                     break
-                if (self.watcher is None and self.target.failed.is_set()) or self.pipeline._storage_failed:
-                    self.request_stop("delivery or recovery unavailable", paused=True)
+                if self.pipeline._storage_failed:
+                    self.request_stop("Recovery unavailable", paused=True)
                 if self.stopping.is_set() and time.monotonic() >= self.deadline:
                     break
         except Exception as exc:
@@ -381,7 +457,9 @@ class PersistentSession:
                     with self._stop_lock:
                         self.reason, self.paused = failure, True
                 if bound:
-                    self._flush(failure, detector_failed=detector_failed)
+                    # Binding can reject before models load or the VAD resets.
+                    # Preserve that unclassified audio without calling the VAD.
+                    self._flush(failure, detector_failed=detector_failed or not detector_ready)
                 else:
                     self.current.cancel()
                     self.pipeline.ledger.complete(self.current.id, "dropped")
@@ -409,7 +487,7 @@ class PersistentSession:
                 detail = self.reason + "; press the key to start a new session"
                 if recovery_path:
                     detail += f"; recovery: {recovery_path}"
-                notify("Ⅱ Persistent dictation paused" if self.paused else "■ Persistent dictation off",
+                notify("■ Dictation stopped" if self.paused else "■ Persistent dictation off",
                        detail, channel="persistent", ms=0)
 
     def _pending(self):
@@ -423,9 +501,8 @@ class PersistentSession:
         # A microphone failure does not invalidate a healthy detector.
         if not self.active and buffer.end > self.segmenter.position and not detector_failed:
             remaining = buffer.read(self.segmenter.position)
-            padded = np.pad(remaining, (0, max(0, WINDOW - len(remaining))))
             try:
-                speech = self.vad_slot.call(lambda: self.vad.speech(padded), time.monotonic() + 1)
+                speech = any(self._classify(remaining))
                 if speech:
                     self.active = True
                     self.has_speech = True

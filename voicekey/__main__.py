@@ -10,7 +10,8 @@ import sys
 
 def main() -> int:
     parser = argparse.ArgumentParser("voicekey")
-    parser.add_argument("--control", choices=("status", "start", "stop", "follow-focus", "pin", "free-memory"),
+    from .control import COMMANDS
+    parser.add_argument("--control", choices=COMMANDS,
                         help="query or control the running daemon")
     parser.add_argument("--config", help="config path (default ~/.config/voicekey/config.toml)")
     parser.add_argument("--check", action="store_true",

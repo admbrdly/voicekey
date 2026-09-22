@@ -160,6 +160,11 @@ class Target:
         """The bound destination, for logs and the delivery journal."""
         return f"{self.kind or 'unbound'} target in {self.app_id or 'an unknown application'}"
 
+    @property
+    def application_name(self) -> str:
+        name = (self.app_id or "").rsplit(".", 1)[-1]
+        return name[:1].upper() + name[1:]
+
     def land(self, text: str, deadline: float, *, operation_id: str, prefix: str = "") -> Landing:
         with self._attempt_lock:
             if self._attempted:
@@ -272,7 +277,8 @@ class ClipboardTarget(Target):
         return Landing(reason="clipboard target")
 
 
-def bind(ime: InputMethod | None, cfg: DictationConfig, landing: bool) -> Target:
+def bind(ime: InputMethod | None, cfg: DictationConfig, landing: bool, *,
+         activation_wait: float = ACTIVATION_WAIT) -> Target:
     """Check the window on both sides of activation acquisition.
 
     Emacs shares the Wayland preview. Start its buffer pin before waiting for
@@ -281,6 +287,12 @@ def bind(ime: InputMethod | None, cfg: DictationConfig, landing: bool) -> Target
     is refused rather than bound to the server's own selected buffer.
     """
     focused = focus.focused(timeout=0.2)
+    # A panel start may arrive while its popout is still giving focus back.
+    # Wait only at initial binding; never retarget an existing utterance.
+    deadline = time.monotonic() + activation_wait
+    while focused.id is None and activation_wait > ACTIVATION_WAIT and time.monotonic() < deadline:
+        time.sleep(0.1)
+        focused = focus.focused(timeout=0.2)
     window = Window(focused.id, cfg.require_same_window)
     editor = (EmacsTarget(NotifyPreview("dictate"), window, focused.app_id, pid=focused.pid)
               if focused.app_id == "emacs" else None)
@@ -288,7 +300,7 @@ def bind(ime: InputMethod | None, cfg: DictationConfig, landing: bool) -> Target
     if ime is not None:
         try:
             if landing or ime.rebind(timeout=ACTIVATION_WAIT):
-                deadline = time.monotonic() + ACTIVATION_WAIT
+                deadline = time.monotonic() + activation_wait
                 while (generation := ime.activation()) is None and time.monotonic() < deadline:
                     time.sleep(0.005)
         except ImeHung:

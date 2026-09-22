@@ -64,6 +64,28 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(self.land(target).outcome, Outcome.REFUSED)
         self.assertEqual(self.ime._im.calls, [])
 
+    def test_panel_binding_waits_for_window_and_delayed_field_without_rebinding(self):
+        clock = [0.0]
+        def sleep(seconds):
+            clock[0] += seconds
+        ime = Mock(rebind=Mock(return_value=True), activation=lambda: 7 if clock[0] >= .65 else None)
+        def focused(**kwargs):
+            return Focus(7, 'browser') if clock[0] >= .3 else Focus()
+        with patch('voicekey.target.time', Mock(monotonic=lambda: clock[0], sleep=sleep)), \
+                patch('voicekey.target.focus.focused', side_effect=focused):
+            target = bind(ime, DictationConfig(), False, activation_wait=1)
+        self.assertIsInstance(target, ImeTarget)
+        self.assertEqual(target.window_id, 7)
+        self.assertEqual(target.preview.generation, 7)
+        ime.rebind.assert_called_once()
+        self.assertLess(clock[0], 1)
+
+    def test_panel_wait_does_not_retarget_if_window_changes_during_field_activation(self):
+        ime = Mock(rebind=Mock(return_value=True), activation=Mock(return_value=7))
+        with patch('voicekey.target.focus.focused', side_effect=[Focus(7, 'browser'), Focus(8, 'browser')]):
+            target = bind(ime, DictationConfig(), False, activation_wait=1)
+        self.assertIsInstance(target, ClipboardTarget)
+
     def test_commit_is_submitted_not_application_acknowledged(self):
         target = ImeTarget(self.ime, 1, Window(7, True), 'browser')
         self.assertEqual(self.land(target).outcome, Outcome.SUBMITTED)
@@ -180,6 +202,9 @@ class TargetTests(unittest.TestCase):
                          "emacs buffer 'notes.org' (org-mode)")
         self.assertEqual(WtypeTarget(NotifyPreview('dictate'), Window(7, True), 'foot').describe(),
                          'wtype target in foot')
+        self.assertEqual(ClipboardTarget(NotifyPreview('dictate'), Window(None, True), None).application_name, '')
+        self.assertEqual(WtypeTarget(NotifyPreview('dictate'), Window(7, True), 'org.mozilla.firefox').application_name,
+                         'Firefox')
 
     def test_emacs_falls_back_to_notifications_without_a_usable_ime(self):
         with patch('voicekey.target.focus.focused', return_value=Focus(7, 'emacs')), \

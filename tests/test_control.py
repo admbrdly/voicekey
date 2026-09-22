@@ -100,10 +100,13 @@ class DaemonControlTests(unittest.TestCase):
         d = self.daemon
         styles = dict(d.cfg.polish.app_styles)
         with patch('voicekey.daemon.focus.compositor', return_value='niri'):
+            self.assertEqual(d.status()['destination_policy'], 'pause')
             d.command('pin')
             self.assertFalse(d.status()['follow_focus'])
             d.command('follow-focus')
             self.assertTrue(d.status()['follow_focus'])
+            d.command('pause-on-switch')
+            self.assertEqual(d.status()['destination_policy'], 'pause')
         d.persistent = Mock()
         d.persistent.stopping.is_set.return_value = False
         self.assertTrue(d.status()['listening'])
@@ -111,6 +114,51 @@ class DaemonControlTests(unittest.TestCase):
             d.command('pin')
         self.assertEqual(d.cfg.polish.app_styles, styles)
         d.persistent = None
+
+    def test_status_distinguishes_initial_binding_from_a_ready_session_without_destination(self):
+        d = self.daemon
+        session = Mock(ready=threading.Event(), stopping=threading.Event())
+        session.target.target.application_name = ''
+        d.persistent = session
+        self.addCleanup(setattr, d, 'persistent', None)
+        self.assertTrue(d.status()['listening'])
+        self.assertTrue(d.status()['binding'])
+        session.ready.set()
+        self.assertTrue(d.status()['listening'])
+        self.assertFalse(d.status()['binding'])
+        self.assertEqual(d.status()['destination_name'], '')
+
+    def test_pause_reason_survives_cleanup_and_start_typing_is_explicit(self):
+        d = self.daemon
+        d.persistent = Mock(paused=True, reason='No text field detected', last_live=None, typing_fallback=True)
+        d._retire_persistent()
+        self.assertEqual(d.status()['state'], 'paused')
+        self.assertFalse(d.status()['listening'])
+        self.assertEqual(d.status()['pause_reason'], 'No text field detected')
+        self.assertTrue(d.status()['can_type'])
+        d._pause_reason = 'A more detailed explanation'
+        self.assertTrue(d.status()['can_type'])  # UI capability is not encoded in prose.
+        with patch.object(d, '_start_persistent', side_effect=lambda *a, **kw: setattr(d, 'persistent', Mock())) as start:
+            d.command('start-typing')
+            self.assertTrue(start.call_args.kwargs['allow_typing'])
+            d.persistent = None
+            d.command('start')
+            self.assertFalse(start.call_args.kwargs['allow_typing'])
+        d.persistent = None
+        d.command('stop')
+        self.assertEqual(d.status()['state'], 'idle')
+        self.assertFalse(d.status()['can_type'])
+
+    def test_clipboard_configuration_never_offers_or_starts_simulated_typing(self):
+        d = self.daemon
+        d.cfg.dictation.inject = 'clipboard'
+        d._pause_reason, d._typing_fallback = 'No text field detected', True
+        self.assertFalse(d.status()['can_type'])
+        with patch.object(d, '_ensure_models') as models:
+            with self.assertRaisesRegex(ValueError, 'disabled'):
+                d.command('start-typing')
+        models.assert_not_called()
+        self.assertIsNone(d.persistent)
 
     def test_stop_uses_existing_session_stop_and_clears_hold_gesture(self):
         d = self.daemon

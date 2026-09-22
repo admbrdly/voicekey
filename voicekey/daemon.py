@@ -78,6 +78,8 @@ class Daemon:
         self.recorder = recorder_factory()
         self.session = None
         self.persistent = None
+        self._pause_reason = ""
+        self._typing_fallback = False
         self._gesture = None  # (session, key-down time), until its chord is released
         self.vad = None
         self._vad_slot = Slot("speech-detector")
@@ -337,8 +339,7 @@ class Daemon:
         chord, (action, behavior) = matches[0]
         if self.persistent is not None:
             if self.persistent.done.is_set():
-                self._live_session = self.persistent.last_live or self._live_session
-                self.persistent = None
+                self._retire_persistent()
             else:
                 if action == "persistent":
                     self.persistent.request_stop()
@@ -360,7 +361,16 @@ class Daemon:
         self._start(device, chord, behavior, action,
                     "press again to stop" if behavior == TOGGLE else "release to stop")
 
-    def _start_persistent(self, device, chord, recorder=None, *, instruction="press a dictation key to stop"):
+    def _retire_persistent(self):
+        self._pause_reason = self.persistent.reason if self.persistent.paused else ""
+        self._typing_fallback = self.persistent.typing_fallback
+        self._live_session = self.persistent.last_live or self._live_session
+        self.persistent = None
+
+    def _start_persistent(self, device, chord, recorder=None, *, instruction="press a dictation key to stop",
+                          allow_typing=False):
+        if allow_typing and self.cfg.dictation.inject != "wtype":
+            raise ValueError("Simulated typing is disabled by dictation.inject")
         try:
             self._ensure_models()
         except ValueError as exc:
@@ -373,13 +383,23 @@ class Daemon:
         if self.pipeline.ledger.busy or self._live_session is not None and self._live_session.stuck:
             notify("voicekey: busy", "let pending dictation finish before starting persistent mode", error=True)
             return
+        track_windows = allow_typing or self.cfg.persistent.destination_policy != "pin"
+        watch_factory = (NiriFocusWatch if track_windows and focus.compositor() == "niri"
+                         and device != "replay" else None)
+        activation_wait = 1.0 if device == "panel" else target_mod.ACTIVATION_WAIT
+        def bind():
+            nonlocal activation_wait
+            wait, activation_wait = activation_wait, target_mod.ACTIVATION_WAIT
+            return target_mod.bind(self.ime, self.cfg.dictation, False, activation_wait=wait)
         session = PersistentSession(self.cfg, self.pipeline, recorder or self.recorder_factory(),
-            lambda: target_mod.bind(self.ime, self.cfg.dictation, False), self.vad, self._vad_slot,
+            bind, self.vad, self._vad_slot,
             self.streaming, device=device, chord=chord,
+            allow_typing=allow_typing,
             prepare_models=self._wait_for_models if self.model_state == "loading" else None,
-            watch_factory=NiriFocusWatch if self.cfg.persistent.follow_focus and focus.compositor() == "niri"
-                          and device != "replay" else None)
+            watch_factory=watch_factory)
         session.stop_instruction = instruction
+        self._pause_reason = ""
+        self._typing_fallback = False
         self.persistent = session
         try:
             if not session.start():
@@ -466,16 +486,25 @@ class Daemon:
         persistent = self.persistent
         listening = bool(persistent is not None and not persistent.stopping.is_set()) or self.session is not None
         busy = persistent is not None or self.pipeline.ledger.busy
+        pause_reason = persistent.reason if persistent is not None and persistent.paused else self._pause_reason
         state = ("listening" if listening else "finishing" if busy else
                  "unloading" if self._unload_requested else
                  self.model_state if self.model_state in ("loading", "unloading", "unloaded") else
-                 "unavailable" if self.backend is None or self.vad is None else "idle")
+                 "unavailable" if self.backend is None or self.vad is None else
+                 "paused" if pause_reason else "idle")
         destination = persistent.target.target if persistent is not None else None
         return {"state": state, "listening": listening,
+                "binding": persistent is not None and not persistent.ready.is_set(),
                 "models": self.model_state, "unload_pending": self._unload_requested,
-                "follow_focus": self.cfg.persistent.follow_focus,
+                "destination_policy": self.cfg.persistent.destination_policy,
+                "follow_focus": self.cfg.persistent.destination_policy == "follow",
+                "pause_reason": pause_reason,
+                "can_type": self._typing_fallback and self.cfg.dictation.inject == "wtype",
+                "tracking_notice": persistent.tracking_notice if persistent is not None else "",
+                "allow_typing": persistent.allow_typing if persistent is not None else False,
                 "can_follow": focus.compositor() == "niri",
                 "destination": destination.describe() if destination is not None else "",
+                "destination_name": destination.application_name if destination is not None else "",
                 "model": self.cfg.backend.type,
                 "error": self.model_error or (self.backend_error or
                     ("Speech detector unavailable" if self.vad is None else "")
@@ -491,23 +520,26 @@ class Daemon:
             self.command("stop")
             self._unload_when_idle()
         elif command == "stop":
+            self._pause_reason = ""
+            self._typing_fallback = False
             self._gesture = None
             if self.persistent is not None:
                 self.persistent.request_stop("stopped from panel")
             if self.session is not None:
                 self._finish()
-        elif command == "start":
+        elif command in ("start", "start-typing"):
             if self.persistent is not None or self.session is not None or self.pipeline.ledger.busy:
                 raise ValueError("Finish the current dictation before starting another")
-            self._start_persistent("panel", frozenset())
+            self._start_persistent("panel", frozenset(), allow_typing=command == "start-typing")
             if self.persistent is None:
                 raise ValueError("Could not start dictation; check Voicekey notifications")
-        elif command in ("follow-focus", "pin"):
+        elif command in ("pause-on-switch", "follow-focus", "pin"):
             if self.persistent is not None or self.session is not None or self.pipeline.ledger.busy:
                 raise ValueError("Stop dictation before changing destination policy")
             if command == "follow-focus" and focus.compositor() != "niri":
                 raise ValueError("Follow focus currently requires Niri")
-            self.cfg.persistent.follow_focus = command == "follow-focus"
+            policies = {"pause-on-switch": "pause", "follow-focus": "follow", "pin": "pin"}
+            self.cfg.persistent.destination_policy = policies[command]
         else:
             raise ValueError("Unknown control command")
 
@@ -519,8 +551,7 @@ class Daemon:
         if self.persistent is not None:
             self.persistent.tick()
             if self.persistent.done.is_set():
-                self._live_session = self.persistent.last_live or self._live_session
-                self.persistent = None
+                self._retire_persistent()
         self._unload_when_idle()
         if self.session is None:
             return

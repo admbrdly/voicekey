@@ -102,7 +102,7 @@ class SessionTargetTests(unittest.TestCase):
 
     def test_continuous_wtype_flattens_and_control_refusal_stops_later_batches(self):
         binding = WtypeTarget(NotifyPreview('dictate'), Window(7, True), 'terminal')
-        shared = SessionTarget('session', binding, self.ledger)
+        shared = SessionTarget('session', binding, self.ledger, allow_typing=True)
         first, second, third = self.entry('one'), self.entry('two'), self.entry('three')
         with patch('voicekey.inject._run') as run:
             self.assertTrue(shared.attempt(first).land('one\nline', time.monotonic()+1, operation_id='one').landed)
@@ -166,7 +166,7 @@ class SessionTargetTests(unittest.TestCase):
         self.ime._on_done(None)
         self.focus.side_effect = AssertionError('must not depend on focus')
         with patch('voicekey.session_target.emacs.insert') as insert:
-            self.assertTrue(shared.available())
+            self.assertEqual(shared.field_issue(), '')
             result = shared.attempt(first).land('One.', time.monotonic()+1, operation_id='one')
             self.assertEqual(result.outcome, Outcome.CONFIRMED)
             self.assertTrue(insert.call_args.kwargs['keep_pin'])
@@ -181,7 +181,7 @@ class SessionTargetTests(unittest.TestCase):
         self.ime._on_done(None)
         self.ime._on_activate(None)
         self.ime._on_done(None)
-        self.assertFalse(shared.available())
+        self.assertEqual(shared.field_issue(), 'Text field is no longer active')
         result = shared.attempt(identity).land('old', time.monotonic()+1, operation_id='one')
         self.assertEqual(result.outcome, Outcome.REFUSED)
         self.assertTrue(shared.failed.is_set())
@@ -249,7 +249,7 @@ class PersistentTests(unittest.TestCase):
         patch('voicekey.session_target.emacs.unpin').start()
         self.copy = patch('voicekey.pipeline.inject.copy').start()
         self.cfg = Config()
-        self.cfg.persistent.follow_focus = False  # these tests exercise pinned sessions
+        self.cfg.persistent.destination_policy = "pin"  # these tests exercise pinned sessions
         self.cfg.persistent.key = 'KEY_F11'
         self.cfg.persistent.pause_seconds = .2
         self.cfg.persistent.pre_roll_seconds = .05
@@ -267,9 +267,9 @@ class PersistentTests(unittest.TestCase):
         self.recorder = ControlledRecorder()
         self.session = None
 
-    def start(self, recorder=None):
+    def start(self, recorder=None, **options):
         self.session = PersistentSession(self.cfg, self.pipeline, recorder or self.recorder,
-            self.binding, self.vad, Slot('test-vad'), None, device='keyboard', chord=frozenset({ecodes.KEY_F11}))
+            self.binding, self.vad, Slot('test-vad'), None, device='keyboard', chord=frozenset({ecodes.KEY_F11}), **options)
         self.addCleanup(self.session.close)
         self.assertTrue(self.session.start())
         wait_for(lambda: self.session.ready.is_set() or self.session.done.is_set())
@@ -283,24 +283,41 @@ class PersistentTests(unittest.TestCase):
         self.session.request_stop()
         self.assertTrue(self.session.done.wait(5))
 
-    def test_failed_binding_aborts_early_audio_without_flush_or_recovery(self):
-        from voicekey.target import ClipboardTarget
+    def test_unverified_field_preserves_opening_speech_without_typing(self):
         def bind():
-            self.assertTrue(self.recorder.active)
             self.recorder.push(np.ones(6400, dtype=np.float32) * .2)
-            return ClipboardTarget(NotifyPreview('dictate'), Window(None, True), None)
+            return WtypeTarget(NotifyPreview('dictate'), Window(7, True), 'browser')
         self.binding = bind
-        with patch.object(self.recorder, 'abort', wraps=self.recorder.abort) as abort, \
-                patch.object(PersistentSession, '_flush') as flush:
+        with patch('voicekey.session_target.inject.type_text') as type_text:
             self.start()
-            self.assertTrue(self.session.done.wait(2))
-        abort.assert_called_once()
-        flush.assert_not_called()
+            self.assertTrue(self.session.done.wait(3))
+        type_text.assert_not_called()
         self.assertFalse(self.recorder.active)
-        self.backend.transcribe.assert_not_called()
-        self.assertEqual(self.session.reason, 'persistent mode needs an insertion destination')
-        self.assertFalse(list(Path(self.tmp.name).rglob('*.wav')))
+        self.assertEqual(self.session.reason, 'No text field detected')
+        self.assertIn('Text.', (Path(self.tmp.name) / 'last-recovery.txt').read_text())
         self.assertFalse(self.pipeline.ledger.busy)
+
+    def test_rejected_binding_never_uses_an_uninitialized_detector(self):
+        for cold in (False, True):
+            with self.subTest(cold=cold):
+                self.recorder = ControlledRecorder()
+                detector = Mock()
+                self.vad = None if cold else detector
+                samples = np.full(12800, .2, dtype=np.float32)
+                def bind():
+                    self.recorder.push(samples)
+                    return WtypeTarget(NotifyPreview('dictate'), Window(7, True), 'browser')
+                self.binding = bind
+                prepare = Mock(side_effect=AssertionError('binding was rejected before model preparation'))
+                self.start(prepare_models=prepare)
+                self.assertTrue(self.session.done.wait(3))
+                self.assertEqual(self.session.reason, 'No text field detected')
+                self.assertTrue(self.session.typing_fallback)
+                detector.reset.assert_not_called()
+                detector.speech.assert_not_called()
+                prepare.assert_not_called()
+                np.testing.assert_array_equal(self.backend.transcribe.call_args.args[0], samples)
+                self.assertIn('Text.', (Path(self.tmp.name) / 'last-recovery.txt').read_text())
 
     def test_speech_during_blocked_binding_is_captured_from_first_sample(self):
         entered, release = threading.Event(), threading.Event()
@@ -343,7 +360,7 @@ class PersistentTests(unittest.TestCase):
         self.backend.transcribe.assert_not_called()
         self.assertFalse(list(Path(self.tmp.name).rglob('*.wav')))
 
-    def test_invalid_pin_aborts_audio_captured_while_waiting_for_acknowledgement(self):
+    def test_invalid_pin_preserves_audio_captured_while_waiting_for_acknowledgement(self):
         entered, release = threading.Event(), threading.Event()
         self.addCleanup(release.set)
         def before(wait):
@@ -354,6 +371,7 @@ class PersistentTests(unittest.TestCase):
         self.binding.pinning.before.side_effect = before
         self.binding.pinning.valid = False
         self.binding.pinning.reason = ''
+        self.vad.speech = Mock(side_effect=AssertionError('detector has not been initialized'))
 
         self.session = PersistentSession(self.cfg, self.pipeline, self.recorder,
             self.binding, self.vad, Slot('test-vad'), None, device='keyboard', chord=frozenset())
@@ -367,8 +385,45 @@ class PersistentTests(unittest.TestCase):
         self.assertFalse(self.session.ready.is_set())
         self.assertIn('Emacs did not acknowledge', self.session.reason)
         self.assertFalse(self.recorder.active)
-        self.assertFalse(list(Path(self.tmp.name).rglob('*.wav')))
-        self.backend.transcribe.assert_not_called()
+        self.assertTrue(list(Path(self.tmp.name).rglob('*.wav')))
+        np.testing.assert_array_equal(self.backend.transcribe.call_args.args[0],
+                                      np.ones(5120, dtype=np.float32) * .2)
+        self.assertIn('Text.', (Path(self.tmp.name) / 'last-recovery.txt').read_text())
+        self.vad.speech.assert_not_called()
+        self.insert.assert_not_called()
+
+    def test_late_pin_acknowledgement_cannot_insert_after_startup_refusal(self):
+        from voicekey.emacs import PendingPin, Pin
+        release = threading.Event()
+        self.addCleanup(release.set)
+        self.cfg.pipeline.shutdown_seconds = 2
+        def acknowledge(identity, pid):
+            release.wait(3)
+            return Pin(identity, None)
+        with patch('voicekey.emacs.pin', side_effect=acknowledge):
+            pending = PendingPin()
+            binding = EmacsTarget(NotifyPreview('dictate'), Window(7, True), 'emacs', pending)
+            samples = np.full(5120, .2, dtype=np.float32)
+            def bind():
+                self.recorder.push(samples)
+                return binding
+            def transcribe(audio):
+                self.assertEqual(self.session.reason, 'Emacs did not acknowledge the session buffer')
+                release.set()
+                pending.thread.join(1)
+                self.assertTrue(pending.valid)  # Acknowledged before delivery, after refusal.
+                return 'Text.'
+            self.binding = bind
+            self.backend.transcribe.side_effect = transcribe
+            self.start()
+            self.assertTrue(self.session.done.wait(3))
+        self.assertTrue(pending.valid)
+        self.assertEqual(self.session.reason, 'Emacs did not acknowledge the session buffer')
+        self.assertFalse(self.session.ready.is_set())
+        self.insert.assert_not_called()
+        self.copy.assert_not_called()
+        self.assertIn('Text.', (Path(self.tmp.name) / 'last-recovery.txt').read_text())
+        np.testing.assert_array_equal(self.backend.transcribe.call_args.args[0], samples)
 
     def test_microphone_failure_while_idle_is_reported_as_paused_with_actual_error(self):
         self.start()
@@ -383,25 +438,27 @@ class PersistentTests(unittest.TestCase):
             self.session.thread.join(1)
         self.assertTrue(self.session.paused)
         self.assertEqual(self.session.reason, self.recorder.failure)
-        self.assertIn('paused', notify.call_args.args[0])
+        self.assertIn('stopped', notify.call_args.args[0])
         self.assertIn(self.recorder.failure, notify.call_args.args[1])
         self.backend.transcribe.assert_not_called()
         self.assertFalse(list(Path(self.tmp.name).rglob('*.wav')))
         self.assertFalse((Path(self.tmp.name) / 'last-recovery.txt').exists())
 
-    def test_wtype_focus_queries_are_spaced_at_least_one_second_apart(self):
-        from voicekey.target import WtypeTarget
+    def test_explicit_typing_is_one_session_and_stops_on_window_switch(self):
         self.binding = WtypeTarget(NotifyPreview('dictate'), Window(7, True), 'browser')
-        calls = []
-        def focused(**kwargs):
-            calls.append((time.monotonic(), threading.current_thread().name))
-            return 7
-        with patch('voicekey.target.focus.window_id', side_effect=focused):
-            self.start()
-            wait_for(lambda: len(calls) >= 2)
-            self.finish()
-        self.assertTrue(all(name == 'persistent-capture' for _, name in calls))
-        self.assertTrue(all(b[0] - a[0] >= 1 for a, b in zip(calls, calls[1:])))
+        with patch('voicekey.target.focus.window_id', return_value=7) as focused, \
+                patch('voicekey.session_target.inject.type_text') as type_text:
+            self.start(allow_typing=True)
+            self.speak()
+            wait_for(lambda: type_text.call_count == 1)
+            focused.return_value = 8
+            self.assertTrue(self.session.done.wait(3))
+        self.assertEqual(self.session.policy, 'pause')
+        self.assertEqual(self.session.reason, 'Window changed')
+        self.assertEqual(self.cfg.persistent.destination_policy, 'pin')
+        self.start(recorder=ControlledRecorder())
+        self.assertTrue(self.session.done.wait(3))
+        self.assertEqual(self.session.reason, 'No text field detected')
 
     def test_microphone_failure_preserves_speech_in_the_partial_window_without_padding(self):
         self.start()
@@ -441,7 +498,7 @@ class PersistentTests(unittest.TestCase):
         self.assertEqual(self.session.reason, 'speech segmentation failed: bookkeeping failed')
         self.assertFalse(flush.call_args.kwargs['detector_failed'])
         # A healthy detector still classifies the remaining audio during flush.
-        self.assertEqual(len(self.vad.speech.call_args.args[0]), 5120)
+        self.assertTrue(all(len(c.args[0]) == WINDOW for c in self.vad.speech.call_args_list))
         self.assertEqual(len(self.backend.transcribe.call_args.args[0]), 5120)
 
     def test_detector_initialization_failure_preserves_even_a_subwindow_of_audio(self):
@@ -475,7 +532,7 @@ class PersistentTests(unittest.TestCase):
             entered.set()
             release.wait(2)
             return True
-        with patch.object(self.session.target, 'available', side_effect=available):
+        with patch.object(self.session, '_check_destination', side_effect=available):
             self.assertTrue(entered.wait(1))
             self.session.tick()
             release.set()

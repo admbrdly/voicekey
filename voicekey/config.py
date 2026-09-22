@@ -63,11 +63,11 @@ class StreamingConfig:
 
 @dataclass
 class PersistentConfig:
-    follow_focus: bool = True  # Niri: new speech follows the focused window
+    destination_policy: str = "pause"  # pause on window switch, follow, or pin
     key: str = ""  # optional additional dictation toggle chord
     vad_model: str = f"{MODELS_DIR}/silero_vad.onnx"
     pause_seconds: float = 1.2
-    silence_seconds: float = 120.0
+    silence_seconds: float = 60.0
     max_utterance_seconds: float = 30.0
     pre_roll_seconds: float = 0.3
     delivery_seconds: float = 5.0
@@ -312,7 +312,8 @@ def _validate(cfg: Config) -> None:
             _string(f"backend.{name}", getattr(cfg.backend, name), allow_empty=True),
         )
     cfg.streaming.model_dir = _path("streaming.model_dir", cfg.streaming.model_dir)
-    cfg.persistent.follow_focus = _boolean("persistent.follow_focus", cfg.persistent.follow_focus)
+    if cfg.persistent.destination_policy not in ("pause", "follow", "pin"):
+        raise ConfigError("persistent.destination_policy must be 'pause', 'follow', or 'pin'")
     cfg.persistent.vad_model = _path("persistent.vad_model", cfg.persistent.vad_model)
     cfg.persistent.polish_context = _boolean("persistent.polish_context", cfg.persistent.polish_context)
     cfg.persistent.polish_min_words = _integer("persistent.polish_min_words", cfg.persistent.polish_min_words)
@@ -499,7 +500,13 @@ def load(path: str | None = None) -> Config:
         ("pipeline", cfg.pipeline),
         ("text", cfg.text),
     ):
-        _apply(target, _table(data, section), f"{section}.")
+        values = _table(data, section)
+        if section == "persistent" and "follow_focus" in values:
+            legacy = _boolean("persistent.follow_focus", values.pop("follow_focus"))
+            if "destination_policy" in values:
+                raise ConfigError("use persistent.destination_policy instead of follow_focus, not both")
+            values["destination_policy"] = "follow" if legacy else "pin"
+        _apply(target, values, f"{section}.")
     polish = _table(data, "polish")
     _apply(cfg.polish.server, _table(polish, "server"), "polish.server.")
     _apply(cfg.polish, polish, "polish.")

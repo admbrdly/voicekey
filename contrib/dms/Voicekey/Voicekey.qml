@@ -19,6 +19,7 @@ PluginComponent {
     property string serviceAction: ""
     property bool servicePending: false
     property bool serviceQueryAgain: false
+    property string startCommand: "start"
     readonly property bool disabled: !online && serviceState === "inactive"
     readonly property bool starting: servicePending && serviceAction === "start"
     readonly property bool stopping: servicePending && serviceAction === "stop"
@@ -26,7 +27,7 @@ PluginComponent {
     readonly property bool controlsBusy: requestPending || servicePending
     readonly property bool online: control.linkUp && status.state !== "offline"
     readonly property bool listening: online && status.listening === true
-    readonly property bool idle: online && status.state === "idle"
+    readonly property bool idle: online && (status.state === "idle" || status.state === "paused")
     readonly property bool muted: AudioService.source?.audio?.muted ?? false
     readonly property bool noMicrophone: !AudioService.source
     readonly property string stateText: {
@@ -37,8 +38,11 @@ PluginComponent {
         if (listening && noMicrophone) return "Listening · no microphone";
         if (listening && muted) return "Listening · microphone muted";
         if (listening && status.models === "loading") return "Listening · loading models";
-        if (listening) return "Listening";
+        if (listening && status.binding === true) return "Listening…";
+        if (listening) return status.destination_name
+            ? "Listening → " + status.destination_name : "Listening · no destination";
         if (status.state === "finishing") return "Finishing dictation";
+        if (status.state === "paused") return "Off · " + status.pause_reason;
         if (status.state === "loading") return "Loading models";
         if (status.state === "unloading") return "Freeing memory…";
         if (status.state === "unloaded") return "Models unloaded · ready on next use";
@@ -50,7 +54,8 @@ PluginComponent {
         : status.state === "finishing" ? Theme.secondary : Theme.surfaceVariantText
     readonly property string stateIcon: !online ? "mic_off"
         : listening ? ((muted || noMicrophone) ? "mic_off" : "mic")
-        : status.state === "finishing" ? "hourglass_top" : "mic_none"
+        : status.state === "finishing" ? "hourglass_top"
+        : status.state === "paused" ? "mic_off" : "mic_none"
 
     function send(command) {
         if (!control.linkUp || controlsBusy) return;
@@ -165,7 +170,7 @@ PluginComponent {
     Timer {
         id: startAfterClose
         interval: 250
-        onTriggered: root.send("start")
+        onTriggered: root.send(root.startCommand)
     }
 
     horizontalBarPill: Component {
@@ -178,8 +183,10 @@ PluginComponent {
                 anchors.verticalCenter: parent.verticalCenter
             }
             StyledText {
-                visible: root.listening
-                text: "Listening"
+                visible: root.listening || root.status.state === "paused"
+                text: root.stateText
+                width: Math.min(implicitWidth, 240)
+                elide: Text.ElideRight
                 color: root.stateColor
                 font.pixelSize: Theme.fontSizeSmall
                 anchors.verticalCenter: parent.verticalCenter
@@ -208,7 +215,11 @@ PluginComponent {
                 StyledText {
                     width: parent.width
                     text: root.disabled ? "VoiceKey is stopped. Enable it here to use dictation again."
-                        : root.status.destination || "Tap the dictation key to keep listening; hold to talk."
+                        : root.status.allow_typing ? "Simulated typing enabled for this session. Switching windows stops listening."
+                        : root.status.state === "paused" ? "Microphone off. Focus a text field and tap to start again."
+                        : root.status.tracking_notice ? root.status.tracking_notice
+                        : root.listening ? root.status.destination_name || "Waiting for a text field."
+                        : "Tap the dictation key to keep listening; hold to talk."
                     wrapMode: Text.Wrap
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
@@ -223,19 +234,54 @@ PluginComponent {
                         else {
                             // Restore application focus before the daemon binds it.
                             panel.closePopout();
+                            root.startCommand = "start";
                             startAfterClose.restart();
                         }
                     }
                 }
-                DankToggle {
+                Repeater {
+                    model: [
+                        {policy: "pause", label: "Pause on window switch", command: "pause-on-switch"},
+                        {policy: "follow", label: "Follow focused window", command: "follow-focus"},
+                        {policy: "pin", label: "Stay at original destination", command: "pin"}
+                    ]
+                    delegate: DankButton {
+                        required property var modelData
+                        width: parent.width
+                        text: modelData.label
+                        iconName: root.status.destination_policy === modelData.policy
+                            ? "radio_button_checked" : "radio_button_unchecked"
+                        enabled: root.canStart && !root.controlsBusy
+                            && (modelData.policy !== "follow" || root.status.can_follow === true)
+                        onClicked: root.send(modelData.command)
+                    }
+                }
+                StyledText {
                     width: parent.width
-                    text: "Follow focused window"
-                    description: root.listening || root.status.state === "finishing"
-                        ? "Stop dictation to change this."
-                        : "Off pins the starting destination. Until Voicekey restarts."
-                    checked: root.status.follow_focus === true
-                    enabled: root.canStart && root.status.can_follow === true && !root.controlsBusy
-                    onToggled: checked => root.send(checked ? "follow-focus" : "pin")
+                    text: "Destination choices last until restart. Background dictation requires a supported destination, such as Emacs."
+                    wrapMode: Text.Wrap
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
+                }
+                DankButton {
+                    width: parent.width
+                    visible: root.status.state === "paused" && root.status.can_type === true
+                    text: "Use simulated typing this session"
+                    iconName: "keyboard"
+                    enabled: root.canStart && !root.controlsBusy
+                    onClicked: {
+                        panel.closePopout();
+                        root.startCommand = "start-typing";
+                        startAfterClose.restart();
+                    }
+                }
+                StyledText {
+                    width: parent.width
+                    visible: root.status.state === "paused" && root.status.can_type === true
+                    text: "Try Start listening again once the field has focus. Use simulated typing only for unsupported fields; it can trigger shortcuts elsewhere."
+                    wrapMode: Text.Wrap
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
                 }
                 DankButton {
                     width: parent.width

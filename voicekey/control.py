@@ -12,7 +12,7 @@ import socket
 import threading
 import time
 
-COMMANDS = ('status', 'start', 'stop', 'follow-focus', 'pin', 'free-memory')
+COMMANDS = ('status', 'start', 'start-typing', 'stop', 'pause-on-switch', 'follow-focus', 'pin', 'free-memory')
 
 
 def socket_path():

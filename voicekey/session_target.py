@@ -26,10 +26,11 @@ def preview_text(text):
 
 
 class SessionTarget:
-    def __init__(self, identity, target, ledger, *, scoped=False):
+    def __init__(self, identity, target, ledger, *, scoped=False, allow_typing=False):
         self.id, self.target, self.ledger = identity, target, ledger
         self.members = set()
         self.scoped = scoped
+        self.allow_typing = allow_typing
         self.departed = threading.Event()
         self.failed = threading.Event()
         self.closed = False
@@ -58,14 +59,16 @@ class SessionTarget:
                                        else u.raw or u.live) for u in snapshots
                                      if u.id != exclude and u.id not in self._omitted))
 
-    def available(self):
-        if self.failed.is_set() or self.closed:
-            return False
+    def field_issue(self):
+        """No synthetic-key fallback unless explicitly enabled for this session."""
         if isinstance(self.target, EmacsTarget):
-            return True  # the editor checks the pinned buffer at each transaction
+            return ""
         if isinstance(self.target, ImeTarget):
-            return self.target.ime.activation() == self.target.preview.generation
-        return self.target.window.focused(time.monotonic() + 0.2)
+            return ("" if self.target.ime.activation() == self.target.preview.generation
+                    else "Text field is no longer active")
+        if isinstance(self.target, WtypeTarget) and self.allow_typing:
+            return ""
+        return "No text field detected"
 
     def _show(self, text):
         if self.closed or self.departed.is_set():
@@ -100,6 +103,9 @@ class SessionTarget:
             if self.closed or self.failed.is_set() or cancelled.is_set() or time.monotonic() >= deadline:
                 return Landing(reason="persistent destination is unavailable")
             target = self.target
+            if issue := self.field_issue():
+                self.failed.set()
+                return Landing(reason=issue)
             if self.departed.is_set() and not isinstance(target, EmacsTarget):
                 return Landing(reason="focus moved; pending text kept for recovery")
             tail = self._text(exclude=identity)
@@ -139,7 +145,7 @@ class SessionTarget:
                         landing = Landing(reason=str(exc))
                     except ImeHung as exc:
                         landing = Landing(Outcome.UNKNOWN, str(exc))
-            elif isinstance(target, WtypeTarget):
+            else:  # field_issue permits only Emacs, IME, or explicitly enabled typing
                 if not target.window.focused(deadline) or cancelled.is_set():
                     landing = Landing(reason="the original window lost focus")
                 else:
@@ -152,8 +158,6 @@ class SessionTarget:
                         landing = Landing(reason=str(exc))
                     except Exception as exc:
                         landing = Landing(Outcome.UNKNOWN, str(exc))
-            else:
-                landing = Landing(reason="persistent mode needs an insertion destination")
             if landing.landed:
                 self._omitted.add(identity)
                 self.target.prefix = " " if text and not text[-1].isspace() else ""

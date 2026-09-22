@@ -19,7 +19,7 @@ The speech detector cuts at pauses (1.2 seconds by default), with a hard
 30-second batch limit even during uninterrupted speech. The streaming model
 provides provisional text; the offline model and optional cleanup finalize each
 batch. Earlier batches can land while the next one records. There is no
-90-second cap on the dictation session; 120 seconds of silence stops it by
+90-second cap on the dictation session; 60 seconds of silence stops it by
 default. These limits live under `[persistent]` and apply to both dictation hotkey gestures
 and any additional dictation toggle keys.
 
@@ -27,8 +27,11 @@ voicekey registers with the compositor as *the* input method. Applications
 that speak `text-input-v3` (GTK, Qt, Firefox, Chromium and Electron,
 Emacs pgtk, foot, Ghostty, kitty, Alacritty, …) get the in-field
 experience; anything else gets the preview in a notification and the final
-text through `wtype`. Because there is one input method per seat, voicekey
-cannot coexist with an IME such as fcitx — set `ime = false` to keep one.
+text through `wtype` for ordinary replay. Persistent dictation pauses when no
+verified field is available; the panel offers an explicit simulated-typing
+exception. Because there is one input method per seat, voicekey cannot coexist
+with an IME such as fcitx. Setting `ime = false` keeps the other IME, but generic
+persistent destinations then need that explicit exception.
 
 Emacs is a special case: committed keystrokes in Evil normal or visual
 state can become commands. Voicekey instead requests a buffer pin through
@@ -406,7 +409,7 @@ F11 repeat=false allow-inhibiting=false hotkey-overlay-title="Persistent Dictati
 
 Press once to listen continuously, and again to stop. Release does nothing;
 Escape remains an ordinary editing key. A persistent notification shows
-whether the microphone is listening, finishing, off or paused. Automatic
+whether the microphone is listening, finishing or off, with the stop reason. Automatic
 startup never enables the microphone.
 
 Speech pauses of `pause_seconds` (default 1.2) queue an utterance for
@@ -423,36 +426,65 @@ hyphenated responses such as uh-huh/uh-uh are not dropped by this rule.
 Set `[persistent] drop_filler_only = false` when dictating literal interjections.
 Empty model replies for meaningful text still fall back to the raw transcript.
 
-`silence_seconds` (default 120) without detected speech turns listening fully
+`silence_seconds` (default 60) without detected speech turns listening fully
 off; the key or panel can start another session. `max_utterance_seconds` (default 30)
 forces a cut during uninterrupted speech. All three settings are configurable.
 
-On Niri, `[persistent] follow_focus = true` (the default) keeps the microphone
-running when you switch windows. A Niri focus event cuts the captured audio:
-speech before the observed switch belongs to the old destination, and new
-speech belongs to the new one. Both tap-to-listen and hold-to-talk use this
-behavior. Audio boundaries follow captured PCM frames (100 ms); they are not
-sample-perfect timestamps of the physical click.
+`[persistent] destination_policy` selects one of three policies:
 
-Pending text never migrates to the new window. Emacs can still deliver to its
-acknowledged original buffer pin. Generic IME and `wtype` text whose window was
-left is saved for recovery, even if you return before transcription completes.
-New destinations get their own previews and app-specific polish style; polish
-context does not carry between destinations. Switching windows during model
-processing continues recording. Focus tracking failure stops and preserves
-capture. With no focused window, speech is retained for recovery until a new
-window becomes focused; it is not inserted into a shell panel.
+- `"pause"` (default): leaving the starting window stops listening, including
+  switching to another window of the same application. Already-recorded
+  speech for Emacs finishes through its original buffer pin, without checking
+  focus. Pending text for generic destinations is kept in recovery.
+  A tap starts a fresh session; returning never resumes automatically.
+- `"follow"` (Niri): focus events cut captured audio. Speech before the switch
+  belongs to the old destination; new speech belongs to the new one. Pending
+  generic text stays in recovery even if you return before transcription ends.
+  Pending Emacs text can finish through its original acknowledged buffer pin.
+  New destinations have separate previews, polish styles and polish context.
+- `"pin"`: retain the starting destination. Emacs can receive dictation in its
+  pinned buffer while you read another window. Generic destinations pause when
+  their original field/window becomes unavailable.
 
-This first version follows **windows**, not tabs, terminal panes, or buffer
-changes inside one Emacs window. Emacs still follows point within each pinned
-buffer. Generic field activations cannot be inferred from a window identity;
-text for an expired IME activation is retained for recovery.
+These policies apply to both tap-to-listen and hold-to-talk. Window boundaries
+follow observed compositor events and captured PCM frames (100 ms), not exact
+physical-click timestamps. Pause mode uses event tracking on Niri and periodic
+focus checks elsewhere, at most once a second. One missing/timed-out reply is
+tolerated; two consecutive unknown replies stop capture with a tracking error.
+Without events, brief away-and-back transitions between polls can go unobserved.
+An acknowledged Emacs buffer without a compositor window identity remains
+usable through its pin; the listening notice says window tracking is unavailable.
+It cannot promise pause-on-window-switch in that case. Policies do not distinguish
+tabs, terminal panes or buffers within a window. Emacs follows point within its pin.
 
-Set `follow_focus = false` to retain the original pinned behavior: Emacs can
-receive dictation in its starting buffer while you read another window;
-generic destinations stop capture when their original activation/window is
-lost. Other compositors and WAV replay use this pinned behavior. Clipboard-only
-targets cannot start persistent dictation.
+Every persistent destination must expose a live input-method field or an
+acknowledged Emacs buffer. Opening speech is retained for recovery if no field
+is found or Emacs refuses its pin. That refusal is final for the session: a late
+Emacs acknowledgement cannot authorize insertion of its recovery text. The guard
+is checked at binding, during capture
+(including with a focus watcher), and before delivery. Missing or expired
+fields pause listening and preserve pending speech; field loss never triggers
+an automatic simulated-key fallback. Capture requires two consecutive bad
+field/failure observations, 200 ms apart, before stopping; pending focus events
+invalidate those observations. Brief no-window transitions in follow mode can
+settle without stopping. Delivery still refuses an expired activation immediately.
+A new activation does not prove it is the original field: debounce alone cannot
+make tabbing between fields a supported continuous-dictation workflow.
+Missing support is indistinguishable from no field, so some legitimate fields
+may require an explicit exception.
+
+After **No text field detected**, the panel offers **Use simulated typing this
+session** (`--control start-typing`). Focus the intended text field before using
+it. Simulated keys can invoke application shortcuts when no text field is
+focused. This exception always uses pause-on-switch and ends with the session;
+ordinary starts remain guarded. Clipboard-only configurations neither offer
+nor accept this exception. The widget uses an explicit capability flag, so a
+more detailed stop reason cannot accidentally hide or enable the button.
+
+Legacy explicit `follow_focus = true/false` settings migrate to `"follow"`/`"pin"`.
+Do not specify both the old setting and `destination_policy`. New installations
+and configs that omit both default to `"pause"`. Explicit silence timeouts are
+preserved; the default is now 60 seconds.
 
 The queue uses the existing count, audio and recovery limits. A capture slot
 reserves `max_utterance_seconds + 4` seconds of audio, including room for
@@ -463,20 +495,25 @@ preserves available speech. There is no automatic resume after a pause.
 
 Queued dictation batches have no insertion-age expiry. Transcription, polish and insertion calls still have finite deadlines.
 Stopping signals the microphone immediately, drains for
-`pipeline.shutdown_seconds`, and saves the remainder without repeatedly
-overwriting the clipboard. Session and ordered utterance IDs appear in the
-recovery journal. A paced WAV can exercise this path with
-`--replay recording.wav --persistent`; this CLI command performs real desktop
-delivery, whereas the automated replay tests use isolated targets.
+`pipeline.shutdown_seconds` (default 10 seconds), and saves the remainder without
+repeatedly overwriting the clipboard. A long queue can exceed that drain budget,
+including for Emacs: its pin preserves the destination, not unlimited processing
+time. Increase the budget only if real use shows unfinished queued sentences.
+Session and ordered utterance IDs appear in the recovery journal. A paced WAV can exercise this path with
+`--replay recording.wav --persistent`. It can perform real desktop delivery only
+when a verified field or Emacs pin is available; it has no automatic typing
+exception. With `ime = false`, generic destinations are rejected and captured
+audio is preserved. Automated replay tests use isolated targets.
 
 ## DMS bar widget
 
 On Niri with DankMaterialShell, the optional [Voicekey widget](../contrib/dms/Voicekey)
-shows a microphone icon and a visible **Listening** label for the whole capture,
-including silence. Muted or missing microphones show a warning. The popout has
-start/stop controls and a follow-focus toggle; keyboard gestures stay unchanged.
-The policy toggle is available while idle and lasts until the daemon restarts.
-For a permanent default, set `[persistent] follow_focus` in your Voicekey config.
+shows a microphone icon and **Listening → destination** for the whole capture,
+including silence. Automatically stopped sessions show **Off · reason**; they
+never resume without another start. Muted or missing microphones show a warning. The popout has
+start/stop controls and the three destination choices; keyboard gestures stay unchanged.
+Policy choices are available while idle or paused and last until the daemon restarts.
+For a permanent default, set `[persistent] destination_policy` in your Voicekey config.
 
 `./install.sh` links the widget when DMS is installed and enables it if DMS is
 running. Rerun it after upgrading to add the widget to an existing installation.
@@ -495,7 +532,12 @@ Add **Voicekey** to your bar in DMS Settings → DankBar → Widgets. Restart
 `voicekey.service` after updating the Python code. The widget reconnects if
 the service restarts; it never starts recording automatically or unmutes a mic.
 Opening the panel uses a shell layer, not a dictation destination. Starting
-from its button closes the panel before requesting capture.
+from its button closes the panel before requesting capture. Initial binding
+allows up to a second for a window to return and then up to a second for its
+input-method activation, without repeatedly rebinding the input method. Subsequent
+follow-mode bindings use the normal 200 ms wait, regardless of how the session
+started. A window change during activation still refuses delivery. If the field was slow to regain
+focus, try Start listening again before resorting to simulated typing.
 
 The same control interface is available in a terminal:
 
@@ -503,7 +545,7 @@ The same control interface is available in a terminal:
 ~/.local/share/voicekey/venv/bin/python -m voicekey --control status       # JSON status, no model loading
 ~/.local/share/voicekey/venv/bin/python -m voicekey --control start
 ~/.local/share/voicekey/venv/bin/python -m voicekey --control stop
-~/.local/share/voicekey/venv/bin/python -m voicekey --control follow-focus # while idle; or: pin
+~/.local/share/voicekey/venv/bin/python -m voicekey --control pause-on-switch # while idle; or: follow-focus, pin
 ```
 
 The daemon publishes status and accepts these commands over a private Unix

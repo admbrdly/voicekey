@@ -1,9 +1,22 @@
 # Persistent mode: architecture and implementation
 
-Updated 2026-09-06 after implementing continuous capture, segmentation,
+Updated 2026-09-22 after implementing continuous capture, segmentation,
 session previews, ordered delivery and the persistent controller on top of
 the [audited foundation](audit-2026-09-05.md). Persistent listening is now
 implemented. The earlier feasibility study is historical context.
+
+**Destination safety (2026-09-22).** The default is now pause-on-window-switch,
+with follow and pin as explicit alternatives. All persistent sessions require
+an input-method field or acknowledged Emacs buffer. A one-session typing
+exception always pauses on window switches. Switching stops capture but lets
+already-recorded Emacs speech finish through its pin, without a focus check.
+Field/failure observations are debounced across two polls while delivery still
+checks its original activation. Queued focus events invalidate observations.
+Window queries without an event stream run at most once per second. Early
+binding rejection preserves audio without touching an uninitialized detector;
+healthy tail classification always uses padded 512-sample detector windows. The default silence timeout is 60 seconds. See the
+[reference](reference.md#continuous-dictation-and-optional-extra-toggle) for current controls and limits;
+the implementation history below records earlier decisions.
 
 **Preview decision (2026-09-05).** Use native Wayland preedit in Emacs as well
 as other supported applications. Keep the shared path as the default for
@@ -17,7 +30,7 @@ speech or a focus change cannot restart the microphone after this timeout.
 Measure silence from the audio's last detected speech (or session start before
 any speech), independently of transcription and insertion delays. This is a
 separate, longer threshold from the pause that ends an utterance. Initial
-defaults are 1.2 seconds to end an utterance and 120 seconds to turn listening
+defaults are 1.2 seconds to end an utterance and 60 seconds to turn listening
 off; pending work receives bounded drain and preservation when capture stops.
 
 **Key decision (2026-09-06).** F11 starts and stops a persistent
