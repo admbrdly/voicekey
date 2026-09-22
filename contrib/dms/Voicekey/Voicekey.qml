@@ -40,7 +40,7 @@ PluginComponent {
         if (listening && status.models === "loading") return "Listening · loading models";
         if (listening && status.binding === true) return "Listening…";
         if (listening) return status.destination_name
-            ? "Listening → " + status.destination_name : "Listening · no destination";
+            ? "Listening → " + status.destination_name : "Listening…";
         if (status.state === "finishing") return "Finishing dictation";
         if (status.state === "paused") return "Off · " + status.pause_reason;
         if (status.state === "loading") return "Loading models";
