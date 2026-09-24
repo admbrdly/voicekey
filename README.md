@@ -1,5 +1,53 @@
 # VoiceKey
 
+## This fork: Neovim and terminals
+
+This fork of [ejerzak/voicekey](https://github.com/ejerzak/voicekey) adds dictation
+for **Neovim** and other terminal programs. The daemon's input-method text cannot
+see Neovim's mode, so words sent to a terminal running Neovim in normal mode
+would run as commands. The additions keep dictation safe there.
+
+- **Neovim plugin** ([contrib/nvim](https://github.com/admbrdly/voicekey/tree/neovim-plugin/contrib/nvim)):
+  `:VoiceKey` or `<F12>` records, and the transcript is inserted with
+  `nvim_buf_set_text` at the point where you started, whatever the mode. Nothing is
+  typed. An inline marker shows loading, recording and transcribing; `:VoiceKey cancel`
+  discards. Open as [PR #1](https://github.com/ejerzak/voicekey/pull/1).
+- **One key everywhere** (`contrib/nvim/voicekey-route`): a Niri keybinding that
+  inserts into the Neovim that has focus, starts the daemon in GUI apps, and refuses
+  other terminal programs, where single letters are commands.
+- **Bash prompt, Claude Code and Codex** ([contrib/bash](https://github.com/admbrdly/voicekey/tree/terminal-extras/contrib/bash),
+  [contrib/claude-code](https://github.com/admbrdly/voicekey/tree/terminal-extras/contrib/claude-code)):
+  dictation into the command line or prompt. It stops when you press Enter or submit,
+  and before Claude Code shows a dialog, so a dictated "yes" cannot answer one.
+- **No `input` group** ([control-without-keyboard](https://github.com/admbrdly/voicekey/tree/control-without-keyboard)):
+  `evdev = false` opens no input devices; a compositor keybinding drives the daemon
+  through `--control`, and commands are handled at once.
+
+Quick start for the Neovim plugin (lazy.nvim, with voicekey installed as below):
+
+```lua
+{
+  dir = "~/src/voicekey/contrib/nvim",
+  name = "voicekey",
+  lazy = false,
+  keys = { { "<F12>", function() require("voicekey").toggle() end, mode = { "n", "i" }, desc = "Dictate" } },
+}
+```
+
+| Branch | Contents |
+| --- | --- |
+| [`neovim-plugin`](https://github.com/admbrdly/voicekey/tree/neovim-plugin) | Neovim plugin and `voicekey-route` (PR #1) |
+| [`terminal-extras`](https://github.com/admbrdly/voicekey/tree/terminal-extras) | Adds bash, Claude Code and Codex routing |
+| [`control-without-keyboard`](https://github.com/admbrdly/voicekey/tree/control-without-keyboard) | Daemon: control commands without evdev, `evdev = false` |
+| [`adam-local`](https://github.com/admbrdly/voicekey/tree/adam-local) | All of the above merged; rebuilt, not a stable history |
+
+Status: upstream is adding a client-capture protocol to the daemon. The Neovim
+plugin will switch to it so only the daemon loads speech models; until then it runs
+`voicekey --capture-to-stdout`, which loads its own copy. This `master` is otherwise
+identical to upstream; the original README follows.
+
+## VoiceKey
+
 Local voice dictation for people who use **Emacs, Niri, and DankMaterialShell**.
 If that is your desktop, VoiceKey gives you hold-to-talk or hands-free dictation,
 Emacs/Evil-aware insertion, and a native DMS bar widget to see and control listening.
