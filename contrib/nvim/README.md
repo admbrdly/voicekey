@@ -96,15 +96,34 @@ Terminal policy (Ghostty, foot, kitty, Alacritty, WezTerm; additional app IDs vi
 - A uniquely validated Neovim gets API delivery.
 - No valid registration, but a Neovim descendant of the terminal exists: refuse
   and retain speech/text for recovery. A shell tab beside Neovim in the same
-  Ghostty process is therefore also refused.
+  Ghostty process is therefore also refused unless its title matches a local
+  foreground Bash prompt (see below).
 - No Neovim descendant: retain ordinary input-method delivery (or the existing
   configured fallback). This is not proof that a shell or another terminal
   application is safe for typing.
 
+For Ghostty with its existing Bash title integration, an absolute directory title
+or `~`/`~/...` can identify a shell prompt. The daemon matches it against the
+working directory of a local foreground Bash under Ghostty, excluding running
+foreground jobs. That permits shell dictation while Neovim is open elsewhere,
+without a shell hook or config change. Before delivery it checks the window,
+title and shell processes again; persistent capture polls for changes.
+
+**This deliberately accepts stale-title risk.** An inactive Neovim surface can
+retain a directory title matching a shell in another window. The daemon cannot
+prove which surface owns that title and could choose terminal IME delivery.
+Multiple shells with the same directory are allowed. A quick command and return
+to the same title between observations can go undetected. Custom, shortened or
+remote titles may not match; other terminals retain the conservative policy.
+
 If the compositor supplies no PID, discovery considers all local Neovims and
 therefore refuses more often. There is no narrower reliable tab/pane identity in
 this integration. A socket failure, dead/unloaded/unmodifiable buffer or pin
-failure never falls back to terminal input. Timeouts after submission are
+failure never falls back to terminal input. Single-shot capture reports a known
+binding refusal immediately and saves/copies definite refused transcripts when
+possible; cancellation and uncertain insertion never trigger that copy fallback.
+Persistent recovery remains grouped rather than overwriting the clipboard.
+Timeouts after submission are
 uncertain: inspect the buffer and journal before manually recovering text.
 
 ## Persistent sessions

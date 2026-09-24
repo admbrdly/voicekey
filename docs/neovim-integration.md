@@ -12,7 +12,10 @@ user configuration edited, model loaded or microphone used during this work.
 There is one resolver: `target.bind()`. Emacs remains its existing adapter.
 Known terminal app IDs consult Neovim registrations; all other destinations keep
 their existing IME/wtype/clipboard policy. No router script or capture client is
-spawned by the resolver. A bound Neovim failure has no typing or clipboard fallback.
+spawned by the resolver. A bound Neovim failure has no typing fallback.
+After the first audit, a definite single-shot refusal can copy the saved text;
+cancellation and uncertain insertion do not copy, and persistent recovery stays
+grouped. Known single-shot binding refusals now notify as soon as binding finishes.
 
 **Single-shot path:** keyboard controller → daemon recording → resolver →
 acknowledged Neovim extmark → finalization/transcription/polish → journalled
@@ -79,8 +82,10 @@ controller contains no Neovim target type checks or direct editor insertion call
   focus flag can satisfy all checks. Two true flags cause refusal instead.
 - **The process-tree policy is intentionally incomplete.** With no validated
   registration but a Neovim descendant of the focused terminal, typing is refused.
-  A shell tab next to Neovim in the same Ghostty process is consequently refused.
-  There is no narrower reliable tab identity in the available evidence.
+  An unmarked shell anywhere in that Ghostty process is consequently refused.
+  After the first audit, Ghostty's existing Bash directory title provides a
+  best-effort exception when it matches a local foreground shell's cwd. This
+  explicitly accepts stale-title risk across windows sharing one process.
 - **Detached tmux, SSH, containers, renamed processes and hidden `/proc` data can
   defeat ancestry.** A detached tmux server may not descend from the terminal's
   client process. If no Neovim descendant is visible, the chosen middle policy
@@ -105,7 +110,9 @@ controller contains no Neovim target type checks or direct editor insertion call
 
 Reviewed `adam/adam-local`, including its router, evdev/control changes,
 `contrib/bash`, `contrib/claude-code` and tests. Its useful idea here is refusing
-unsafe terminal routing. Its shell/title integrations were not imported.
+unsafe terminal routing. Its routing/activation integrations were not imported. The first-audit patch
+uses existing Ghostty titles plus foreground-shell checks, without shell hooks
+or control start/stop changes.
 
 `evdev = false` is a reasonable separate opt-in for compositor-only installations,
 but deliberately disables the daemon key listener, hold/tap and agent keys.
@@ -170,3 +177,67 @@ compositor/process evidence, synthetic audio and stubbed recognizers:
   during processing with recovery.
 - All pre-existing Emacs, persistent, client-capture, legacy-router and pipeline
   tests remain in the full run.
+
+
+## First audit follow-up
+
+Reproduced the 454-test baseline (35.308 s). Confirmed that Ghostty's shared PID
+makes the refusal apply across **all windows and tabs**, not just adjacent tabs.
+The installed Ghostty Bash integration sets the directory title at a prompt and
+the command title before execution. The user explicitly chose to use these
+existing titles and accept stale-title risk, rather than install a prompt hook.
+
+The resolver now recognizes Ghostty absolute or home-relative directory titles
+only when they match a Bash working directory under the terminal's PID. It checks
+the controlling tty and foreground process group, rejects suspended shells and
+children sharing their foreground group, and remembers process start times.
+That allows ordinary shells while Neovim runs in another Ghostty window/tab.
+A title guess cannot override an already-bound Neovim target.
+
+Before insertion it rechecks the exact window/title and original matching shell
+identities. Persistent capture polls for title/foreground-state changes and pauses
+with recovery; every delivery still checks immediately. Ordinary title changes
+are excluded from compositor window identity, so an Emacs title change does not
+become a focus change. No shell hook, user config change or daemon restart was
+performed. To activate this patch, restart the updated daemon yourself; the
+previous Neovim plugin changes still need loading if not already installed.
+
+**Accepted limitation:** a stale title in a Neovim surface can match an idle shell
+in another window, causing generic terminal IME selection. Shared PID and cwd
+cannot prove the title belongs to that shell. Multiple same-directory shells are
+allowed; a command and return to the same title between checks can be missed.
+Title spoofing and the race between validation and IME submission remain possible.
+Custom/shortened titles may fail to match and retain the original refusal. This
+exception supports Ghostty's local Bash prompt titles, not arbitrary shells or
+tmux/remote prompt detection.
+
+Single-shot known binding refusals now notify immediately after resolution,
+while recording continues for recovery. Definite refused text is saved and copied
+if possible; unavailable clipboard still leaves journal/audio recovery. Unknown
+insertion and cancelled captures never use this fallback. Persistent sessions
+keep their existing stop/recovery behavior.
+
+The other audit observations remain: startup requires confirmed focus; Neovim
+uses an advancing mark rather than Emacs-style cursor following; detached tmux
+is not safe under the ancestry policy; single-shot discovery/pinning can still
+block the key handler for bounded RPC/compositor waits. Fixing that last point
+requires moving the whole resolver's waits, not just spawning a pin thread.
+
+The audit's duplicate-operation guarantee is bounded: Lua remembers operation
+results through their original execution deadline, while the daemon prevents
+reusing a delivery attempt. Arbitrarily resending the same ID with a new later
+deadline after the cache expires is not a supported retry protocol.
+
+
+Audit-patch verification: **471 tests passed in 35.605 s**, up from 454 at the
+start of the audit. `git diff --check` passed. New tests cover matching Ghostty
+titles with Neovim in another window, rejected command/unmatched titles, home
+paths, foreground jobs, missing/foreign process evidence, PID reuse, multiple
+same-directory shells, changed titles during binding/delivery, persistent field
+refusal, immediate pin/refusal feedback, clipboard failure recovery, and an
+isolated real Bash PTY's foreground job transitions. Existing cancellation and
+uncertain-delivery tests still verify that no clipboard fallback occurs.
+
+Still requires real Ghostty/microphone validation: shell and Neovim in separate
+windows and tabs, actual prompt titles on this setup, commands started during
+speech, and title changes while processing. Nothing was restarted or installed.

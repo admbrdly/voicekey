@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 log = logging.getLogger("voicekey.focus")
 
@@ -24,6 +24,8 @@ class Focus:
     id: int | str | None = None
     app_id: str | None = None
     pid: int | None = None
+    # Titles are routing evidence, not window identity (e.g. Emacs edits its title).
+    title: str = field(default="", compare=False, repr=False)
 
 
 def focused(*, timeout: float = 2.0) -> Focus:
@@ -31,16 +33,16 @@ def focused(*, timeout: float = 2.0) -> Focus:
     name = compositor()
     if name == "niri":
         data = _json(["niri", "msg", "--json", "focused-window"], timeout)
-        return _focus(data.get("id"), data.get("app_id"), data.get("pid")) if isinstance(data, dict) else Focus()
+        return _focus(data.get("id"), data.get("app_id"), data.get("pid"), data.get("title")) if isinstance(data, dict) else Focus()
     if name == "sway":
         node = _sway_focused(_json(["swaymsg", "-t", "get_tree"], timeout))
         if node is None:
             return Focus()
         app_id = node.get("app_id") or (node.get("window_properties") or {}).get("class")
-        return _focus(node.get("id"), app_id, node.get("pid"))
+        return _focus(node.get("id"), app_id, node.get("pid"), node.get("name"))
     if name == "hyprland":
         data = _json(["hyprctl", "-j", "activewindow"], timeout)
-        return _focus(data.get("address"), data.get("class"), data.get("pid")) if isinstance(data, dict) else Focus()
+        return _focus(data.get("address"), data.get("class"), data.get("pid"), data.get("title")) if isinstance(data, dict) else Focus()
     return Focus()
 
 
@@ -86,9 +88,9 @@ def _sway_focused(node):
     return None
 
 
-def _focus(window_id, app_id, pid=None) -> Focus:
+def _focus(window_id, app_id, pid=None, title=None) -> Focus:
     valid_id = (isinstance(window_id, int) and not isinstance(window_id, bool)) or (
         isinstance(window_id, str) and window_id)
     valid_pid = isinstance(pid, int) and not isinstance(pid, bool) and pid > 0
     return Focus(window_id if valid_id else None, app_id if isinstance(app_id, str) else None,
-                 pid if valid_pid else None)
+                 pid if valid_pid else None, title if isinstance(title, str) else "")

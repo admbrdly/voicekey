@@ -69,7 +69,16 @@ class Preview:
 
 class NeovimTarget(PinnedEditorTarget):
     kind = 'neovim'
-    clipboard_fallback = False
+
+    @property
+    def clipboard_fallback(self):
+        # The pipeline only consults this after a definite refusal, never after
+        # an uncertain insertion. Cancellation should not overwrite a clipboard.
+        return not self.cancelled.is_set()
+
+    @property
+    def binding_refusal(self):
+        return "" if self.pin_valid else self.pin_reason or "Neovim did not acknowledge the buffer pin"
 
     def __init__(self, window, app_id, registration):
         self.focus_identity = (registration['pid'], registration['server'])

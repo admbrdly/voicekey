@@ -454,6 +454,10 @@ class Daemon:
             if action == "dictate":
                 session.target = target_mod.bind(self.ime, self.cfg.dictation,
                                                   sum(u.gated for u in self.pipeline.ledger.snapshots()) > 1)
+                if reason := getattr(session.target, "binding_refusal", ""):
+                    notify("voicekey: destination refused",
+                           f"{reason}. Recording for recovery; nothing will be typed. "
+                           "Final text will be saved and copied if possible.", attention=True)
                 session.target.prefix = owed(session.target.before(0.0),
                                              self.pipeline.spacing.prefix(session.target.window_id))
             if self.streaming is not None:

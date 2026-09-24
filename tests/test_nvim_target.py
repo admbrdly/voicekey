@@ -463,14 +463,19 @@ class KeyTests(unittest.TestCase):
 
     def test_unregistered_editor_refuses_with_journal_recovery(self):
         (Path(self.tmp.name)/'voicekey/nvim'/f'{self.editor.process.pid}.json').unlink()
-        self.key(1)
-        self.assertIsInstance(self.daemon.session.target, RefusedTarget)
+        with patch('voicekey.daemon.notify') as notify:
+            self.key(1)
+            self.assertIsInstance(self.daemon.session.target, RefusedTarget)
+            attention = [c for c in notify.call_args_list if c.kwargs.get('attention')]
+            self.assertEqual(len(attention), 1)
+            self.assertIn('destination refused', attention[0].args[0])
+            self.daemon.backend.transcribe.assert_not_called()
         self.key(0); self.done()
         self.assertEqual(self.editor.text(), [''])
         self.assertTrue(list((Path(self.tmp.name)/'sessions').glob('*.wav')))
         self.assertIn('Dictated.', (Path(self.tmp.name)/'last-recovery.txt').read_text())
         self.ime.commit.assert_not_called()
-        self.copy.assert_not_called()
+        self.copy.assert_called_once_with('Dictated.')
 
     def test_rpc_timeout_keeps_journal_and_audio(self):
         real_call = nvim.call
@@ -531,3 +536,28 @@ class KeyTests(unittest.TestCase):
                 self.done()
             insert.assert_called_once()
         self.assertEqual(self.ime.commit.call_count, 2)
+
+    def test_failed_pin_warns_before_speech_and_copies_final_text(self):
+        real_call = nvim.call
+        def call(server, method, *args, **kwargs):
+            if method == 'pin':
+                raise nvim.NvimRefused('buffer is not modifiable')
+            return real_call(server, method, *args, **kwargs)
+        with patch('voicekey.nvim.call', side_effect=call), patch('voicekey.daemon.notify') as notify:
+            self.key(1)
+            self.assertTrue(any(c.kwargs.get('attention') and 'not modifiable' in c.args[1]
+                                for c in notify.call_args_list))
+            self.daemon.backend.transcribe.assert_not_called()
+        self.key(0); self.done()
+        self.copy.assert_called_once_with('Dictated.')
+        self.assertEqual(self.editor.text(), [''])
+
+    def test_definite_insert_refusal_copies_but_clipboard_failure_keeps_recovery(self):
+        self.key(1)
+        self.editor.lua('vim.api.nvim_set_option_value("modifiable",false,{buf=0})')
+        self.copy.side_effect = OSError('clipboard unavailable')
+        self.key(0); self.done()
+        self.copy.assert_called_once_with('Dictated.')
+        self.assertTrue(list((Path(self.tmp.name)/'sessions').glob('*.wav')))
+        self.assertIn('Dictated.', (Path(self.tmp.name)/'last-recovery.txt').read_text())
+        self.assertEqual(self.editor.text(), [''])

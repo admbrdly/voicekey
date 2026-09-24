@@ -91,7 +91,14 @@ Registrations are per instance. Focus is unconfirmed until `FocusGained` or
 `VimResume`; switch away and back if no initial focus event arrives. In a known
 terminal, a Neovim descendant with no validated focused registration causes
 refusal. Without such a descendant, ordinary terminal delivery stays unchanged.
-This conservatively refuses a shell beside Neovim in another Ghostty tab.
+This conservatively refuses a shell beside Neovim in any other Ghostty window
+or tab sharing the process. Ghostty's existing Bash directory title now provides
+a best-effort exception: it must match a foreground local Bash's working directory
+under the terminal process. Window, title, PID/start time and foreground state are
+rechecked before delivery. This accepts stale-title risk: a Neovim surface with
+a stale matching directory title can be mistaken for a shell in another window.
+No shell hook or configuration change is required. A quick command and return
+to the same title between observations cannot be detected reliably.
 Conversely, a lost focus event can leave a stale true claim; ancestry cannot
 identify Ghostty tabs. Detached tmux/remote processes can escape that ancestry
 check. See the plugin README for setup and the precise limits.

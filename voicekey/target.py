@@ -111,6 +111,9 @@ class Window:
     def __init__(self, window_id, verify: bool, pid=None):
         self.id, self.verify, self.pid = window_id, verify, pid
 
+    def availability_issue(self, deadline=None):
+        return ""
+
     def focused(self, deadline: float) -> bool:
         if time.monotonic() >= deadline:
             return False
@@ -122,6 +125,7 @@ class Window:
 class Target:
     kind = ""
     capabilities = Capabilities("none")
+    binding_refusal = ""
 
     def __init__(self, preview, window: Window, app_id: str | None):
         self.preview, self.window, self.app_id = preview, window, app_id
@@ -343,7 +347,14 @@ class ClipboardTarget(Target):
 
 class RefusedTarget(Target):
     kind = "refused"
-    clipboard_fallback = False
+
+    @property
+    def clipboard_fallback(self):
+        return not self.cancelled.is_set()
+
+    @property
+    def binding_refusal(self):
+        return self.reason
 
     def __init__(self, window, app_id, reason):
         super().__init__(NotifyPreview("dictate"), window, app_id)
@@ -384,8 +395,12 @@ def bind(ime: InputMethod | None, cfg: DictationConfig, landing: bool, *,
     while focused.id is None and activation_wait > ACTIVATION_WAIT and time.monotonic() < deadline:
         time.sleep(0.1)
         focused = focus.focused(timeout=0.2)
+    from .shell_prompt import PromptWindow, candidates
     window = Window(focused.id, cfg.require_same_window, focused.pid)
-    terminal_editor = terminal_target(focused, window)
+    prompt_shells = candidates(focused)
+    if prompt_shells:
+        window = PromptWindow(focused, prompt_shells)
+    terminal_editor = None if prompt_shells else terminal_target(focused, window)
     if terminal_editor is not None:
         if focus.focused(timeout=0.2) != focused:
             terminal_editor.cancel()
@@ -404,6 +419,11 @@ def bind(ime: InputMethod | None, cfg: DictationConfig, landing: bool, *,
             pass
     confirmed = focus.focused(timeout=0.2)
     stable = focused == confirmed and (focused.id is not None or not cfg.require_same_window)
+    if prompt_shells:
+        matching = candidates(confirmed)
+        if (not stable or focused.title != confirmed.title
+                or not any(matching.get(pid) == started for pid, started in prompt_shells.items())):
+            return RefusedTarget(window, focused.app_id, "Shell prompt changed during binding; terminal typing refused")
     in_field = stable and generation is not None and ime.activation() == generation
     if editor is not None:
         if in_field:
