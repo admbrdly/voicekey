@@ -14,10 +14,13 @@ local fake = vim.fn.tempname()
 vim.fn.writefile({
   "#!/bin/sh",
   -- The real command prints this line once recording starts; SIGINT finishes, SIGTERM discards.
+  -- VK_FAIL: the daemon refuses before recording (stderr, exit 1).
+  'if [ -n "$VK_FAIL" ]; then echo "voicekey capture: $VK_FAIL" >&2; exit 1; fi',
   'trap \'printf "%b" "$VK_TEXT"; exit "${VK_EXIT:-0}"\' INT',
   "trap 'exit 130' TERM",
   'echo "Recording; Ctrl-C finishes, SIGTERM cancels." >&2',
-  "while :; do sleep 0.02; done",
+  -- VK_STOP_FILE: something else (a global stop) finishes the capture.
+  'while :; do if [ -n "$VK_STOP_FILE" ] && [ -e "$VK_STOP_FILE" ]; then printf "%b" "$VK_TEXT"; exit 0; fi; sleep 0.02; done',
 }, fake)
 vim.fn.setfperm(fake, "rwx------")
 voicekey.setup({ cmd = { fake }, notify = false })
@@ -128,6 +131,57 @@ tests["focus records this server and only its own release removes it"] = functio
   os.remove(path)
 end
 
+local function refused(message)
+  vim.env.VK_FAIL = message
+  messages = {}
+  voicekey.start()
+  wait(function() return voicekey.status() == nil end, "refusal")
+  vim.wait(20)
+  vim.env.VK_FAIL = nil
+  return messages[#messages] or ""
+end
+
+local function no_marker(buf)
+  return #api.nvim_buf_get_extmarks(buf, api.nvim_get_namespaces().voicekey, 0, -1, {}) == 0
+end
+
+tests["busy daemon: warning with its reason, nothing inserted, marker cleared"] = function()
+  local buf = buffer({ "unchanged" }, 1, 0)
+  local msg = refused("Finish the current dictation before starting another")
+  assert(msg:find("Finish the current dictation", 1, true), msg)
+  assert(lines()[1] == "unchanged" and no_marker(buf), vim.inspect(lines()))
+end
+
+tests["outdated daemon: warning says to restart the service"] = function()
+  local buf = buffer({ "unchanged" }, 1, 0)
+  local msg = refused("Daemon lacks client capture support; restart voicekey.service")
+  assert(msg:find("restart voicekey.service", 1, true), msg)
+  assert(lines()[1] == "unchanged" and no_marker(buf))
+end
+
+tests["absent daemon: warning keeps the error and asks about the service"] = function()
+  local buf = buffer({ "unchanged" }, 1, 0)
+  local msg = refused("[Errno 2] No such file or directory")
+  assert(msg:find("No such file", 1, true) and msg:find("is voicekey.service running?", 1, true), msg)
+  assert(lines()[1] == "unchanged" and no_marker(buf))
+end
+
+tests["a global stop elsewhere still delivers here"] = function()
+  local buf = buffer({ "Hume said" }, 1, 8)
+  local stop = vim.fn.tempname()
+  vim.env.VK_STOP_FILE = stop
+  vim.env.VK_TEXT = "custom is the guide"
+  voicekey.start()
+  wait(function() return voicekey.status() == "recording" end, "recording")
+  vim.fn.writefile({}, stop)
+  wait(function() return voicekey.status() == nil end, "completion")
+  vim.wait(20)
+  vim.env.VK_STOP_FILE = nil
+  os.remove(stop)
+  assert(lines()[1] == "Hume said custom is the guide", lines()[1])
+  assert(no_marker(buf))
+end
+
 tests["cancel inserts nothing"] = function()
   buffer({ "unchanged" }, 1, 0)
   dictate("discarded", { cancel = true })
@@ -157,6 +211,7 @@ tests["deleted buffer is reported, not an error"] = function()
     api.nvim_buf_delete(buf, { force = true })
   end })
   assert(messages[#messages]:find("buffer closed"), vim.inspect(messages))
+  assert(messages[#messages]:find("voicekey --last", 1, true), "recovery goes through the daemon journal")
 end
 
 tests["unmodifiable buffer is refused before recording"] = function()

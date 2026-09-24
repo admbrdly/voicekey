@@ -2,8 +2,11 @@
 --
 -- Runs `python -m voicekey --capture-to-stdout` and inserts its transcript as
 -- buffer text with nvim_buf_set_text. Nothing is typed, so the editor mode
--- cannot turn dictated words into commands, and no daemon, evdev access or
--- input method is involved. Requires Neovim 0.10.
+-- cannot turn dictated words into commands, and no evdev access or input
+-- method is involved. The command is a thin client of the running voicekey
+-- daemon: it shares the daemon's loaded models and configuration, and
+-- transcripts go to the daemon's journal (`voicekey --last`). Requires
+-- Neovim 0.10 and a running daemon with client capture support.
 if vim.fn.has("nvim-0.10") == 0 then
   error("voicekey.lua requires Neovim 0.10 or newer")
 end
@@ -14,7 +17,9 @@ local api = vim.api
 local ns = api.nvim_create_namespace("voicekey")
 
 local config = {
-  -- Command that records until SIGINT and writes the transcript to stdout.
+  -- Client of the running daemon: prints "Recording;" on stderr once the
+  -- microphone is live, finishes on SIGINT, cancels on SIGTERM, and writes
+  -- the transcript to stdout. The daemon's configuration applies.
   cmd = { vim.fn.expand("~/.local/share/voicekey/venv/bin/python"), "-m", "voicekey", "--capture-to-stdout" },
   -- Show the recording state as inline virtual text at the insertion point.
   marker = true,
@@ -95,7 +100,7 @@ end
 local function deliver(capture, result)
   local buf = capture.buf
   if not api.nvim_buf_is_valid(buf) then
-    notify("buffer closed; transcript kept in ~/.local/state/voicekey/stdout/", vim.log.levels.WARN)
+    notify("buffer closed; recover it with `voicekey --last` or `--copy-last`", vim.log.levels.WARN)
     return
   end
   local pos = api.nvim_buf_get_extmark_by_id(buf, ns, capture.mark, {})
@@ -110,16 +115,19 @@ local function deliver(capture, result)
   local text = prepare(result.stdout or "")
   if result.code ~= 0 or text == "" then
     local reason = result.code ~= 0 and ("exit " .. result.code) or "no speech"
-    local detail = vim.trim((result.stderr or ""):match("[^\n]*voicekey capture:[^\n]*") or "")
+    local detail = vim.trim(capture.stderr:match("[^\n]*voicekey capture:[^\n]*") or "")
+    if detail:find("No such file", 1, true) or detail:find("Connection refused", 1, true) then
+      detail = detail .. " (is voicekey.service running?)"
+    end
     notify("no text (" .. reason .. ")" .. (detail ~= "" and ": " .. detail or ""), vim.log.levels.WARN)
     return
   end
   if #pos == 0 then
-    notify("insertion point lost; transcript kept in ~/.local/state/voicekey/stdout/", vim.log.levels.WARN)
+    notify("insertion point lost; recover it with `voicekey --last` or `--copy-last`", vim.log.levels.WARN)
     return
   end
   if not vim.bo[buf].modifiable then
-    notify("buffer is not modifiable; transcript kept in ~/.local/state/voicekey/stdout/", vim.log.levels.WARN)
+    notify("buffer is not modifiable; recover it with `voicekey --last` or `--copy-last`", vim.log.levels.WARN)
     return
   end
   local row, col = pos[1], pos[2]
@@ -135,7 +143,7 @@ local function deliver(capture, result)
   end
   local ok, err = pcall(api.nvim_buf_set_text, buf, row, col, row, col, lines)
   if not ok then
-    notify("insert failed (" .. err .. "); transcript kept in ~/.local/state/voicekey/stdout/", vim.log.levels.WARN)
+    notify("insert failed (" .. err .. "); recover it with `voicekey --last` or `--copy-last`", vim.log.levels.WARN)
     return
   end
   local end_row = row + #lines - 1
@@ -159,13 +167,16 @@ function M.start()
     notify("buffer is not modifiable", vim.log.levels.WARN)
     return
   end
-  local capture = { buf = buf, state = "loading" }
+  local capture = { buf = buf, state = "loading", stderr = "" }
   place(capture, insertion_point())
   active = capture
   local ok, proc = pcall(vim.system, config.cmd, {
     text = true,
+    -- A stderr callback means vim.system does not collect stderr itself:
+    -- keep it for the failure warning, and watch it for "Recording;".
     stderr = function(_, data)
-      if data and data:find("Recording;", 1, true) then
+      capture.stderr = capture.stderr .. (data or "")
+      if capture.stderr:find("Recording;", 1, true) then
         vim.schedule(function()
           if active == capture and capture.state == "loading" then
             set_state(capture, "recording")
