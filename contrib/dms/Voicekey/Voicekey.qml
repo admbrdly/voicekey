@@ -25,7 +25,9 @@ PluginComponent {
     readonly property bool stopping: servicePending && serviceAction === "stop"
     readonly property bool canStart: idle || (online && status.state === "unloaded")
     readonly property bool controlsBusy: requestPending || servicePending
-    readonly property bool online: control.linkUp && status.state !== "offline"
+    // The socket lives in a Loader so a failed connection can be replaced; see heartbeat.
+    readonly property var control: controlLoader.item
+    readonly property bool online: (control?.linkUp ?? false) && status.state !== "offline"
     readonly property bool listening: online && status.listening === true
     readonly property bool idle: online && (status.state === "idle" || status.state === "paused")
     readonly property bool muted: AudioService.source?.audio?.muted ?? false
@@ -58,7 +60,7 @@ PluginComponent {
         : status.state === "paused" ? "mic_off" : "mic_none"
 
     function send(command) {
-        if (!control.linkUp || controlsBusy) return;
+        if (!(control?.linkUp ?? false) || controlsBusy) return;
         requestPending = true;
         controlError = "";
         requestId++;
@@ -119,33 +121,39 @@ PluginComponent {
         }
     }
 
-    DankSocket {
-        id: control
-        path: Quickshell.env("XDG_RUNTIME_DIR") + "/voicekey/control.sock"
-        connected: true
-        onConnectionStateChanged: {
-            if (!linkUp) {
-                root.status = {state: "offline", listening: false};
-                root.requestPending = false;
-                requestTimeout.stop();
-                root.serviceState = "unknown";
-                root.checkService();
+    Loader {
+        id: controlLoader
+        sourceComponent: controlSocket
+    }
+    Component {
+        id: controlSocket
+        DankSocket {
+            path: Quickshell.env("XDG_RUNTIME_DIR") + "/voicekey/control.sock"
+            connected: true
+            onConnectionStateChanged: {
+                if (!linkUp) {
+                    root.status = {state: "offline", listening: false};
+                    root.requestPending = false;
+                    requestTimeout.stop();
+                    root.serviceState = "unknown";
+                    root.checkService();
+                }
             }
-        }
-        parser: SplitParser {
-            onRead: message => {
-                try {
-                    const data = JSON.parse(message);
-                    if (data.type === "status") {
-                        root.status = data;
-                        heartbeat.restart();
-                    } else if (data.type === "reply" && data.id === root.requestId) {
-                        root.requestPending = false;
-                        root.controlError = data.error || "";
-                        requestTimeout.stop();
+            parser: SplitParser {
+                onRead: message => {
+                    try {
+                        const data = JSON.parse(message);
+                        if (data.type === "status") {
+                            root.status = data;
+                            heartbeat.restart();
+                        } else if (data.type === "reply" && data.id === root.requestId) {
+                            root.requestPending = false;
+                            root.controlError = data.error || "";
+                            requestTimeout.stop();
+                        }
+                    } catch (e) {
+                        root.controlError = "Invalid response from Voicekey";
                     }
-                } catch (e) {
-                    root.controlError = "Invalid response from Voicekey";
                 }
             }
         }
@@ -154,9 +162,15 @@ PluginComponent {
     Timer {
         id: heartbeat
         interval: 6000
+        running: true
         onTriggered: {
-            control.connected = false;
-            Qt.callLater(() => { control.connected = true; });
+            // Status arrives every 2 s and restarts this timer, so firing means the
+            // link is down or silent. Replace the socket rather than toggling it:
+            // after a failed connection (daemon still starting) Quickshell's Socket
+            // keeps a dead QLocalSocket and ignores later connect requests.
+            controlLoader.active = false;
+            controlLoader.active = true;
+            heartbeat.restart();
         }
     }
     Timer {
