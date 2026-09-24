@@ -2,6 +2,10 @@
 -- Run: nvim --headless -u NONE -i NONE -l tests/nvim-tests.lua
 local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
 vim.opt.runtimepath:append(root .. "/contrib/nvim")
+local runtime_dir = vim.fn.tempname()
+vim.fn.mkdir(runtime_dir, "p", tonumber("700", 8))
+vim.env.XDG_RUNTIME_DIR = runtime_dir
+if vim.v.servername == "" then vim.fn.serverstart() end
 vim.cmd.runtime("plugin/voicekey.lua")
 local voicekey = require("voicekey")
 local api = vim.api
@@ -110,6 +114,20 @@ tests[":VoiceKey command drives a capture"] = function()
   assert(voicekey.status() == nil and messages[1]:find("unknown action"), vim.inspect(messages))
 end
 
+tests["focus records this server and only its own release removes it"] = function()
+  local path = runtime_dir .. "/voicekey/nvim-focus"
+  vim.cmd.doautocmd("FocusGained")
+  assert(vim.fn.readfile(path)[1] == vim.v.servername, vim.inspect(vim.fn.readfile(path)))
+  assert(vim.fn.getfperm(path) == "rw-------", vim.fn.getfperm(path))
+  assert(vim.fn.getfperm(runtime_dir .. "/voicekey") == "rwx------")
+  vim.cmd.doautocmd("FocusLost")
+  assert(vim.fn.filereadable(path) == 0, "released on focus loss")
+  vim.fn.writefile({ "/run/other-nvim.sock" }, path)
+  vim.cmd.doautocmd("FocusLost")
+  assert(vim.fn.readfile(path)[1] == "/run/other-nvim.sock", "another instance's claim is kept")
+  os.remove(path)
+end
+
 tests["cancel inserts nothing"] = function()
   buffer({ "unchanged" }, 1, 0)
   dictate("discarded", { cancel = true })
@@ -159,5 +177,6 @@ for _, name in ipairs(names) do
   if not ok then failed = failed + 1 end
 end
 os.remove(fake)
+vim.fn.delete(runtime_dir, "rf")
 print(("%d/%d passed"):format(#names - failed, #names))
 os.exit(failed == 0 and 0 or 1)
