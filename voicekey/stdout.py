@@ -11,7 +11,7 @@ import time
 from .control import PROTOCOL_VERSION, socket_path
 
 
-def capture(*, wav=None, seconds=None, path=None) -> int:
+def capture(*, wav=None, seconds=None, path=None, client_name=None) -> int:
     """Ctrl-C finishes; SIGTERM cancels. Configuration belongs to the daemon."""
     stopped = aborted = False
 
@@ -73,6 +73,10 @@ def capture(*, wav=None, seconds=None, path=None) -> int:
                             args['seconds'] = seconds
                         if wav is not None:
                             args['wav'] = str(Path(wav).resolve())
+                        # Older version-1 daemons can still record; only the
+                        # optional destination label needs the new capability.
+                        if client_name and 'capture-client-name' in message.get('capabilities', []):
+                            args['client_name'] = client_name
                         send('capture-start', args)
                     elif message.get('type') == 'reply':
                         pending.pop(message.get('id'), None)
@@ -83,6 +87,8 @@ def capture(*, wav=None, seconds=None, path=None) -> int:
                     elif message.get('type') == 'capture-progress' and message.get('capture_id') == identity:
                         if message.get('state') == 'recording':
                             print('Recording; Ctrl-C finishes, SIGTERM cancels.', file=sys.stderr, flush=True)
+                        elif message.get('state') == 'transcribing':
+                            print('Transcribing; microphone stopped.', file=sys.stderr, flush=True)
                     elif message.get('type') == 'capture-result' and message.get('capture_id') == identity:
                         if aborted or message.get('error') == 'cancelled':
                             return 130

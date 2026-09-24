@@ -16,10 +16,11 @@ class ClientTarget(Target):
     kind = "client"
     clipboard_fallback = False
 
-    def __init__(self, control, client, request_id, capture_id):
+    def __init__(self, control, client, request_id, capture_id, client_name=""):
         super().__init__(None, Window(None, False), None)
         self.control, self.client = control, client
         self.request_id, self.capture_id = request_id, capture_id
+        self.client_name = client_name
         self._result_lock = threading.Lock()
         self.terminal = False
         self.discarded = False
@@ -31,7 +32,11 @@ class ClientTarget(Target):
         pass
 
     def describe(self):
-        return "control socket client"
+        return "control socket client" + (f" ({self.client_name})" if self.client_name else "")
+
+    @property
+    def application_name(self):
+        return self.client_name or "Client"
 
     def event(self, event_type, **fields):
         return {'type': event_type, 'id': self.request_id,
@@ -80,7 +85,7 @@ class ClientTarget(Target):
 class ClientCapture:
     @staticmethod
     def arguments(args, cfg):
-        if set(args) - {'seconds', 'wav'}:
+        if set(args) - {'seconds', 'wav', 'client_name'}:
             raise ValueError("Unknown capture-start argument")
         seconds = args.get('seconds', cfg.max_seconds)
         if (isinstance(seconds, bool) or not isinstance(seconds, (int, float))
@@ -89,13 +94,17 @@ class ClientCapture:
         wav = args.get('wav')
         if wav is not None and (not isinstance(wav, str) or not Path(wav).is_absolute() or '\0' in wav):
             raise ValueError("wav must be an absolute local path")
-        return min(seconds, cfg.max_seconds), wav
+        client_name = args.get('client_name', '')
+        if 'client_name' in args and (not isinstance(client_name, str) or not client_name
+                or len(client_name) > 80 or not client_name.isprintable() or client_name != client_name.strip()):
+            raise ValueError("client_name must be 1–80 printable characters without surrounding whitespace")
+        return min(seconds, cfg.max_seconds), wav, client_name
 
-    def __init__(self, daemon, client, request_id, identity, seconds, wav):
+    def __init__(self, daemon, client, request_id, identity, seconds, wav, client_name=""):
         self.daemon = daemon
         self.id, self.client, self.seconds = identity, client, seconds
         self.session = Session('dictate', 'client', frozenset(), 'client', identity=identity)
-        self.session.target = self.target = ClientTarget(daemon.control, client, request_id, identity)
+        self.session.target = self.target = ClientTarget(daemon.control, client, request_id, identity, client_name)
         # A client has no ageing window binding. Include finalization and text
         # processing in addition to the configured recognition budget.
         self.session.processing_seconds = (daemon.cfg.pipeline.transcription_seconds

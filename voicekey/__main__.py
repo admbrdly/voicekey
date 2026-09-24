@@ -30,11 +30,12 @@ def main() -> int:
     commands.add_argument("--explain-last", action="store_true", help="show processing and delivery of the latest dictation")
     commands.add_argument("--capture-to-stdout", action="store_true", help="record until Ctrl-C and write text to stdout; no desktop delivery")
     parser.add_argument("--seconds", type=float, help="with --capture-to-stdout: stop after this many seconds (capped by max_seconds)")
+    parser.add_argument("--client-name", help="with --capture-to-stdout: application name shown in daemon status")
     args = parser.parse_args()
     if args.control:
         if any((args.check, args.download, args.replay, args.agent, args.persistent,
                 args.last, args.copy_last, args.explain_last, args.capture_to_stdout,
-                args.seconds is not None, args.config)):
+                args.seconds is not None, args.client_name is not None, args.config)):
             parser.error("--control cannot be combined with other commands or --config")
         import json
         from .control import request
@@ -52,6 +53,10 @@ def main() -> int:
         parser.error("history commands cannot be combined with --replay")
     if args.seconds is not None and (not args.capture_to_stdout or not math.isfinite(args.seconds) or args.seconds <= 0):
         parser.error("--seconds requires --capture-to-stdout and a positive finite duration")
+    if args.client_name is not None and (not args.capture_to_stdout or not args.client_name
+            or len(args.client_name) > 80 or not args.client_name.isprintable()
+            or args.client_name != args.client_name.strip()):
+        parser.error("--client-name requires --capture-to-stdout and 1–80 printable characters without surrounding whitespace")
     if args.persistent and (not args.replay or args.agent):
         parser.error("--persistent requires --replay and cannot be combined with --agent")
 
@@ -66,7 +71,7 @@ def main() -> int:
         if args.config:
             parser.error("--capture-to-stdout uses the running daemon configuration; --config is not supported")
         from .stdout import capture
-        return capture(wav=args.replay, seconds=args.seconds)
+        return capture(wav=args.replay, seconds=args.seconds, client_name=args.client_name)
 
     from .config import ConfigError, load
     try:

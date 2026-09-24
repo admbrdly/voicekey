@@ -16,6 +16,7 @@ import threading
 import time
 
 PROTOCOL_VERSION = 1
+CAPABILITIES = ['capture-client-name']
 CAPTURE_COMMANDS = ('capture-start', 'capture-finish', 'capture-cancel')
 COMMANDS = ('status', 'start', 'start-typing', 'stop', 'pause-on-switch', 'follow-focus', 'pin', 'free-memory') + CAPTURE_COMMANDS
 
@@ -142,7 +143,8 @@ class ControlServer:
                             clients[client] = b''
                             outputs[client] = deque()
                             selector.register(client, selectors.EVENT_READ)
-                            send(client, {'type': 'status', 'protocol_version': PROTOCOL_VERSION, **self.status})
+                            send(client, {'type': 'status', 'protocol_version': PROTOCOL_VERSION,
+                                          'capabilities': CAPABILITIES, **self.status})
                             continue
                         try:
                             if mask & selectors.EVENT_READ:
@@ -164,7 +166,7 @@ class ControlServer:
                                     if message['command'] == 'status':
                                         send(client, {'type': 'reply', 'id': message.get('id'),
                                              'error': 'status takes no arguments' if message.get('args') else None,
-                                             'protocol_version': PROTOCOL_VERSION, **self.status})
+                                             'protocol_version': PROTOCOL_VERSION, 'capabilities': CAPABILITIES, **self.status})
                                     else:
                                         self.commands.put_nowait((client, message, time.monotonic() + 2))
                             if client in clients and mask & selectors.EVENT_WRITE:
@@ -195,7 +197,8 @@ class ControlServer:
                     status = self.status
                     if status != previous or time.monotonic() - heartbeat > 2:
                         for client in tuple(clients):
-                            send(client, {'type': 'status', 'protocol_version': PROTOCOL_VERSION, **status})
+                            send(client, {'type': 'status', 'protocol_version': PROTOCOL_VERSION,
+                                          'capabilities': CAPABILITIES, **status})
                         previous, heartbeat = status, time.monotonic()
             finally:
                 for client in tuple(clients):

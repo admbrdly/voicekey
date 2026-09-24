@@ -511,7 +511,8 @@ class Daemon:
                  self.model_state if self.model_state in ("loading", "unloading", "unloaded") else
                  "unavailable" if self.backend is None or self.vad is None else
                  "paused" if pause_reason else "idle")
-        destination = persistent.target.target if persistent is not None else None
+        destination = (client_capture.target if client_capture is not None else
+                       persistent.target.target if persistent is not None else None)
         return {"state": state, "listening": listening, "client_capture": client_capture is not None,
                 "binding": persistent is not None and not persistent.ready.is_set(),
                 "models": self.model_state, "unload_pending": self._unload_requested,
@@ -542,7 +543,7 @@ class Daemon:
             if client is None or self.control is None:
                 raise ValueError("Capture commands require a persistent control connection")
             if command == "capture-start":
-                seconds, wav = ClientCapture.arguments(args, self.cfg)
+                seconds, wav, client_name = ClientCapture.arguments(args, self.cfg)
                 if self.client_capture is not None or self.persistent is not None or self.session is not None:
                     raise ValueError("Microphone busy: finish the current capture first")
                 if self.pipeline.ledger.busy:
@@ -551,7 +552,7 @@ class Daemon:
                 identity = self.pipeline.admit(audio_seconds=seconds, gated=False)
                 if identity is None:
                     raise ValueError("Capture unavailable: pending work or recovery storage is full")
-                self.client_capture = ClientCapture(self, client, request_id, identity, seconds, wav)
+                self.client_capture = ClientCapture(self, client, request_id, identity, seconds, wav, client_name)
                 return {"capture_id": identity}
             capture = self.client_capture
             if set(args) != {'capture_id'} or not isinstance(args['capture_id'], str):

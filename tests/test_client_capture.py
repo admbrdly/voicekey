@@ -108,6 +108,7 @@ class ClientCaptureTests(CaptureHarness):
         self.assertEqual(self.read(stream, 'capture-progress')['state'], 'recording')
         self.assertTrue(d.status()['client_capture'])
         self.assertTrue(d.status()['listening'])
+        self.assertEqual(d.status()['destination_name'], 'Client')
         reply = self.send(client, stream, 'capture-finish', {'capture_id': identity})
         self.assertIsNone(reply['error'])
         result = self.read(stream, 'capture-result')
@@ -128,7 +129,9 @@ class ClientCaptureTests(CaptureHarness):
     def test_invalid_arguments_and_capture_ownership(self):
         client, stream = self.connect()
         for args in ({'seconds': 0}, {'seconds': True}, {'seconds': float('inf')},
-                     {'seconds': '10'}, {'wav': 'relative.wav'}, {'unknown': 1}):
+                     {'seconds': '10'}, {'wav': 'relative.wav'}, {'unknown': 1},
+                     {'client_name': ''}, {'client_name': None}, {'client_name': 42},
+                     {'client_name': 'a' * 81}, {'client_name': 'bad\nlabel'}, {'client_name': ' Neovim '}):
             self.assertIsNotNone(self.send(client, stream, 'capture-start', args)['error'])
             self.assertIsNone(self.daemon.client_capture)
         identity = self.start(client, stream)
@@ -139,6 +142,20 @@ class ClientCaptureTests(CaptureHarness):
         self.assertIsNotNone(self.send(client, stream, 'capture-finish', {'capture_id': 'wrong'})['error'])
         self.send(client, stream, 'capture-cancel', {'capture_id': identity})
         self.settle()
+
+    def test_client_name_describes_actual_destination_without_changing_app_style(self):
+        client, stream = self.connect()
+        identity = self.start(client, stream, client_name='Neovim')
+        target = self.daemon.client_capture.target
+        self.assertEqual(self.daemon.status()['destination_name'], 'Neovim')
+        self.assertEqual(self.daemon.status()['destination'], 'control socket client (Neovim)')
+        self.assertIsNone(target.app_id)
+        self.assertIsNone(target.window_id)
+        self.bind.assert_not_called()
+        self.send(client, stream, 'capture-finish', {'capture_id': identity})
+        self.assertEqual(self.read(stream, 'capture-result')['text'], 'Hello from the daemon.')
+        self.settle()
+        self.assertEqual(self.daemon.status()['destination_name'], '')
 
     def test_refused_while_listening_and_desktop_refused_during_client_capture(self):
         client, stream = self.connect()

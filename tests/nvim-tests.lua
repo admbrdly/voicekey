@@ -20,7 +20,11 @@ vim.fn.writefile({
   "trap 'exit 130' TERM",
   'echo "Recording; Ctrl-C finishes, SIGTERM cancels." >&2',
   -- VK_STOP_FILE: something else (a global stop) finishes the capture.
-  'while :; do if [ -n "$VK_STOP_FILE" ] && [ -e "$VK_STOP_FILE" ]; then printf "%b" "$VK_TEXT"; exit 0; fi; sleep 0.02; done',
+  'while :; do if [ -n "$VK_STOP_FILE" ] && [ -e "$VK_STOP_FILE" ]; then',
+  -- Split the progress marker across writes, then wait for the test to allow delivery.
+  '  printf "Trans" >&2; sleep .02; printf "cribing; microphone stopped.\\n" >&2',
+  '  while [ -n "$VK_RELEASE_FILE" ] && [ ! -e "$VK_RELEASE_FILE" ]; do sleep .02; done',
+  '  printf "%b" "$VK_TEXT"; exit 0; fi; sleep 0.02; done',
 }, fake)
 vim.fn.setfperm(fake, "rwx------")
 voicekey.setup({ cmd = { fake }, notify = false })
@@ -169,15 +173,24 @@ end
 tests["a global stop elsewhere still delivers here"] = function()
   local buf = buffer({ "Hume said" }, 1, 8)
   local stop = vim.fn.tempname()
+  local release = vim.fn.tempname()
   vim.env.VK_STOP_FILE = stop
+  vim.env.VK_RELEASE_FILE = release
   vim.env.VK_TEXT = "custom is the guide"
   voicekey.start()
   wait(function() return voicekey.status() == "recording" end, "recording")
   vim.fn.writefile({}, stop)
+  wait(function() return voicekey.status() == "transcribing" end, "external-stop progress")
+  assert(lines()[1] == "Hume said", "no insertion before transcription completes")
+  local mark = api.nvim_buf_get_extmarks(buf, api.nvim_get_namespaces().voicekey, 0, -1, { details = true })[1]
+  assert(mark[4].virt_text[1][1] == "[voicekey: transcribing]", vim.inspect(mark))
+  vim.fn.writefile({}, release)
   wait(function() return voicekey.status() == nil end, "completion")
   vim.wait(20)
   vim.env.VK_STOP_FILE = nil
+  vim.env.VK_RELEASE_FILE = nil
   os.remove(stop)
+  os.remove(release)
   assert(lines()[1] == "Hume said custom is the guide", lines()[1])
   assert(no_marker(buf))
 end
@@ -211,7 +224,9 @@ tests["deleted buffer is reported, not an error"] = function()
     api.nvim_buf_delete(buf, { force = true })
   end })
   assert(messages[#messages]:find("buffer closed"), vim.inspect(messages))
-  assert(messages[#messages]:find("voicekey --last", 1, true), "recovery goes through the daemon journal")
+  assert(messages[#messages]:find(vim.fn.expand("~/.local/share/voicekey/venv/bin/python"), 1, true),
+    "recovery uses the installed interpreter")
+  assert(messages[#messages]:find(" -m voicekey --last", 1, true), "recovery goes through the daemon journal")
 end
 
 tests["unmodifiable buffer is refused before recording"] = function()

@@ -35,6 +35,7 @@ class ControlTests(unittest.TestCase):
         status = json.loads(stream.readline())
         self.assertEqual(status['type'], 'status')
         self.assertEqual(status['protocol_version'], 1)
+        self.assertIn('capture-client-name', status['capabilities'])
         return client, stream
 
     def test_status_and_private_socket(self):

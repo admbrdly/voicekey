@@ -318,7 +318,10 @@ running daemon: it loads no models, polisher, recorder or desktop integrations.
 The daemon uses its existing transcription and text-processing pipeline, including
 word overrides, the dictation hook and default polish style. Only prepared text
 goes to stdout, without an added newline; diagnostics and the flushed
-`Recording; Ctrl-C finishes, SIGTERM cancels.` line go to stderr. Failures exit 1.
+`Recording; Ctrl-C finishes, SIGTERM cancels.` line go to stderr. A flushed
+`Transcribing; microphone stopped.` line marks the processing phase, including
+when recording is stopped by the panel, a hotkey, or the duration limit.
+Failures exit 1.
 
 The daemon must be running and support protocol version 1; an older daemon needs
 a restart after upgrading. There is no standalone fallback. The daemon's loaded
@@ -326,6 +329,11 @@ configuration applies; `--config` is rejected with this command. `--replay` send
 an absolute local WAV path for the daemon to record at real-time pace. It does not
 load a second model. Captures are refused while desktop dictation or another
 client capture is active, or earlier dictation is still processing.
+
+Editor integrations can pass `--client-name Neovim` to label their destination
+in daemon status and the DMS widget. This is display metadata only: it does not
+select a window or change polish styles. The CLI sends the name only when the
+daemon advertises support, so older version-1 daemons remain usable until restart.
 
 Transcripts use the daemon's normal `~/.local/state/voicekey/sessions` journal
 (respecting `XDG_STATE_HOME`), so `--last` and `--copy-last` recover undelivered
@@ -608,6 +616,13 @@ desktop destination-policy fields. Status never contains transcript text or
 capture IDs. Ignore extra fields and unrelated status messages for forward
 compatibility; reject an unsupported protocol version.
 
+`capabilities` lists optional protocol extensions (treat an absent field as an
+empty list). `capture-client-name` permits `capture-start.args.client_name`.
+For an active client capture, `destination_name` is that supplied label, or
+`Client` when unnamed; `destination` describes the socket client. Desktop
+captures retain their actual window destination, such as Ghostty. A client label
+does not imply that the daemon has verified the application behind the socket.
+
 Requests have `command`, optional `id` (string or integer, echoed in replies),
 and optional `args` (object, default `{}`). Use distinct IDs for outstanding
 requests. Replies are `{"type":"reply","id":ID,"error":null,...}` on success,
@@ -633,6 +648,9 @@ A complete capture exchange looks like this (angle brackets mark example IDs):
 - **`capture-start`** accepts `seconds` (positive finite number, capped at the
   daemon's `max_seconds`, which is also the default), and optionally `wav`
   (absolute local path to a 16 kHz mono PCM WAV, replacing microphone input).
+  When `capture-client-name` is advertised, optional `client_name` supplies a
+  display label of 1–80 printable characters, with no surrounding whitespace.
+  It does not set the polish app ID or alter microphone arbitration/delivery.
   Unknown arguments are refused. The reply admits the capture and assigns its
   opaque `capture_id`; recording starts immediately afterward. A failure to open
   the recorder is a final error event. Only one capture is admitted at a time.

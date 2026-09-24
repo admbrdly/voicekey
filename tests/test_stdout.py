@@ -23,6 +23,7 @@ class StdoutTests(CaptureHarness):
             self.assertEqual(stdout.capture(seconds=.1, path=self.path), 0)
         self.assertEqual(output.getvalue(), 'Hello from the daemon.')
         self.assertIn('Recording;', errors.getvalue())
+        self.assertIn('Transcribing;', errors.getvalue())
         self.bind.assert_not_called()
         self.copy.assert_not_called()
 
@@ -73,8 +74,15 @@ class StdoutTests(CaptureHarness):
         self.daemon.backend.transcribe.assert_not_called()
 
     def test_cli_global_stop_finishes_stdout_capture_without_signalling_client(self):
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        def transcribe(samples):
+            entered.set()
+            release.wait(3)
+            return 'Hello from the daemon.'
+        self.daemon.backend.transcribe.side_effect = transcribe
         self.controller()
-        process = self.cli()
+        process = self.cli('--client-name', 'Neovim')
         self.assertIn('Recording;', process.stderr.readline())
         env = {**os.environ, 'XDG_RUNTIME_DIR': self.tmp.name}
         # Match the route script's status -> stop sequence, using another process.
@@ -86,11 +94,25 @@ class StdoutTests(CaptureHarness):
             if command == 'status':
                 self.assertFalse(reply['error'])  # Status carries the daemon's error string.
                 self.assertTrue(reply['listening'])
+                self.assertEqual(reply['destination_name'], 'Neovim')
             else:
                 self.assertIsNone(reply['error'])
+        self.assertTrue(entered.wait(1))
+        self.assertIn('Transcribing;', process.stderr.readline())
+        self.assertIsNone(process.poll())
+        release.set()
         output, errors = process.communicate(timeout=5)
         self.assertEqual(process.returncode, 0, errors)
         self.assertEqual(output, 'Hello from the daemon.')
+
+    def test_client_label_is_omitted_for_older_version_one_daemons(self):
+        with patch('voicekey.control.CAPABILITIES', []), \
+                patch.object(self.daemon, 'command', wraps=self.daemon.command) as command, \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.controller()
+            self.assertEqual(stdout.capture(seconds=.1, path=self.path, client_name='Neovim'), 0)
+            start = next(call for call in command.call_args_list if call.args[0] == 'capture-start')
+            self.assertNotIn('client_name', start.kwargs['args'])
 
     def test_cli_no_models_imported_and_no_config_required(self):
         self.controller()
