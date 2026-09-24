@@ -67,12 +67,13 @@ a terminal with it would send words that normal mode runs as commands.
 
 - If the daemon is listening, it stops it, wherever focus is.
 - If a terminal is focused, it toggles `:VoiceKey` in the Neovim that has
-  focus there, and refuses (with a notification) when none does, for example
-  at a shell prompt.
+  focus there. At a bash prompt set up with [contrib/bash](../bash/README.md)
+  it records and inserts into the command line. Anything else in a terminal
+  is refused with a notification.
 - Otherwise, it starts the daemon for input-method dictation.
 
 ```kdl
-Mod+Shift+D hotkey-overlay-title="Dictate" { spawn "/home/you/src/voicekey/contrib/nvim/voicekey-route"; }
+F12 repeat=false hotkey-overlay-title="Dictate" { spawn "/home/you/src/voicekey/contrib/nvim/voicekey-route"; }
 ```
 
 It needs `jq`, and `plugin/voicekey.lua` loaded at startup (with lazy.nvim,
