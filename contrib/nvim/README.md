@@ -3,13 +3,20 @@
 Dictate into the current Neovim buffer. The plugin runs
 `python -m voicekey --capture-to-stdout` and inserts the transcript with
 `nvim_buf_set_text`. Nothing is typed, so the editor mode cannot turn dictated
-words into commands, and this path needs no daemon, `input` group, or input
-method. Neovim in a terminal is otherwise the case the daemon cannot serve
-safely: Ghostty and other terminals accept input-method text, so words
+words into commands, and this path needs no `input` group or input method.
+Neovim in a terminal is otherwise the case the daemon's desktop delivery cannot
+serve safely: Ghostty and other terminals accept input-method text, so words
 committed in normal mode would run as commands.
 
-Requires Neovim 0.10 and an installed voicekey (`./install.sh`, or at least the
-venv and `python -m voicekey --download`). The daemon does not need to run.
+`--capture-to-stdout` is a thin client of the running daemon. The daemon records
+and transcribes with the models it already has loaded (nothing is loaded per
+capture), and its own configuration applies: `[backend]`, `[polish]`,
+`[text.word_overrides]` and the dictation hook.
+
+Requires Neovim 0.10 and a running, up-to-date voicekey daemon
+(`voicekey.service`) with client capture support; restart the service after
+upgrading. With no daemon, or an older one, the plugin warns and inserts
+nothing.
 
 ## Install
 
@@ -42,16 +49,20 @@ recording. `:VoiceKey start`, `stop` and `toggle` are also available.
   the cursor character in normal mode, like `a`, and at the cursor in insert
   mode. You can move or edit elsewhere while speaking.
 - An inline marker shows `loading`, `recording`, then `transcribing` at that
-  point. The model loads on each capture, so wait for `recording`.
+  point. Wait for `recording` before speaking: after **Free memory** the
+  daemon reloads its models first, and recording can begin while they load.
 - A space is added next to adjacent words. Paragraph breaks become lines;
   other control characters are removed.
-- Recording stops by itself after `max_seconds` (90 s by default).
-- Every transcript is journalled under `~/.local/state/voicekey/stdout/`
-  (`--last` covers daemon dictation only). If the buffer is closed or the
-  text cannot be inserted, recover it from the newest `.txt` there.
-
-`[backend]`, `[polish]` and `[text.word_overrides]` from
-`~/.config/voicekey/config.toml` apply as usual.
+- Recording stops by itself after the daemon's `max_seconds` (90 s by
+  default). Stopping dictation elsewhere (the panel, `--control stop`,
+  `voicekey-route`, a dictation hotkey) also finishes the capture, and the
+  transcript still lands in this buffer. Only this Neovim can cancel it.
+- While the daemon is dictating elsewhere or still processing, the capture is
+  refused with a warning and nothing is inserted.
+- Transcripts go to the daemon's normal journal. If the buffer is closed or
+  the text cannot be inserted, recover it manually with
+  `python -m voicekey --last` or `--copy-last`, which show the latest prepared
+  dictation.
 
 ## One keybinding for Neovim and everything else
 
@@ -93,8 +104,9 @@ terminal running Neovim has focus.
 
 ```lua
 require("voicekey").setup({
-  -- Any command that records until SIGINT and prints the transcript;
-  -- SIGTERM must discard. Add "--config", "/path/to/config.toml" here if needed.
+  -- A client that records until SIGINT, cancels on SIGTERM, prints the
+  -- transcript to stdout and "Recording;" on stderr. The daemon's
+  -- configuration applies; --config is not accepted.
   cmd = { vim.fn.expand("~/.local/share/voicekey/venv/bin/python"), "-m", "voicekey", "--capture-to-stdout" },
   marker = true,   -- inline status at the insertion point
   spacing = true,  -- separate the transcript from adjacent words
