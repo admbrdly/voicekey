@@ -74,6 +74,40 @@ class BashTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
+class ClaudeHookTests(unittest.TestCase):
+    """contrib/claude-code/voicekey-submit-hook with a stand-in daemon."""
+
+    def run_hook(self, session):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        (tmp / 'voicekey').mkdir(mode=0o700)
+        if session:
+            (tmp / 'voicekey' / 'tui-session').write_text('7\n')
+        calls = tmp / 'calls.log'
+        python = tmp / 'python'
+        python.write_text('#!/bin/sh\necho "$*" >> "$CALLS"\n'
+                          'case "$*" in *status) if [ -e "$CALLS.seen" ]; then echo \'{"state": "idle"}\';'
+                          ' else touch "$CALLS.seen"; echo \'{"state": "finishing"}\'; fi ;; esac\n')
+        python.chmod(0o755)
+        root = Path(__file__).resolve().parents[1]
+        run = subprocess.run([str(root / 'contrib/claude-code/voicekey-submit-hook')], input='{}',
+                             capture_output=True, text=True, timeout=20,
+                             env={**os.environ, 'XDG_RUNTIME_DIR': str(tmp), 'VOICEKEY_PYTHON': str(python),
+                                  'CALLS': str(calls)})
+        log = calls.read_text().splitlines() if calls.exists() else []
+        return run.returncode, log, (tmp / 'voicekey' / 'tui-session').exists()
+
+    def test_submit_stops_terminal_dictation_and_waits(self):
+        code, calls, left = self.run_hook(session=True)
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, ['-m voicekey --control stop'] + ['-m voicekey --control status'] * 2)
+        self.assertFalse(left)
+
+    def test_submit_without_terminal_dictation_does_nothing(self):
+        code, calls, _ = self.run_hook(session=False)
+        self.assertEqual((code, calls), (0, []))
+
+
 @unittest.skipUnless(nvim_supported() and shutil.which('jq'), 'Neovim 0.10+ or jq unavailable')
 class RouteTests(unittest.TestCase):
     """contrib/nvim/voicekey-route with stand-ins for niri, notify-send and the daemon."""
@@ -172,6 +206,22 @@ class RouteTests(unittest.TestCase):
         code, calls = self.route('org.mozilla.firefox', listening=True)
         self.assertEqual(calls[-1], 'daemon -m voicekey --control stop')
         self.assertFalse((self.runtime / 'voicekey' / 'shell-session').exists())
+
+    def test_idle_claude_code_and_codex_start_the_daemon(self):
+        for title in ('✳ Mail agent', 'codex', 'codex --model o5'):
+            with self.subTest(title=title):
+                code, calls = self.route('com.mitchellh.ghostty', title=title)
+                self.assertEqual(code, 0)
+                self.assertEqual(calls[-1], 'daemon -m voicekey --control start')
+                self.assertTrue((self.runtime / 'voicekey' / 'tui-session').exists())
+                self.assertFalse((self.runtime / 'voicekey' / 'shell-session').exists())
+
+    def test_working_claude_code_refuses(self):
+        for title in ('◐ Voicekey security review', '✶ Mail agent', 'codexfoo'):
+            with self.subTest(title=title):
+                code, calls = self.route('com.mitchellh.ghostty', title=title)
+                self.assertEqual(code, 1)
+                self.assertNotIn('daemon -m voicekey --control start', calls)
 
     def test_terminal_program_without_prompt_mark_refuses(self):
         code, calls = self.route('com.mitchellh.ghostty', title='htop')

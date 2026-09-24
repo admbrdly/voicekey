@@ -6,6 +6,9 @@
 #     Neovim has focus      -> toggle :VoiceKey there (buffer text).
 #     bash at its prompt    -> start the daemon; bash stops it on Enter
 #                              before the command runs (contrib/bash).
+#     Claude Code, idle     -> start the daemon; a UserPromptSubmit hook stops
+#                              it on submit (contrib/claude-code).
+#     Codex                 -> start the daemon; press again before submitting.
 #     anything else         -> refuse: letters could be commands.
 #   Other applications      -> start the daemon (input-method delivery).
 #
@@ -19,6 +22,7 @@ mark="${VOICEKEY_PROMPT_MARK:-❯ }"
 state="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/voicekey"
 focus_file="$state/nvim-focus"
 shell_session="$state/shell-session"  # daemon started at a bash prompt
+tui_session="$state/tui-session"      # daemon started in Claude Code/Codex
 
 notify() {
     notify-send -a voicekey "voicekey" "$1"
@@ -37,7 +41,7 @@ focused() {
 }
 
 if "$py" -m voicekey --control status 2>/dev/null | grep -q '"listening": true'; then
-    rm -f "$shell_session"
+    rm -f "$shell_session" "$tui_session"
     exec "$py" -m voicekey --control stop
 fi
 
@@ -54,15 +58,20 @@ for terminal in $terminals; do
             refuse "Neovim did not accept :VoiceKey; not dictating."
         exit 0
     fi
+    # Titles: "❯ dir" from contrib/bash at the prompt; Claude Code shows "✳ "
+    # when idle and a spinner while working (permission dialogs come then);
+    # Codex sets none, so bash's "codex …" command title remains.
     case "$title" in
-        "$mark"*) ;;
-        *) refuse "No Neovim or shell prompt has focus in this terminal; not dictating." ;;
+        "$mark"*) session=$shell_session ;;
+        "✳ "*) session=$tui_session ;;
+        codex | "codex "*) session=$tui_session ;;
+        *) refuse "No Neovim, shell prompt, idle Claude Code or Codex has focus in this terminal; not dictating." ;;
     esac
     # Written first, so an Enter pressed at once still stops the daemon.
     mkdir -p -m 700 "$state"
-    echo "$window" > "$shell_session"
+    echo "$window" > "$session"
     "$py" -m voicekey --control start >/dev/null ||
-        { rm -f "$shell_session"; refuse "Voicekey could not start dictation; is voicekey.service running?"; }
+        { rm -f "$session"; refuse "Voicekey could not start dictation; is voicekey.service running?"; }
     exit 0
 done
 

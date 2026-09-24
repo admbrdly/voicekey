@@ -1,0 +1,22 @@
+#!/bin/sh
+# Claude Code UserPromptSubmit hook: when voicekey-route started dictation in
+# a terminal program, stop it and wait for pending speech before the prompt is
+# processed, so nothing dictated can reach a later permission dialog. Late
+# text lands in the (now empty) input box as a draft.
+#
+# ~/.claude/settings.json:
+#   "hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command",
+#     "command": "/path/to/voicekey/contrib/claude-code/voicekey-submit-hook"}]}]}
+state="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/voicekey"
+session="$state/tui-session"
+[ -f "$session" ] || exit 0
+rm -f "$session"
+py="${VOICEKEY_PYTHON:-$HOME/.local/share/voicekey/venv/bin/python}"
+"$py" -m voicekey --control stop >/dev/null 2>&1 || exit 0
+waited=0
+while [ "$waited" -lt 50 ] &&
+    "$py" -m voicekey --control status 2>/dev/null | grep -q '"state": "\(listening\|finishing\)"'; do
+    sleep 0.1
+    waited=$((waited + 1))
+done
+exit 0
