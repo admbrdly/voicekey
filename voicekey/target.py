@@ -210,7 +210,35 @@ class ImeTarget(Target):
         return Landing(reason="the original field activation ended; check any provisional text before pasting")
 
 
-class EmacsTarget(Target):
+class PinnedEditorTarget(Target):
+    """Acknowledged editor binding, independent of compositor focus.
+
+    Implementations acquire a pin on construction, acknowledge it through
+    before(), and own preview cleanup, bounded insertion and pin release.
+    Session callers may retain the pin across independent operation IDs.
+    """
+    pin_timeout = 0.25
+    capabilities = Capabilities("buffer", acknowledgement=True)
+
+    @property
+    def pin_valid(self):
+        return self.pinning.valid
+
+    @property
+    def pin_reason(self):
+        return self.pinning.reason
+
+    def before(self, wait=0.0):
+        return self.pinning.before(wait)
+
+    def insert_pinned(self, text, deadline, operation, prefix, permit, cancelled):
+        raise NotImplementedError
+
+    def unpin(self):
+        raise NotImplementedError
+
+
+class EmacsTarget(PinnedEditorTarget):
     kind = "emacs"
     capabilities = Capabilities("buffer", acknowledgement=True)
 
@@ -248,6 +276,36 @@ class EmacsTarget(Target):
         except emacs.EmacsError as exc:
             return Landing(Outcome.UNKNOWN, str(exc))
         return Landing(Outcome.CONFIRMED)
+
+    def unpin(self):
+        try:
+            emacs.unpin(self.pinning.id)
+        except emacs.EmacsError:
+            pass
+
+    def insert_pinned(self, text, deadline, operation, prefix, permit, cancelled):
+        self.pinning.before(max(0, deadline - time.monotonic()))
+        if not self.pinning.valid:
+            landing = Landing(reason=self.pinning.reason or "Emacs did not acknowledge the session buffer")
+        else:
+            preview = self.preview
+            try:
+                cleared = (preview.ime.clear_preedit(preview.generation, preview.owner,
+                    timeout=max(0, deadline - time.monotonic())) if isinstance(preview, ImePreview) else True)
+            except ImeHung:
+                cleared = False
+            if not cleared or cancelled.is_set():
+                landing = Landing(reason="preview cleanup did not finish")
+            else:
+                try:
+                    emacs.insert(text, self.pinning.id, timeout=max(0, deadline - time.monotonic()),
+                                 operation_id=operation, prefix=prefix, permit=permit, keep_pin=True)
+                    landing = Landing(Outcome.CONFIRMED)
+                except emacs.EmacsRefused as exc:
+                    landing = Landing(reason=str(exc))
+                except emacs.EmacsError as exc:
+                    landing = Landing(Outcome.UNKNOWN, str(exc))
+        return landing
 
 
 class WtypeTarget(Target):

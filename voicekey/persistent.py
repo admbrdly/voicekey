@@ -12,13 +12,13 @@ import uuid
 
 import numpy as np
 
-from . import emacs, focus
+from . import focus
 from .capture import Session
 from .notify import notify
 from .recorder import AudioBuffer, CutRecording, RecordingError, SAMPLE_RATE
 from .segment import Boundary, Segmenter, WINDOW
 from .session_target import SessionTarget
-from .target import ClipboardTarget, EmacsTarget, NotifyPreview, Window, WtypeTarget
+from .target import ClipboardTarget, PinnedEditorTarget, NotifyPreview, Window, WtypeTarget
 from .spacing import owed
 
 log = logging.getLogger("voicekey.persistent")
@@ -129,21 +129,18 @@ class PersistentSession:
             current = serial == self._focus_serial
         if current and destination.id is not None:
             proposed = self._bind()
-            before = proposed.before(emacs.PIN_TIMEOUT)
+            before = proposed.before(getattr(proposed, "pin_timeout", 0.25))
             with self._focus_lock:
                 stable = serial == self._focus_serial
             if (stable and proposed.window_id == destination.id
-                    and (not isinstance(proposed, EmacsTarget) or proposed.pinning.valid)):
+                    and (not isinstance(proposed, PinnedEditorTarget) or proposed.pin_valid)):
                 candidate = proposed
                 candidate.window.verify = True
                 candidate.prefix = owed(before, self.pipeline.spacing.prefix(candidate.window_id))
             else:
                 proposed.cancel()
-                if isinstance(proposed, EmacsTarget):
-                    try:
-                        emacs.unpin(proposed.pinning.id)
-                    except emacs.EmacsError:
-                        pass
+                if isinstance(proposed, PinnedEditorTarget):
+                    proposed.unpin()
         target = self._new_target(candidate)
         with self._focus_lock:
             if serial != self._focus_serial:
@@ -356,7 +353,7 @@ class PersistentSession:
         try:
             self.target.target = self._bind()
             bound = True  # A refused destination still owns its captured audio for recovery.
-            if not isinstance(self.target.target, EmacsTarget):
+            if not isinstance(self.target.target, PinnedEditorTarget):
                 self.target.target.window.verify = True
             if issue := self.target.field_issue():
                 # Capture already started. Preserve opening speech for recovery,
@@ -364,12 +361,12 @@ class PersistentSession:
                 self.typing_fallback = isinstance(self.target.target, WtypeTarget) and not self.allow_typing
                 self.request_stop(issue, paused=True)
                 return
-            before = self.target.target.before(emacs.PIN_TIMEOUT)
-            if isinstance(self.target.target, EmacsTarget) and not self.target.target.pinning.valid:
+            before = self.target.target.before(getattr(self.target.target, "pin_timeout", 0.25))
+            if isinstance(self.target.target, PinnedEditorTarget) and not self.target.target.pin_valid:
                 # A late acknowledgement cannot authorize a session already refused.
                 self.target.failed.set()
-                self.request_stop(self.target.target.pinning.reason
-                                  or "Emacs did not acknowledge the session buffer", paused=True)
+                self.request_stop(self.target.target.pin_reason
+                                  or f"{self.target.target.application_name} did not acknowledge the session buffer", paused=True)
                 return
             self.target.target.prefix = owed(before,
                 self.pipeline.spacing.prefix(self.target.target.window_id))
@@ -377,7 +374,7 @@ class PersistentSession:
             self.focused = focus.Focus(self.target.target.window_id, self.target.target.app_id,
                                        getattr(getattr(self.target.target, "pinning", None), "pid", None))
             if (self.policy == "pause" and self.target.target.window_id is None
-                    and isinstance(self.target.target, EmacsTarget)):
+                    and isinstance(self.target.target, PinnedEditorTarget)):
                 self.tracking_notice = "Window tracking unavailable; dictating to the original buffer"
             if self.watch_factory is not None:
                 self.watcher = self.watch_factory(self.focus_changed,

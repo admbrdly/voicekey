@@ -8,7 +8,7 @@ from .delivery import UnsafeText
 from .ime import ImeHung
 from .ledger import Stage
 from .spacing import spaced
-from .target import (Target, EmacsTarget, ImeTarget, WtypeTarget, ImePreview,
+from .target import (Target, PinnedEditorTarget, ImeTarget, WtypeTarget, ImePreview,
                      NotifyPreview, Landing, Outcome)
 
 
@@ -61,7 +61,7 @@ class SessionTarget:
 
     def field_issue(self):
         """No synthetic-key fallback unless explicitly enabled for this session."""
-        if isinstance(self.target, EmacsTarget):
+        if isinstance(self.target, PinnedEditorTarget):
             return ""
         if isinstance(self.target, ImeTarget):
             return ("" if self.target.ime.activation() == self.target.preview.generation
@@ -106,31 +106,11 @@ class SessionTarget:
             if issue := self.field_issue():
                 self.failed.set()
                 return Landing(reason=issue)
-            if self.departed.is_set() and not isinstance(target, EmacsTarget):
+            if self.departed.is_set() and not isinstance(target, PinnedEditorTarget):
                 return Landing(reason="focus moved; pending text kept for recovery")
             tail = self._text(exclude=identity)
-            if isinstance(target, EmacsTarget):
-                target.pinning.before(max(0, deadline - time.monotonic()))
-                if not target.pinning.valid:
-                    landing = Landing(reason=target.pinning.reason or "Emacs did not acknowledge the session buffer")
-                else:
-                    preview = target.preview
-                    try:
-                        cleared = (preview.ime.clear_preedit(preview.generation, preview.owner,
-                            timeout=max(0, deadline - time.monotonic())) if isinstance(preview, ImePreview) else True)
-                    except ImeHung:
-                        cleared = False
-                    if not cleared or cancelled.is_set():
-                        landing = Landing(reason="preview cleanup did not finish")
-                    else:
-                        try:
-                            emacs.insert(text, target.pinning.id, timeout=max(0, deadline - time.monotonic()),
-                                         operation_id=operation, prefix=prefix, permit=permit, keep_pin=True)
-                            landing = Landing(Outcome.CONFIRMED)
-                        except emacs.EmacsRefused as exc:
-                            landing = Landing(reason=str(exc))
-                        except emacs.EmacsError as exc:
-                            landing = Landing(Outcome.UNKNOWN, str(exc))
+            if isinstance(target, PinnedEditorTarget):
+                landing = target.insert_pinned(text, deadline, operation, prefix, permit, cancelled)
             elif isinstance(target, ImeTarget):
                 if not target.window.focused(deadline):
                     landing = Landing(reason="the original window lost focus")
@@ -179,11 +159,8 @@ class SessionTarget:
         self.closed = True
         self.target.cancel()
         self._fallback.clear()
-        if isinstance(self.target, EmacsTarget):
-            try:
-                emacs.unpin(self.target.pinning.id)
-            except emacs.EmacsError:
-                pass
+        if isinstance(self.target, PinnedEditorTarget):
+            self.target.unpin()
 
 
 class UtteranceTarget(Target):
