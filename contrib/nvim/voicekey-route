@@ -6,8 +6,9 @@
 #     Neovim has focus      -> toggle :VoiceKey there (buffer text).
 #     bash at its prompt    -> start the daemon; bash stops it on Enter
 #                              before the command runs (contrib/bash).
-#     Claude Code, idle     -> start the daemon; a UserPromptSubmit hook stops
-#                              it on submit (contrib/claude-code).
+#     Claude Code           -> start the daemon unless a dialog is open; its
+#                              hooks stop it on submit and before dialogs
+#                              (contrib/claude-code).
 #     Codex, idle           -> start the daemon; press again before submitting.
 #     anything else         -> refuse: letters could be commands.
 #   Other applications      -> start the daemon (input-method delivery).
@@ -62,14 +63,21 @@ for terminal in $terminals; do
     # when idle and a spinner while working (permission dialogs come then).
     case "$title" in
         "$mark"*) session=$shell_session ;;
-        "✳ "*) session=$tui_session ;;
+        # Claude Code: "✳ " idle, a rotating half-circle while working. Its
+        # hooks (contrib/claude-code) stop dictation before any dialog and
+        # mark open dialogs; refuse while one is open in any session.
+        "✳ "* | "◐ "* | "◓ "* | "◑ "* | "◒ "*)
+            if [ -n "$(ls -A "$state/claude-dialog" 2>/dev/null)" ]; then
+                refuse "Claude Code is waiting for an answer; not dictating."
+            fi
+            session=$tui_session ;;
         # Codex with tui.terminal_title = ["app-name", "spinner", "project"]
         # shows "codex | <project>" only when idle; working it shows
         # "codex <spinner> <project>". Anything else (startup, a trust or
         # approval prompt) is refused.
         "codex | "*" | "*) refuse "Codex is not idle; not dictating." ;;
         "codex | "*) session=$tui_session ;;
-        *) refuse "No Neovim, shell prompt, idle Claude Code or Codex has focus in this terminal; not dictating." ;;
+        *) refuse "No Neovim, shell prompt, Claude Code or idle Codex has focus in this terminal; not dictating." ;;
     esac
     # Written first, so an Enter pressed at once still stops the daemon.
     mkdir -p -m 700 "$state"

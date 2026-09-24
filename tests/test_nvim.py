@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shutil
@@ -74,38 +75,71 @@ class BashTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
+@unittest.skipUnless(shutil.which('jq'), 'jq unavailable')
 class ClaudeHookTests(unittest.TestCase):
-    """contrib/claude-code/voicekey-submit-hook with a stand-in daemon."""
+    """contrib/claude-code/voicekey-claude-hook with a stand-in daemon."""
 
-    def run_hook(self, session):
-        tmp = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
-        (tmp / 'voicekey').mkdir(mode=0o700)
-        if session:
-            (tmp / 'voicekey' / 'tui-session').write_text('7\n')
-        calls = tmp / 'calls.log'
-        python = tmp / 'python'
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.state = self.tmp / 'voicekey'
+        self.state.mkdir(mode=0o700)
+        self.calls = self.tmp / 'calls.log'
+        python = self.tmp / 'python'
+        # Status reports "finishing" once after stop, then "idle".
         python.write_text('#!/bin/sh\necho "$*" >> "$CALLS"\n'
                           'case "$*" in *status) if [ -e "$CALLS.seen" ]; then echo \'{"state": "idle"}\';'
                           ' else touch "$CALLS.seen"; echo \'{"state": "finishing"}\'; fi ;; esac\n')
         python.chmod(0o755)
+        self.python = python
+
+    def hook(self, event, tool=None, dictating=False):
+        if dictating:
+            (self.state / 'tui-session').write_text('7\n')
+        self.calls.unlink(missing_ok=True)
+        Path(f'{self.calls}.seen').unlink(missing_ok=True)
+        payload = {'hook_event_name': event, 'session_id': 'abc-123'}
+        if tool:
+            payload['tool_name'] = tool
         root = Path(__file__).resolve().parents[1]
-        run = subprocess.run([str(root / 'contrib/claude-code/voicekey-submit-hook')], input='{}',
+        run = subprocess.run([str(root / 'contrib/claude-code/voicekey-claude-hook')], input=json.dumps(payload),
                              capture_output=True, text=True, timeout=20,
-                             env={**os.environ, 'XDG_RUNTIME_DIR': str(tmp), 'VOICEKEY_PYTHON': str(python),
-                                  'CALLS': str(calls)})
-        log = calls.read_text().splitlines() if calls.exists() else []
-        return run.returncode, log, (tmp / 'voicekey' / 'tui-session').exists()
+                             env={**os.environ, 'XDG_RUNTIME_DIR': str(self.tmp),
+                                  'VOICEKEY_PYTHON': str(self.python), 'CALLS': str(self.calls)})
+        self.assertEqual((run.returncode, run.stdout), (0, ''), 'never influences Claude Code')
+        return self.calls.read_text().splitlines() if self.calls.exists() else []
+
+    def dialog_open(self):
+        return (self.state / 'claude-dialog' / 'abc-123').exists()
 
     def test_submit_stops_terminal_dictation_and_waits(self):
-        code, calls, left = self.run_hook(session=True)
-        self.assertEqual(code, 0)
+        calls = self.hook('UserPromptSubmit', dictating=True)
         self.assertEqual(calls, ['-m voicekey --control stop'] + ['-m voicekey --control status'] * 2)
-        self.assertFalse(left)
+        self.assertFalse((self.state / 'tui-session').exists())
 
-    def test_submit_without_terminal_dictation_does_nothing(self):
-        code, calls, _ = self.run_hook(session=False)
-        self.assertEqual((code, calls), (0, []))
+    def test_hooks_without_terminal_dictation_leave_the_daemon_alone(self):
+        for event, tool in (('UserPromptSubmit', None), ('PermissionRequest', 'Bash'), ('PreToolUse', 'Bash')):
+            with self.subTest(event=event):
+                self.assertEqual(self.hook(event, tool), [])
+
+    def test_dialogs_stop_dictation_and_stay_marked_until_resolved(self):
+        for event, tool in (('PermissionRequest', 'Bash'), ('PreToolUse', 'AskUserQuestion'),
+                            ('PreToolUse', 'ExitPlanMode')):
+            with self.subTest(event=event, tool=tool):
+                calls = self.hook(event, tool, dictating=True)
+                self.assertEqual(calls[0], '-m voicekey --control stop')
+                self.assertTrue(self.dialog_open())
+                self.hook('PostToolUse', tool)
+                self.assertFalse(self.dialog_open())
+
+    def test_dialog_marks_clear_on_every_resolution(self):
+        for event, tool in (('PreToolUse', 'Read'), ('PostToolUseFailure', 'Bash'), ('PermissionDenied', 'Bash'),
+                            ('Stop', None), ('SessionEnd', None), ('UserPromptSubmit', None)):
+            with self.subTest(event=event):
+                self.hook('PermissionRequest', 'Bash')
+                self.assertTrue(self.dialog_open())
+                self.hook(event, tool)
+                self.assertFalse(self.dialog_open())
 
 
 @unittest.skipUnless(nvim_supported() and shutil.which('jq'), 'Neovim 0.10+ or jq unavailable')
@@ -208,7 +242,7 @@ class RouteTests(unittest.TestCase):
         self.assertFalse((self.runtime / 'voicekey' / 'shell-session').exists())
 
     def test_idle_claude_code_and_codex_start_the_daemon(self):
-        for title in ('✳ Mail agent', 'codex | voicekey-nvim'):
+        for title in ('✳ Mail agent', '◐ Mail agent', '◒ Voicekey review', 'codex | voicekey-nvim'):
             with self.subTest(title=title):
                 code, calls = self.route('com.mitchellh.ghostty', title=title)
                 self.assertEqual(code, 0)
@@ -217,11 +251,22 @@ class RouteTests(unittest.TestCase):
                 self.assertFalse((self.runtime / 'voicekey' / 'shell-session').exists())
 
     def test_working_claude_code_refuses(self):
-        for title in ('◐ Voicekey security review', '✶ Mail agent', 'codexfoo', 'codex ⠋ voicekey-nvim', 'codex', 'codex --model o5', 'codex | a | b', 'adam'):
+        for title in ('✶ Mail agent', 'codexfoo', 'codex ⠋ voicekey-nvim', 'codex', 'codex --model o5', 'codex | a | b', 'adam'):
             with self.subTest(title=title):
                 code, calls = self.route('com.mitchellh.ghostty', title=title)
                 self.assertEqual(code, 1)
                 self.assertNotIn('daemon -m voicekey --control start', calls)
+
+    def test_claude_code_with_an_open_dialog_refuses(self):
+        dialogs = self.runtime / 'voicekey' / 'claude-dialog'
+        dialogs.mkdir()
+        (dialogs / 'other-session').touch()
+        code, calls = self.route('com.mitchellh.ghostty', title='◑ Mail agent')
+        self.assertEqual(code, 1)
+        self.assertNotIn('daemon -m voicekey --control start', calls)
+        (dialogs / 'other-session').unlink()
+        code, calls = self.route('com.mitchellh.ghostty', title='◑ Mail agent')
+        self.assertEqual(code, 0)
 
     def test_terminal_program_without_prompt_mark_refuses(self):
         code, calls = self.route('com.mitchellh.ghostty', title='htop')
