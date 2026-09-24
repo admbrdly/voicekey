@@ -20,6 +20,14 @@ refuse() {
     exit 1
 }
 
+# The daemon replies with a reason when it refuses (for example while the last
+# dictation is still finishing); no reply means it is not running.
+start_daemon() {
+    reply=$("$py" -m voicekey --control start 2>&1) && return 0
+    reason=$(printf '%s\n' "$reply" | jq -r '.error // empty' 2>/dev/null)
+    refuse "Voicekey could not start dictation: ${reason:-is voicekey.service running?}"
+}
+
 if "$py" -m voicekey --control status 2>/dev/null | grep -q '"listening": true'; then
     exec "$py" -m voicekey --control stop
 fi
@@ -37,5 +45,4 @@ for terminal in $terminals; do
     exit 0
 done
 
-"$py" -m voicekey --control start >/dev/null 2>&1 ||
-    refuse "Voicekey could not start dictation; is voicekey.service running?"
+start_daemon
