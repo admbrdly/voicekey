@@ -59,6 +59,12 @@ The daemon's input-method delivery cannot see Neovim's mode, so dictating into
 a terminal with it would send words that normal mode runs as commands.
 `voicekey-route` lets one Niri keybinding choose the safe path:
 
+> **Warning:** focus tracking relies on the terminal reporting focus changes
+> for windows, tabs and splits. Where it does not (tmux without
+> `focus-events on`, some tab setups), a Neovim that lost focus can stay
+> recorded, and the keybinding would dictate into it while you look at
+> something else. Check this before relying on it.
+
 - If the daemon is listening, it stops it, wherever focus is.
 - If a terminal is focused, it toggles `:VoiceKey` in the Neovim that has
   focus there, and refuses (with a notification) when none does, for example
@@ -76,11 +82,12 @@ It needs `jq`, and `plugin/voicekey.lua` loaded at startup (with lazy.nvim,
 `vim.g.voicekey_track_focus = false` to turn that off. Terminal app IDs default
 to Ghostty, foot, kitty, Alacritty and WezTerm; override them with
 `VOICEKEY_TERMINALS`. The daemon is driven through `--control start` and
-`--control stop`, not its own hotkeys.
+`--control stop`; if it is not running, the script says so in a notification.
 
-Check that your terminal reports focus for tabs and splits as well as windows.
-If it does not, a Neovim in a background tab stays recorded and would receive
-the dictation.
+The daemon's own hotkey (`dictate_key`, Right Super by default) bypasses this
+script and still sends input-method text into whatever is focused, terminals
+included. Reserve that key for `voicekey-route`, or do not use it while a
+terminal running Neovim has focus.
 
 ## Options
 

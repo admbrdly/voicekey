@@ -37,4 +37,5 @@ for terminal in $terminals; do
     exit 0
 done
 
-exec "$py" -m voicekey --control start
+"$py" -m voicekey --control start >/dev/null 2>&1 ||
+    refuse "Voicekey could not start dictation; is voicekey.service running?"

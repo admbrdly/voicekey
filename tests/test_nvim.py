@@ -42,6 +42,7 @@ class RouteTests(unittest.TestCase):
         self.stub('notify-send', 'echo "notify $*" >> "$CALLS"')
         self.stub('python', 'echo "daemon $*" >> "$CALLS"\n'
                   '[ "$*" = "-m voicekey --control status" ] && printf \'{"listening": %s}\\n\' "$LISTENING"\n'
+                  '[ -n "$DAEMON_DOWN" ] && exit 1\n'
                   'exit 0')
 
     def stub(self, name, body):
@@ -49,8 +50,8 @@ class RouteTests(unittest.TestCase):
         path.write_text('#!/bin/sh\n' + body + '\n')
         path.chmod(0o755)
 
-    def route(self, app, listening=False):
-        env = {**os.environ, 'PATH': f'{self.bin}:{os.environ["PATH"]}', 'XDG_RUNTIME_DIR': str(self.runtime),
+    def route(self, app, listening=False, down=False):
+        env = {'DAEMON_DOWN': '1' if down else '', **os.environ, 'PATH': f'{self.bin}:{os.environ["PATH"]}', 'XDG_RUNTIME_DIR': str(self.runtime),
                'VOICEKEY_PYTHON': str(self.bin / 'python'), 'FOCUSED_APP': app, 'CALLS': str(self.log),
                'LISTENING': 'true' if listening else 'false'}
         root = Path(__file__).resolve().parents[1]
@@ -105,6 +106,11 @@ class RouteTests(unittest.TestCase):
         code, calls = self.route('com.mitchellh.ghostty', listening=True)
         self.assertEqual(code, 0)
         self.assertEqual(calls[-1], 'daemon -m voicekey --control stop')
+
+    def test_daemon_not_running_is_reported(self):
+        code, calls = self.route('org.mozilla.firefox', down=True)
+        self.assertEqual(code, 1)
+        self.assertTrue(any(call.startswith('notify ') and 'voicekey.service' in call for call in calls), calls)
 
     def test_unknown_focus_refuses(self):
         code, calls = self.route('')
