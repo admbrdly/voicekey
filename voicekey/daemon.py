@@ -93,6 +93,7 @@ class Daemon:
         self._stopping = False
         self._closed = False
         self.control = None
+        self.listener = None
         self.model_state = "ready"
         self._models_ready = threading.Event()
         self._models_ready.set()
@@ -271,13 +272,17 @@ class Daemon:
         self.control.start()
         self.load()
         self.start_workers()
-        listener = KeyboardListener(
+        self.listener = listener = KeyboardListener(
             keycodes=set().union(*self.actions), on_key=self._on_key,
             on_device_lost=self._on_device_lost, on_tick=self._on_tick,
             on_no_access=lambda message: notify("voicekey: no keyboard access", message, error=True),
-            on_activity=self._on_activity,
+            on_activity=self._on_activity, wake_fd=self.control.wake_fd,
+            enabled=self.cfg.evdev,
         )
-        log.info("listening: %s", ", ".join(self.bindings()))
+        if self.cfg.evdev:
+            log.info("listening: %s", ", ".join(self.bindings()))
+        else:
+            log.info("evdev off: no input devices opened; start and stop through the control socket")
         try:
             listener.run()
         finally:
@@ -530,6 +535,10 @@ class Daemon:
         elif command in ("start", "start-typing"):
             if self.persistent is not None or self.session is not None or self.pipeline.ledger.busy:
                 raise ValueError("Finish the current dictation before starting another")
+            if self.listener is not None and not self.listener.devices:
+                # Typing is invisible without key devices; do not assume the
+                # previous dictation still ends at the cursor.
+                self.pipeline.spacing.user_typed()
             self._start_persistent("panel", frozenset(), allow_typing=command == "start-typing")
             if self.persistent is None:
                 raise ValueError("Could not start dictation; check Voicekey notifications")

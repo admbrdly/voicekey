@@ -553,6 +553,27 @@ socket at `$XDG_RUNTIME_DIR/voicekey/control.sock`. The DMS widget uses this
 socket directly, so there are no polling subprocesses. Model selection and
 per-app settings remain in the configuration file for this first version.
 
+These commands also work without `input` group membership, so a compositor
+keybinding can own activation instead of evdev. For example, a toggle script:
+
+```sh
+#!/bin/sh
+py="$HOME/.local/share/voicekey/venv/bin/python"
+if "$py" -m voicekey --control status | grep -q '"listening": true'; then
+    exec "$py" -m voicekey --control stop
+fi
+exec "$py" -m voicekey --control start
+```
+
+bound in Niri with `Mod+Shift+D { spawn "/path/to/voicekey-toggle"; }`.
+
+Set `evdev = false` to open no input devices at all: no `input` group, no
+"no keyboard access" notification, and inert hotkeys, hold-to-talk and agent
+key. Without readable key devices (`evdev = true` but no permission) the daemon
+reports "no keyboard access" once and rescans every 10 s. Either way, control
+commands are handled as they arrive. Fallback spacing cannot see typing,
+so each start forgets whether the previous dictation ended at the cursor.
+
 ### Free memory and disable
 
 The widget's **Free memory** action stops capture, finishes or preserves pending

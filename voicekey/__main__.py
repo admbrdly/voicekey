@@ -140,7 +140,11 @@ def check(cfg) -> int:
         return 1
     keycodes = {ecodes.ecodes[name] for name in chord_key_names}
 
-    print(f"keys: dictate={cfg.dictate_key} agent={cfg.agent_key} inject={cfg.dictation.inject}")
+    if cfg.evdev:
+        print(f"keys: dictate={cfg.dictate_key} agent={cfg.agent_key} inject={cfg.dictation.inject}")
+    else:
+        print(f"keys: evdev off; start and stop with --control (agent key unavailable) "
+              f"inject={cfg.dictation.inject}")
     if cfg.dictate_toggle_key or cfg.agent_toggle_key:
         print(f"toggle keys: dictate={cfg.dictate_toggle_key or '(none)'} "
               f"agent={cfg.agent_toggle_key or '(none)'}")
@@ -169,7 +173,7 @@ def check(cfg) -> int:
               "verified, so dictations will be copied, not typed — set "
               "dictation.require_same_window = false", file=sys.stderr)
     agent_required = set()
-    if cfg.agent.target == "hermes":
+    if cfg.evdev and cfg.agent.target == "hermes":
         agent_required.add("systemd-run")
         if cfg.agent.transport == "ssh-over-tailscale":
             agent_required.update({"ssh", "tailscale"})
@@ -191,7 +195,7 @@ def check(cfg) -> int:
         print("WARNING: agent target unavailable; missing command(s): "
               f"{', '.join(agent_missing)}", file=sys.stderr)
     agent_error = None
-    if not agent_missing:
+    if cfg.evdev and not agent_missing:
         from .agent import check_target
         agent_error = check_target(cfg.agent)
         if agent_error:
@@ -200,7 +204,7 @@ def check(cfg) -> int:
             print("agent remote target: OK")
 
     key_devices, denied = [], 0
-    for path in sorted(all_event_devices()):
+    for path in sorted(all_event_devices()) if cfg.evdev else ():
         try:
             dev = InputDevice(path)
         except PermissionError:
@@ -220,7 +224,7 @@ def check(cfg) -> int:
     if denied:
         print(f"WARNING: {denied} input device(s) not readable — "
               "add user to 'input' group and re-login", file=sys.stderr)
-    if not key_devices:
+    if cfg.evdev and not key_devices:
         print("WARNING: no readable devices provide the configured keys", file=sys.stderr)
 
     print(f"backend: {cfg.backend.type} ... loading")
@@ -266,7 +270,7 @@ def check(cfg) -> int:
             print(f"WARNING: polish unavailable: {exc}", file=sys.stderr)
     if missing:
         return 1
-    if not key_devices:
+    if cfg.evdev and not key_devices:
         return 2
     return 3 if agent_missing or agent_error else 0
 

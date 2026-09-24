@@ -26,6 +26,8 @@ class ControlServer:
         self.responses = queue.SimpleQueue()
         self.status = {'state': 'loading', 'listening': False}
         self.closed = threading.Event()
+        # Readable after a command is queued; the controller loop selects on it.
+        self.wake_fd, self._wake_w = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
         self.thread = None
         self.listener = None
 
@@ -53,6 +55,12 @@ class ControlServer:
             raise
         self.thread = threading.Thread(target=self._run, name='voicekey-control', daemon=True)
         self.thread.start()
+
+    def _wake(self):
+        try:
+            os.write(self._wake_w, b'.')
+        except (BlockingIOError, OSError):
+            pass  # already readable, or closed
 
     def publish(self, status):
         self.status = dict(status)
@@ -119,6 +127,7 @@ class ControlServer:
                                     send(client, {'type': 'reply', 'id': message.get('id'), 'error': None, **self.status})
                                 else:
                                     self.commands.put_nowait((client, message, time.monotonic() + 2))
+                                    self._wake()
                         except (OSError, ValueError, queue.Full):
                             drop(client)
                     while not self.responses.empty():
@@ -142,6 +151,12 @@ class ControlServer:
             self.listener.close()
             self.path.unlink(missing_ok=True)
             self.listener = None
+        for fd in (self.wake_fd, self._wake_w):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        self.wake_fd = self._wake_w = -1
 
 
 def request(command, path=None):
