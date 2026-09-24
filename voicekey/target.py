@@ -368,15 +368,19 @@ class RefusedTarget(Target):
 
 
 def terminal_target(destination, window):
-    """Terminal destinations resolve here; future adapters precede plain typing."""
+    """Editor focus wins over title evidence; return a target or a guarded window."""
     from . import nvim
     from .nvim_target import NeovimTarget
-    registration, reason = nvim.resolve(destination)
-    if reason:
-        return RefusedTarget(window, destination.app_id, reason)
-    if registration is not None:
-        return NeovimTarget(window, destination.app_id, registration)
-    return None
+    from .shell_prompt import PromptWindow, candidates
+    resolution = nvim.resolve(destination)
+    if resolution.registration is not None:
+        return NeovimTarget(window, destination.app_id, resolution.registration), window
+    if resolution.may_use_prompt:
+        if shells := candidates(destination):
+            return None, PromptWindow(destination, shells)
+    if resolution.reason:
+        return RefusedTarget(window, destination.app_id, resolution.reason), window
+    return None, window
 
 
 def bind(ime: InputMethod | None, cfg: DictationConfig, landing: bool, *,
@@ -397,10 +401,7 @@ def bind(ime: InputMethod | None, cfg: DictationConfig, landing: bool, *,
         focused = focus.focused(timeout=0.2)
     from .shell_prompt import PromptWindow, candidates
     window = Window(focused.id, cfg.require_same_window, focused.pid)
-    prompt_shells = candidates(focused)
-    if prompt_shells:
-        window = PromptWindow(focused, prompt_shells)
-    terminal_editor = None if prompt_shells else terminal_target(focused, window)
+    terminal_editor, window = terminal_target(focused, window)
     if terminal_editor is not None:
         if focus.focused(timeout=0.2) != focused:
             terminal_editor.cancel()
@@ -419,10 +420,10 @@ def bind(ime: InputMethod | None, cfg: DictationConfig, landing: bool, *,
             pass
     confirmed = focus.focused(timeout=0.2)
     stable = focused == confirmed and (focused.id is not None or not cfg.require_same_window)
-    if prompt_shells:
+    if isinstance(window, PromptWindow):
         matching = candidates(confirmed)
         if (not stable or focused.title != confirmed.title
-                or not any(matching.get(pid) == started for pid, started in prompt_shells.items())):
+                or not any(matching.get(pid) == started for pid, started in window.shells.items())):
             return RefusedTarget(window, focused.app_id, "Shell prompt changed during binding; terminal typing refused")
     in_field = stable and generation is not None and ime.activation() == generation
     if editor is not None:

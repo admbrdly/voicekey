@@ -6,6 +6,7 @@ client or shell is started. The Lua endpoint checks expiry and operation permits
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -92,14 +93,22 @@ def terminal(app_id):
     return app_id in set(os.environ.get('VOICEKEY_TERMINALS', '').split()) | TERMINALS
 
 
+@dataclass(frozen=True)
+class Resolution:
+    registration: dict | None = None
+    reason: str = ''
+    # Only a completed probe with no focused claim permits weaker title evidence.
+    may_use_prompt: bool = False
+
+
 def resolve(destination):
-    """Return (registration, refusal). None/empty means ordinary terminal delivery.
+    """Resolve editor claims before considering weaker shell-title evidence.
 
     Multiple focused claims are ambiguous, never last-writer-wins. A single
     stale true focus flag remains a known limitation of terminal focus evidence.
     """
     if not terminal(destination.app_id):
-        return None, ''
+        return Resolution()
     tree = process_tree()
     processes = {pid for pid, (_, name) in tree.items() if name == 'nvim'
                  and (destination.pid is None or descendant(pid, destination.pid, tree))}
@@ -116,16 +125,24 @@ def resolve(destination):
             if time.monotonic() >= deadline:
                 incomplete = True
                 break
-            answer = call(server, 'status', timeout=min(PROBE_TIMEOUT, deadline - time.monotonic()))
+            try:
+                answer = call(server, 'status', timeout=min(PROBE_TIMEOUT, deadline - time.monotonic()))
+            except NvimError:
+                incomplete = True
+                continue
+            if answer.get('pid') != pid or answer.get('server') != server or type(answer.get('focused')) is not bool:
+                incomplete = True
+                continue
             if answer.get('pid') == pid and answer.get('focused') is True and answer.get('server') == server:
                 candidates.append(record)
         except (OSError, ValueError, KeyError, TypeError, NvimError):
             continue
     if len(candidates) == 1 and not incomplete:
-        return candidates[0], ''
-    if candidates or processes:
-        return None, 'Neovim focus is unverified or ambiguous; terminal typing refused'
-    return None, ''
+        return Resolution(registration=candidates[0])
+    if candidates or incomplete:
+        return Resolution(reason='Neovim focus is ambiguous or could not be checked; terminal typing refused')
+    reason = 'Neovim focus is unverified; terminal typing refused' if processes else ''
+    return Resolution(reason=reason, may_use_prompt=True)
 
 
 def event_matches(destination, pid):

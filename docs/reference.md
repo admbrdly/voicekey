@@ -93,10 +93,12 @@ terminal, a Neovim descendant with no validated focused registration causes
 refusal. Without such a descendant, ordinary terminal delivery stays unchanged.
 This conservatively refuses a shell beside Neovim in any other Ghostty window
 or tab sharing the process. Ghostty's existing Bash directory title now provides
-a best-effort exception: it must match a foreground local Bash's working directory
-under the terminal process. Window, title, PID/start time and foreground state are
-rechecked before delivery. This accepts stale-title risk: a Neovim surface with
-a stale matching directory title can be mistaken for a shell in another window.
+a best-effort exception after completed Neovim probes find no focused claim:
+it must match a foreground local Bash's working directory under the terminal
+process. A validated focused Neovim wins over the title; ambiguous or incomplete
+probes refuse. Window, title, PID/start time and foreground state are
+rechecked before delivery. A stale directory title combined with missing Neovim
+focus evidence can still be mistaken for a shell in another window.
 No shell hook or configuration change is required. A quick command and return
 to the same title between observations cannot be detected reliably.
 Conversely, a lost focus event can leave a stale true claim; ancestry cannot

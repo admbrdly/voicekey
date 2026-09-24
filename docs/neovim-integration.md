@@ -1,243 +1,170 @@
-# Neovim destination integration — 2026-09-24
+# Neovim destination integration
 
-Implemented on `feature/pinned-neovim`, based on master `53231c8`.
-The first commit (`e9c9760`) extracts `PinnedEditorTarget`; it changes neither
-Emacs protocol v4 nor its delivery behavior. Its 425-test suite passes unchanged.
-The second commit adds Neovim resolution, buffer transactions, focus reports,
-tests and documentation. No live editor was contacted, service restarted,
-user configuration edited, model loaded or microphone used during this work.
+Voicekey's daemon owns capture, recognition, polish and recovery. Its normal
+keys route terminal Neovim to buffer API insertion through `target.bind()`.
+Neither `voicekey-route` nor `--capture-to-stdout` is used by that resolver.
 
-## Activation and delivery
+## Destination selection
 
-There is one resolver: `target.bind()`. Emacs remains its existing adapter.
-Known terminal app IDs consult Neovim registrations; all other destinations keep
-their existing IME/wtype/clipboard policy. No router script or capture client is
-spawned by the resolver. A bound Neovim failure has no typing fallback.
-After the first audit, a definite single-shot refusal can copy the saved text;
-cancellation and uncertain insertion do not copy, and persistent recovery stays
-grouped. Known single-shot binding refusals now notify as soon as binding finishes.
+Emacs uses its existing acknowledged buffer adapter. Known terminals use this
+order, before the ordinary IME/wtype/clipboard path:
 
-**Single-shot path:** keyboard controller → daemon recording → resolver →
-acknowledged Neovim extmark → finalization/transcription/polish → journalled
-attempt/permit → bounded RPC → Lua expiry/permit/buffer checks →
-`nvim_buf_set_text` → acknowledged outcome → pin cleanup. Final insertion does
-not depend on current compositor focus. The existing single-shot controller,
-replay and client-capture APIs remain available. `:VoiceKey` still uses the
-client-capture path; it shares the same Lua position/spacing/insertion helpers.
+1. Probe registered Neovim instances. A uniquely validated focused instance wins,
+   even if the window title also looks like a shell prompt.
+2. Refuse ambiguous focused claims or an incomplete/unresponsive probe. A title
+   cannot override that uncertainty. Failure to pin a selected Neovim also refuses;
+   it never falls through to terminal delivery.
+3. Only when the probes complete without a focused claim, consider Ghostty's
+   existing Bash prompt title. It must be an absolute or home-relative directory
+   matching a local foreground Bash under Ghostty's PID.
+4. Without a matching prompt, a Neovim descendant of the terminal causes refusal.
+   If there is no such descendant, retain ordinary terminal delivery.
 
-**Normal dictation keys on this master actually start persistent capture** with
-tap/hold behavior: a tap leaves capture running; holding then releasing stops
-it. Neither mapping nor gesture handling was changed. Right Win and F23 tests
-exercise this path. The persistent controller starts the microphone before
-binding, segments PCM using the existing VAD, and queues utterances into the same
-ordered pipeline. One acknowledged editor pin survives repeated commits.
-The session renderer sends live/raw/final pending tiers as virtual text at that
-pin; insertion clears its old preview and advances the extmark, then renders the
-remaining tail. No terminal IME preview or commit is used for Neovim.
+Registrations are private per-instance JSON files under
+`$XDG_RUNTIME_DIR/voicekey/nvim/`. Validation checks a responding socket, matching
+Neovim PID/server address, ancestry under the terminal PID when available, and a
+true plugin focus flag. Multiple instances cannot overwrite each other's records.
+The compositor is checked again after editor binding.
 
-Pause stops capture at a reported window/editor focus change, but earlier speech
-may finish at its original editor pin. Follow cuts at the observed audio boundary
-and rebinds through `target.bind()`; old pins are released after their pending
-speech drains. Pin policy continues into the original buffer in the background.
-Health checks stop capture on editor/socket/buffer loss; outstanding speech stays
-in recovery. Unknown insertion is never retried automatically.
+Ghostty's Bash exception checks the shell's cwd, process start time, controlling
+tty and foreground process group. Suspended shells and descendants sharing the
+shell's foreground group are excluded. Delivery rechecks the exact window/title
+and original matching shell identities. Persistent capture also polls that
+evidence; a detected title or foreground-job change pauses with recovery.
+Ordinary title changes are not compositor window identity changes, so changing
+an Emacs buffer's title does not pause dictation.
 
-Neovim deliberately uses a fixed, advancing extmark in both hold and persistent
-paths. Editing elsewhere moves it with the buffer; moving point does not retarget
-it. This differs from Emacs, which retains its original follow-point behavior.
-Selections/operator-pending states are refused when acquiring a Neovim pin.
+## Capture, preview and insertion
 
-## Transport and focus
+The single-shot path is:
 
-`nvim --server SOCKET --remote-expr` transports JSON to the Lua endpoint. It adds
-a process per request but needs no Python dependency or custom MessagePack
-implementation. A 50-call isolated local measurement gave **2.31 ms median,
-7.03 ms maximum**, including startup. Persistent insertion, preview and health
-checks are bounded; probes and preview calls use 100 ms, acquisition uses 250 ms,
-and insertion/preview-tail calls use the remaining delivery budget. Lua also
-checks wall-clock expiry and the journal's revocable permission file before
-mutation, and remembers operation results through their execution deadline.
-This measurement does not establish latency under load or on the laptop.
+    key → daemon recording → resolver → acknowledged buffer pin
+        → finalization/transcription/polish → journalled attempt and permit
+        → bounded RPC → Lua validation → buffer API insertion → acknowledgement
 
-Registration uses one private JSON file per process in
-`$XDG_RUNTIME_DIR/voicekey/nvim/`; a last-writer-wins file cannot represent
-multiple instances safely. Validation requires a responsive socket, matching
-Neovim PID/server address, ancestry under the terminal PID when reported, and a
-true focus flag. Multiple valid focus claims are refused. The compositor is
-checked again after binding. A focus change during binding refuses the target.
+Normal dictation keys use persistent tap/hold: a tap leaves capture running;
+holding then releasing stops it. The microphone starts before binding. VAD cuts
+feed the same ordered processing pipeline, with repeated commits through one
+acknowledged editor pin. Right Win, Copilot/F23, toggle and agent-key handling
+use the existing controller.
 
-The focus flag starts false, becomes true on `FocusGained`/`VimResume`, and clears
-on `FocusLost`, suspension or entry into a Neovim terminal buffer. Startup only
-registers the instance; it does not assert focus. If the terminal sends no initial
-focus event, switch away and back once. Reports use async local sockets, include
-a sequence number, and are checked against socket peer credentials. The control
-server forwards them immediately to the persistent focus handler; it does not
-wait for an evdev tick. Out-of-order/repeated reports are ignored. The persistent
-controller contains no Neovim target type checks or direct editor insertion calls.
+`PinnedEditorTarget` supplies acknowledgement, validity, description, repeated
+insertion and release. Emacs keeps protocol v4 and its follow-point behavior.
+Neovim uses an advancing extmark: edits elsewhere move it with the buffer, but
+moving the cursor or selecting another buffer does not retarget dictation.
+Normal-mode pins start after the cursor character; insert-mode pins start at it.
+Selections and pending operators are refused when acquiring a pin.
 
-## Remaining limitations
+Live and provisional Neovim text appears as inline virtual text at the pin,
+not Wayland preedit. A commit clears that preview and advances the mark; the
+session renderer then shows any pending tail. Closed, unloaded or unmodifiable
+buffers refuse insertion. No failure of a bound Neovim becomes terminal typing.
 
-- **A lost terminal focus event can still select the wrong Neovim buffer.**
-  Ghostty's shared PID cannot distinguish windows, tabs or panes. One stale true
-  focus flag can satisfy all checks. Two true flags cause refusal instead.
-- **The process-tree policy is intentionally incomplete.** With no validated
-  registration but a Neovim descendant of the focused terminal, typing is refused.
-  An unmarked shell anywhere in that Ghostty process is consequently refused.
-  After the first audit, Ghostty's existing Bash directory title provides a
-  best-effort exception when it matches a local foreground shell's cwd. This
-  explicitly accepts stale-title risk across windows sharing one process.
-- **Detached tmux, SSH, containers, renamed processes and hidden `/proc` data can
-  defeat ancestry.** A detached tmux server may not descend from the terminal's
-  client process. If no Neovim descendant is visible, the chosen middle policy
-  preserves ordinary IME delivery, even though a Neovim might actually be visible.
-  Thus `focus-events on` is necessary for tmux focus reporting but is not enough
-  to prove ancestry. This is not a guarantee of safe dictation in every tmux setup;
-  terminal-client ↔ tmux-server/pane association needs additional evidence.
-- Without a compositor PID, all local Neovims are considered; this can refuse
-  unrelated shells or accept the only stale focus claim. Unknown terminal app
-  IDs must be added through `VOICEKEY_TERMINALS` or they retain generic delivery.
-- Focus and pin acquisition are asynchronous, not atomic key-down snapshots.
-  A switch away and back before observation can be missed. Exit reports may not
-  flush before process exit; periodic pin health checks catch the vanished socket.
-- Buffer switches within Neovim do not rebind the session. Buffer closure,
-  unloading or loss of modifiability refuses insertion. A successful API response
-  confirms insertion, not that the user has saved the buffer to disk.
-- Abandoned Lua pins are aged out after a day on the next request; normal stop,
-  completion, cancellation and follow cleanup explicitly unpin. A daemon crash
-  may leave a cosmetic preview until cleanup/restart. No automatic replay occurs.
+Known single-shot binding refusals notify as soon as resolution finishes while
+capture continues for recovery. Definite refused transcripts are saved and copied
+if possible. Clipboard failure still leaves journal/audio recovery. Cancellation
+and uncertain insertion never trigger this fallback. Persistent recovery stays
+grouped rather than repeatedly replacing the clipboard.
 
-## Adam's branch and compatibility
+## Transport and deadlines
 
-Reviewed `adam/adam-local`, including its router, evdev/control changes,
-`contrib/bash`, `contrib/claude-code` and tests. Its useful idea here is refusing
-unsafe terminal routing. Its routing/activation integrations were not imported. The first-audit patch
-uses existing Ghostty titles plus foreground-shell checks, without shell hooks
-or control start/stop changes.
+The daemon sends JSON to the Lua endpoint through
+`nvim --server SOCKET --remote-expr`. This adds process startup per request but
+requires no Python runtime dependency or custom MessagePack implementation.
+Probes and previews have 100 ms bounds, pin acquisition has a 250 ms bound, and
+insertion/tail-preview calls use the remaining delivery budget. Late
+acknowledgements cannot authorize insertion. Discovery and pinning can block the
+single-shot key handler for bounded compositor/RPC waits; microphone capture
+continues during those waits.
 
-`evdev = false` is a reasonable separate opt-in for compositor-only installations,
-but deliberately disables the daemon key listener, hold/tap and agent keys.
-It does not solve this activation requirement. The wake pipe is a separate useful
-responsiveness improvement for ordinary control requests (the current keyboard
-loop can sleep before draining them). Neither change was merged. Editor focus
-reports use a dedicated immediate callback on the existing control server.
+Lua checks wall-clock expiry and the journal's revocable permission file before
+mutation. Operation results are retained through their execution deadline, and
+the daemon prevents reuse of a delivery attempt. Sending an old ID with a new
+later deadline after the Lua cache expires is not a supported retry protocol.
+Timeout or error after submission is uncertain and is never retried automatically.
+A successful API response confirms insertion, not that the buffer was saved.
 
-`voicekey-route` is retained for existing explicit bindings and its tests still
-pass. It remains a single-shot compatibility path with weaker last-writer/socket
-checks; the daemon never runs it. New users need neither that binding nor F12.
+## Persistent focus policies
 
-## Upgrade and manual validation
+The plugin starts with focus unconfirmed. `FocusGained` or `VimResume` confirms
+it; `FocusLost`, suspension or entry into a Neovim terminal buffer clears it.
+If no initial event arrives, switch away and back once after opening Neovim.
 
-1. Update the daemon's installed package if it is not an editable checkout, then
-   restart `voicekey.service` yourself when ready. It was not restarted here.
-2. Load the plugin at startup (`lazy = false`); remove a `cmd = "VoiceKey"`-only
-   lazy-loading restriction. Change `init.lua` only if necessary for startup
-   loading. No dictation key change is required.
-3. Restart Neovim to load both updated Lua files. Confirm `FocusGained` reaches
-   it, switching away/back if needed. Emacs needs no reload.
+Async reports go directly to the daemon's control socket. Socket peer credentials
+verify the sender PID; sequence numbers reject repeated/out-of-order reports.
+The control server forwards them without waiting for an evdev tick. Terminal-local
+changes use the same observed PCM boundaries as compositor focus changes:
 
-Real microphone checks still required on both machines:
+- **pause:** stop capture; earlier speech may finish through the original pin.
+- **follow:** cut at the observed boundary and rebind through `target.bind()`.
+  Old editor pins remain until their earlier speech drains, then are released.
+- **pin:** continue into the original buffer in the background.
 
-- Right Win and the physical Copilot chord: tap/hold, toggle, stop during
-  processing, agent-key behavior, and multiple utterances with actual models.
-- Normal/insert mode, edits during speech, virtual preview placement and latency;
-  confirm no transcript appears as terminal commands.
-- Ghostty windows/tabs and tmux panes: verify real focus reports and PID ancestry,
-  including Neovim-to-shell moves, pause, follow and pin. Do not infer tmux safety
-  from the headless tests.
-- Follow Neovim → graphical Emacs → another app → Neovim, with speech queued
-  before each switch; close Neovim while transcription is pending and inspect
-  retained audio/text. Check the widget's Neovim label and attention-only failures.
+Editor/socket health checks stop capture and preserve pending speech after a
+crash, vanished socket or unavailable buffer, even if an exit report is lost.
+Normal completion, stop, cancellation and follow cleanup explicitly unpin.
+Abandoned pins are aged out after a day on the next Lua request; a daemon crash
+may leave a cosmetic preview until cleanup or editor restart.
 
-## Automated verification
+## Limits of focus evidence
 
-Baseline at `53231c8`: **425 tests passed in 32.478 s**, with the installed
-`~/.local/share/voicekey/venv/bin/python -m unittest`. The literal system
-`python -m unittest` initially ran 275 tests with 3 failures/24 errors because
-it lacks `evdev` and the sandbox denies test sockets. The valid baseline and
-subsequent runs used installed dependencies plus permission for isolated local
-sockets. Tests never contacted live editor servers.
+- Ghostty's shared PID cannot identify a window, tab or pane. A stale true
+  Neovim focus flag can select the wrong buffer; two true flags cause refusal.
+- A shell-looking title never overrides a validated Neovim claim. However, a
+  stale directory title **combined with missing Neovim focus evidence**, such as
+  a lost focus event or absent registration, can match an idle shell elsewhere
+  and select terminal IME delivery. PID/cwd evidence cannot identify that surface.
+- Multiple shells in the same directory are allowed. Title spoofing, a quick
+  command and return between checks, and a switch between validation and IME
+  submission remain possible. An SSH tab titled `~` can match a local idle shell
+  at home; this is not remote prompt detection.
+- Prompt inference supports local Bash in Ghostty only. Custom titles or shortened
+  `\w` titles (`PROMPT_DIRTRIM`) may not match, retaining refusal when Neovim is
+  present. No shell hook or extra configuration is required for ordinary titles.
+- Detached tmux, SSH, containers, renamed processes and hidden `/proc` data can
+  defeat ancestry. If no Neovim descendant is visible, ordinary terminal delivery
+  can remain enabled even when Neovim is visible. `tmux focus-events on` is
+  necessary for focus reports but does not establish terminal-to-pane ancestry.
+- Without a compositor PID, discovery considers all local Neovims, which can
+  refuse unrelated shells or accept the only stale claim. Unknown terminal app
+  IDs retain generic routing unless added through `VOICEKEY_TERMINALS`.
+- Focus and pin acquisition are asynchronous observations, not atomic key-down
+  snapshots. Buffer switches inside Neovim retain the original insertion pin.
 
-The extraction's full suite passed **425 tests in 32.494 s**. The final full suite
-passed **454 tests in 35.464 s** (29 additional tests), with no skips or failures.
-`git diff --check` also passed. The expanded suite
-covers temporary headless Neovim servers, temporary runtime directories, mocked
-compositor/process evidence, synthetic audio and stubbed recognizers:
+## Setup and compatibility
 
-- Resolver selection and actual key-path selection for Neovim, Emacs, ordinary
-  terminal IME and another app; tap/hold, F23, stop while processing and cancel.
-- Missing/dead/unfocused/wrong-ancestry registration, conflicting instances,
-  focus-unconfirmed startup, edited buffers, closed/unloaded/unmodifiable buffers,
-  duplicate operations, revoked permits and Unicode/quote-safe transport.
-- Mocked RPC failure with journal/audio retention, plus a genuinely blocked
-  private Neovim whose queued request expires after its client times out.
-- Repeated ordered commits, live and provisional virtual text, preview cleanup,
-  real plugin/control-socket pause with no compositor event, follow across
-  editor/application types and between instances inside one terminal window,
-  background pin policy, old speech delivery after focus loss, and editor exit
-  during processing with recovery.
-- All pre-existing Emacs, persistent, client-capture, legacy-router and pipeline
-  tests remain in the full run.
+Update the daemon's installed package and restart `voicekey.service` when ready.
+Load the Neovim plugin at startup (`lazy = false` rather than command-only lazy
+loading), and restart Neovim after changing its Lua files. `init.lua` needs a
+change only if startup loading is missing. Emacs needs no reload. Python-only
+routing fixes require a daemon restart, not another plugin reload.
 
+`:VoiceKey` still provides single-shot client capture through the same daemon
+and shares the Lua insertion helpers. `voicekey-route` remains an optional legacy
+binding with weaker last-writer/socket checks; normal daemon keys need neither it
+nor F12. Keep the daemon's keyboard listener enabled for tap/hold and agent keys.
 
-## First audit follow-up
+## Verification
 
-Reproduced the 454-test baseline (35.308 s). Confirmed that Ghostty's shared PID
-makes the refusal apply across **all windows and tabs**, not just adjacent tabs.
-The installed Ghostty Bash integration sets the directory title at a prompt and
-the command title before execution. The user explicitly chose to use these
-existing titles and accept stale-title risk, rather than install a prompt hook.
+Run `python -m unittest` using an environment with the project dependencies.
+Neovim tests require version 0.10 or newer; private editor/control sockets and a
+private Bash PTY require local socket/PTY access. Tests use temporary runtime
+folders, synthetic audio, stubbed recognizers and mocked compositor/process
+information; they do not contact live editor servers or microphones.
 
-The resolver now recognizes Ghostty absolute or home-relative directory titles
-only when they match a Bash working directory under the terminal's PID. It checks
-the controlling tty and foreground process group, rejects suspended shells and
-children sharing their foreground group, and remembers process start times.
-That allows ordinary shells while Neovim runs in another Ghostty window/tab.
-A title guess cannot override an already-bound Neovim target.
+Coverage includes destination precedence, conflicting/unfocused/unresponsive
+registrations, pin and buffer failures, expired/duplicate/revoked operations,
+key gestures, preview tiers, ordered persistent commits, focus policies, old
+speech after a switch, editor exit, refusal feedback and journal/clipboard recovery.
+Bash tests cover cwd/title matching and real foreground-job transitions in an
+isolated PTY. Existing Emacs, client-capture and legacy-router tests remain in
+the full suite.
 
-Before insertion it rechecks the exact window/title and original matching shell
-identities. Persistent capture polls for title/foreground-state changes and pauses
-with recovery; every delivery still checks immediately. Ordinary title changes
-are excluded from compositor window identity, so an Emacs title change does not
-become a focus change. No shell hook, user config change or daemon restart was
-performed. To activate this patch, restart the updated daemon yourself; the
-previous Neovim plugin changes still need loading if not already installed.
+Real Ghostty/microphone validation is still required before merging:
 
-**Accepted limitation:** a stale title in a Neovim surface can match an idle shell
-in another window, causing generic terminal IME selection. Shared PID and cwd
-cannot prove the title belongs to that shell. Multiple same-directory shells are
-allowed; a command and return to the same title between checks can be missed.
-Title spoofing and the race between validation and IME submission remain possible.
-Custom/shortened titles may fail to match and retain the original refusal. This
-exception supports Ghostty's local Bash prompt titles, not arbitrary shells or
-tmux/remote prompt detection.
-
-Single-shot known binding refusals now notify immediately after resolution,
-while recording continues for recovery. Definite refused text is saved and copied
-if possible; unavailable clipboard still leaves journal/audio recovery. Unknown
-insertion and cancelled captures never use this fallback. Persistent sessions
-keep their existing stop/recovery behavior.
-
-The other audit observations remain: startup requires confirmed focus; Neovim
-uses an advancing mark rather than Emacs-style cursor following; detached tmux
-is not safe under the ancestry policy; single-shot discovery/pinning can still
-block the key handler for bounded RPC/compositor waits. Fixing that last point
-requires moving the whole resolver's waits, not just spawning a pin thread.
-
-The audit's duplicate-operation guarantee is bounded: Lua remembers operation
-results through their original execution deadline, while the daemon prevents
-reusing a delivery attempt. Arbitrarily resending the same ID with a new later
-deadline after the cache expires is not a supported retry protocol.
-
-
-Audit-patch verification: **471 tests passed in 35.605 s**, up from 454 at the
-start of the audit. `git diff --check` passed. New tests cover matching Ghostty
-titles with Neovim in another window, rejected command/unmatched titles, home
-paths, foreground jobs, missing/foreign process evidence, PID reuse, multiple
-same-directory shells, changed titles during binding/delivery, persistent field
-refusal, immediate pin/refusal feedback, clipboard failure recovery, and an
-isolated real Bash PTY's foreground job transitions. Existing cancellation and
-uncertain-delivery tests still verify that no clipboard fallback occurs.
-
-Still requires real Ghostty/microphone validation: shell and Neovim in separate
-windows and tabs, actual prompt titles on this setup, commands started during
-speech, and title changes while processing. Nothing was restarted or installed.
+- Shell and Neovim in separate windows and tabs, including identical directories.
+- Starting a command during speech and while transcription is pending.
+- Whether newly opened Neovim receives `FocusGained` without switching away/back.
+- Physical Right Win and Copilot keys, tap/hold/toggle, preview latency and spacing.
+- Pause/follow/pin across Neovim, Emacs and other apps; queued speech before a
+  switch and recovery after closing Neovim during processing.

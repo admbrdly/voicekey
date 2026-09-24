@@ -93,8 +93,10 @@ renamed process can also defeat the ancestry check. Remote Neovim is unsupported
 Terminal policy (Ghostty, foot, kitty, Alacritty, WezTerm; additional app IDs via
 `VOICEKEY_TERMINALS` in the daemon environment):
 
-- A uniquely validated Neovim gets API delivery.
-- No valid registration, but a Neovim descendant of the terminal exists: refuse
+- A uniquely validated Neovim gets API delivery, even when the title also matches
+  a shell. Ambiguous claims or incomplete/unresponsive probes refuse; titles
+  cannot override them.
+- No focused claim after completed probes, but a Neovim descendant exists: refuse
   and retain speech/text for recovery. A shell tab beside Neovim in the same
   Ghostty process is therefore also refused unless its title matches a local
   foreground Bash prompt (see below).
@@ -105,13 +107,16 @@ Terminal policy (Ghostty, foot, kitty, Alacritty, WezTerm; additional app IDs vi
 For Ghostty with its existing Bash title integration, an absolute directory title
 or `~`/`~/...` can identify a shell prompt. The daemon matches it against the
 working directory of a local foreground Bash under Ghostty, excluding running
-foreground jobs. That permits shell dictation while Neovim is open elsewhere,
+foreground jobs. This check runs only after completed Neovim probes find no
+focused claim. That permits shell dictation while Neovim is open elsewhere,
 without a shell hook or config change. Before delivery it checks the window,
 title and shell processes again; persistent capture polls for changes.
 
-**This deliberately accepts stale-title risk.** An inactive Neovim surface can
-retain a directory title matching a shell in another window. The daemon cannot
+**This deliberately accepts stale-title risk when Neovim focus evidence is
+missing.** A stale directory title, combined with a lost Neovim focus event or
+absent registration, can match a shell in another window. The daemon cannot
 prove which surface owns that title and could choose terminal IME delivery.
+A validated focused Neovim always takes precedence.
 Multiple shells with the same directory are allowed. A quick command and return
 to the same title between observations can go undetected. Custom, shortened or
 remote titles may not match; other terminals retain the conservative policy.
@@ -186,5 +191,5 @@ require("voicekey").setup({
 RPC/resolver/key/persistent tests in `tests/test_nvim_target.py` when Neovim 0.10+
 is installed. Tests use temporary sockets/runtime directories, fake compositor
 and process trees, synthetic PCM and stubbed recognizers. No live editor or
-microphone is used. See [implementation report](../../docs/neovim-integration.md)
-for baseline/results and the remaining real-microphone checks.
+microphone is used. See the [current design](../../docs/neovim-integration.md)
+for routing precedence, limitations and the remaining real-microphone checks.

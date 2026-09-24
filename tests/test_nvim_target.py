@@ -125,6 +125,56 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(other.text(), ['Hello'])
         self.assertEqual(self.editor.text(), [''])
 
+    def test_focused_editor_beats_matching_shell_title(self):
+        self.focus.return_value = Focus(7, 'com.mitchellh.ghostty', 100, '/work')
+        with patch('voicekey.shell_prompt.candidates', return_value={200:12345}) as shells:
+            target = self.bind()
+            self.assertIsInstance(target, NeovimTarget)
+            shells.assert_not_called()
+            self.assertEqual(self.land(target).outcome, Outcome.CONFIRMED)
+        self.assertEqual(self.editor.text(), ['Hello'])
+        self.ime.commit.assert_not_called()
+        self.ime.claim_preview.assert_not_called()
+
+    def test_failed_editor_pin_never_falls_back_to_matching_shell_title(self):
+        self.focus.return_value = Focus(7, 'com.mitchellh.ghostty', 100, '/work')
+        self.editor.lua('vim.api.nvim_set_option_value("modifiable",false,{buf=0})')
+        with patch('voicekey.shell_prompt.candidates', return_value={200:12345}) as shells:
+            target = self.bind()
+            self.assertIsInstance(target, NeovimTarget)
+            self.assertEqual(self.land(target).outcome, Outcome.REFUSED)
+            shells.assert_not_called()
+        self.ime.commit.assert_not_called()
+
+    def test_ambiguous_editor_claims_cannot_be_overridden_by_shell_title(self):
+        other = Editor(self, self.tmp.name, 2)
+        self.tree[other.process.pid] = (100, 'nvim')
+        self.focus.return_value = Focus(7, 'com.mitchellh.ghostty', 100, '/work')
+        with patch('voicekey.shell_prompt.candidates', return_value={200:12345}) as shells:
+            self.assertIsInstance(self.bind(), RefusedTarget)
+            shells.assert_not_called()
+        self.ime.commit.assert_not_called()
+
+    def test_unfocused_editor_allows_matching_shell_title_after_probe(self):
+        self.focus.return_value = Focus(7, 'com.mitchellh.ghostty', 100, '/work')
+        self.editor.lua('vim.cmd.doautocmd("FocusLost")')
+        with patch('voicekey.nvim.call', wraps=nvim.call) as rpc, \
+                patch('voicekey.shell_prompt.candidates', return_value={200:12345}) as shells:
+            target = self.bind()
+            self.assertIsInstance(target, ImeTarget)
+            self.assertEqual(rpc.call_args.args[1], 'status')
+            shells.assert_called()
+            self.assertEqual(self.land(target).outcome, Outcome.SUBMITTED)
+        self.ime.commit.assert_called_once()
+
+    def test_unresponsive_editor_probe_refuses_even_with_matching_shell_title(self):
+        self.focus.return_value = Focus(7, 'com.mitchellh.ghostty', 100, '/work')
+        with patch('voicekey.nvim.call', side_effect=nvim.NvimError('probe timeout')), \
+                patch('voicekey.shell_prompt.candidates', return_value={200:12345}) as shells:
+            self.assertIsInstance(self.bind(), RefusedTarget)
+            shells.assert_not_called()
+        self.ime.commit.assert_not_called()
+
     def test_pin_tracks_edits_and_inserts_in_order_in_background(self):
         self.editor.lua('vim.api.nvim_buf_set_lines(0,0,-1,false,{"one"}); vim.api.nvim_win_set_cursor(0,{1,2})')
         target = self.bind()

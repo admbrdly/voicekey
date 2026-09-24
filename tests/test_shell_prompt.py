@@ -23,7 +23,7 @@ class PromptTests(unittest.TestCase):
         patch('voicekey.nvim.process_tree', return_value=self.tree).start()
         patch('voicekey.nvim.runtime_dir', return_value=Path('/nonexistent-voicekey-tests')).start()
         self.focus = patch('voicekey.focus.focused', side_effect=lambda **kw: self.destination).start()
-        self.rpc = patch('voicekey.nvim.call', side_effect=AssertionError('shell prompt must not contact editors')).start()
+        self.rpc = patch('voicekey.nvim.call', side_effect=AssertionError('no registered editor should be contacted')).start()
         self.ime = Mock(activation=Mock(return_value=1), rebind=Mock(return_value=True), commit=Mock(return_value=True))
 
     def bind(self):
