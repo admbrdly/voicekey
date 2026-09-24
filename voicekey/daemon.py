@@ -113,7 +113,7 @@ class Daemon:
             except ImeUnavailable as exc:
                 log.info("no in-field preview: %s", exc)
             except Exception:
-                log.exception("input method failed to start; previews use notifications")
+                log.exception("input method failed to start; in-field previews unavailable")
 
     def _load_models(self):
         self.backend_error = None
@@ -133,19 +133,19 @@ class Daemon:
         try:
             self.streaming = create_streaming(self.cfg.streaming)
         except BackendUnavailable as exc:
-            notify("voicekey: live preview unavailable", str(exc), error=True)
+            notify("voicekey: live preview unavailable", str(exc), attention=True)
         except Exception as exc:
             log.exception("streaming backend failed to load")
-            notify("voicekey: live preview unavailable", f"{type(exc).__name__}: {exc}", error=True)
+            notify("voicekey: live preview unavailable", f"{type(exc).__name__}: {exc}", attention=True)
         if self.cfg.polish.backend != "none":
             try:
                 self.polish_server = polish_mod.start_server(self.cfg.polish)
                 self.polisher = polish_mod.create_polisher(self.cfg.polish, self.polish_server)
             except polish_mod.PolishError as exc:
-                notify("voicekey: polish unavailable", f"{exc}; transcripts land unpolished", error=True)
+                notify("voicekey: polish unavailable", f"{exc}; transcripts land unpolished", attention=True)
             except Exception as exc:
                 log.exception("polish failed to start")
-                notify("voicekey: polish unavailable", f"{type(exc).__name__}: {exc}", error=True)
+                notify("voicekey: polish unavailable", f"{type(exc).__name__}: {exc}", attention=True)
     def _ensure_models(self):
         if self._unload_requested or self.model_state == "unloading":
             raise ValueError("Wait for memory release to finish")
@@ -347,11 +347,11 @@ class Daemon:
         if self.client_capture is not None:
             if action in ("persistent", "dictate"):
                 if self.client_capture.submitted:
-                    notify("voicekey: busy", "Client capture is still processing", error=True)
+                    notify("voicekey: busy", "Client capture is still processing", attention=True, ms=3000)
                 else:
                     self.client_capture.finish()
             else:
-                notify("voicekey: busy", "Finish the client capture before using the agent key", error=True)
+                notify("voicekey: busy", "Finish the client capture before using the agent key", attention=True, ms=3000)
             return
         if self.persistent is not None:
             if self.persistent.done.is_set():
@@ -360,7 +360,7 @@ class Daemon:
                 if action == "persistent":
                     self.persistent.request_stop()
                 else:
-                    notify("voicekey: busy", "stop persistent dictation before using another dictation key")
+                    notify("voicekey: busy", "stop persistent dictation before using another dictation key", attention=True, ms=3000)
                 return
         if session is not None:
             if behavior == TOGGLE and chord == session.chord and device == session.device:
@@ -390,14 +390,14 @@ class Daemon:
         try:
             self._ensure_models()
         except ValueError as exc:
-            notify("voicekey: busy", str(exc), error=True)
+            notify("voicekey: busy", str(exc), attention=True, ms=3000)
             return
         if (self.model_state != "loading" and (self.vad is None or self.backend is None)) or self._vad_slot.busy:
-            notify("voicekey: persistent mode unavailable", "speech models unavailable or a detector call is still running", error=True)
+            notify("voicekey: persistent mode unavailable", "speech models unavailable or a detector call is still running", attention=True, ms=3000)
             return
         # A new session cannot share the previous gesture's decoder or preview.
         if self.pipeline.ledger.busy or self._live_session is not None and self._live_session.stuck:
-            notify("voicekey: busy", "let pending dictation finish before starting persistent mode", error=True)
+            notify("voicekey: busy", "let pending dictation finish before starting persistent mode", attention=True, ms=3000)
             return
         track_windows = allow_typing or self.cfg.persistent.destination_policy != "pin"
         watch_factory = (NiriFocusWatch if track_windows and focus.compositor() == "niri"
@@ -420,7 +420,7 @@ class Daemon:
         try:
             if not session.start():
                 self.persistent = None
-                notify("voicekey: busy", "pending work or recovery storage is full", error=True)
+                notify("voicekey: busy", "pending work or recovery storage is full", attention=True, ms=3000)
         except Exception as exc:
             self.persistent = None
             self._settle_gate()
@@ -430,11 +430,11 @@ class Daemon:
         try:
             self._ensure_models()
         except ValueError as exc:
-            notify("voicekey: busy", str(exc), error=True)
+            notify("voicekey: busy", str(exc), attention=True, ms=3000)
             return
         identity = self.pipeline.admit()
         if identity is None:
-            notify("voicekey: busy", "recording did not start; pending work or recovery storage is full", error=True)
+            notify("voicekey: busy", "recording did not start; pending work or recovery storage is full", attention=True, ms=3000)
             return
         session = Session(action, behavior, chord, device, identity=identity, on_text=self.pipeline.ledger.live)
         if action == "dictate":
@@ -465,7 +465,7 @@ class Daemon:
         except Exception as exc:
             log.exception("preview setup failed; capture continues")
             session.cancel()
-            notify("voicekey: preview unavailable", str(exc), error=True)
+            notify("voicekey: preview unavailable", str(exc), attention=True)
         notify(f"● Recording ({LABEL[action]})", instruction, ms=60000, channel=action)
         log.info("recording %s (%s)", identity, action)
 

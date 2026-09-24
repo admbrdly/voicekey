@@ -26,8 +26,8 @@ and any additional dictation toggle keys.
 voicekey registers with the compositor as *the* input method. Applications
 that speak `text-input-v3` (GTK, Qt, Firefox, Chromium and Electron,
 Emacs pgtk, foot, Ghostty, kitty, Alacritty, …) get the in-field
-experience; anything else gets the preview in a notification and the final
-text through `wtype` for ordinary replay. Persistent dictation pauses when no
+experience; other applications have no live preview and get final text through
+`wtype` for ordinary replay. Persistent dictation pauses when no
 verified field is available; the panel offers an explicit simulated-typing
 exception. Because there is one input method per seat, voicekey cannot coexist
 with an IME such as fcitx. Setting `ime = false` keeps the other IME, but generic
@@ -53,8 +53,8 @@ actual insertion position inside the editor transaction.
 
 The packaged `voicekey/voicekey.el` provides those transactions. It is loaded
 on demand and installs no hooks by default. Emacs uses the same Wayland
-preedit preview as other supported applications, with notifications as the
-fallback when an input-method activation is unavailable. The preview clear
+preedit preview as other supported applications. When an input-method activation
+is unavailable, there is no live preview popup. The preview clear
 request is flushed before the separate editor insertion is submitted, within
 the delivery deadline. This orders the requests locally; the two channels
 do not provide an atomic application-level transaction. Losing preview focus
@@ -81,7 +81,7 @@ When a generic field loses focus, applications may keep or discard its
 provisional text without reporting what happened. Voicekey stops the session
 and preserves pending text instead of guessing which field or text to replace.
 Check any remaining provisional text before recovering saved speech. An IME
-success notification means the request was sent to the compositor; the
+`submitted` delivery outcome means the request was sent to the compositor; the
 protocol provides no application-level insertion acknowledgement. Dictation
 requires an insertion destination: clipboard-only targets cannot start it.
 Failed continuous deliveries are saved for recovery without repeatedly
@@ -428,7 +428,7 @@ F11 repeat=false allow-inhibiting=false hotkey-overlay-title="Persistent Dictati
 ```
 
 Press once to listen continuously, and again to stop. Release does nothing;
-Escape remains an ordinary editing key. A persistent notification shows
+Escape remains an ordinary editing key. The status indicator shows
 whether the microphone is listening, finishing or off, with the stop reason. Automatic
 startup never enables the microphone.
 
@@ -524,6 +524,26 @@ Session and ordered utterance IDs appear in the recovery journal. A paced WAV ca
 when a verified field or Emacs pin is available; it has no automatic typing
 exception. With `ime = false`, generic destinations are rejected and captured
 audio is preserved. Automated replay tests use isolated targets.
+
+## Desktop notifications
+
+Desktop notifications are reserved for things requiring attention. The status
+indicator (DMS widget, editor UI, or a client of the control socket) handles
+listening, model loading, processing and ordinary stops. Successful insertion
+and agent dispatch do not show popups, and live transcript previews stay in the
+input field rather than appearing as desktop notifications.
+
+A refused action, such as pressing a dictation key while processing, gives a
+brief, noncritical explanation (busy notices expire after three seconds).
+Unavailable optional preview/cleanup features and a refused text field also
+give noncritical warnings. Normal user stops, silence timeouts, and pauses caused
+by switching windows are quiet unless speech needs recovery.
+
+Unexpected microphone interruptions, failed or uncertain delivery, unavailable
+recovery storage, and saved transcripts needing recovery still notify. Clipboard
+fallback still reports that manual paste is needed. Serious failures and session
+recovery notices remain visible until dismissed. These rules also apply without
+the DMS widget; there is no automatic popup fallback for routine status.
 
 ## DMS bar widget
 

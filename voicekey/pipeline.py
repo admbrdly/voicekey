@@ -94,7 +94,7 @@ class Pipeline:
             if recovered:
                 self.notify("voicekey: interrupted dictation recovered",
                        f"{len(recovered)} session(s) in {self.journal.directory}; latest: {recovered[-1]}",
-                       channel="persistent", ms=0)
+                       channel="persistent", ms=0, attention=True)
             self._journal_slots["startup"].call(lambda: self.journal.prepare(self._disk_reservation),
                                                 time.monotonic() + self.cfg.pipeline.journal_seconds)
         except Exception as exc:
@@ -471,7 +471,7 @@ class Pipeline:
             self.spacing.inserted(job.target.window_id, job.final, mark)
             self._complete(job, landing.outcome)
             if job.failure:
-                self.notify("voicekey: recording warning", f"{job.failure}; audio saved in {self.journal.directory}", ms=10000)
+                self.notify("voicekey: recording warning", f"{job.failure}; audio saved in {self.journal.directory}", ms=10000, attention=True)
             elif job.target.kind != "client":
                 self.notify("✓ Inserted" if landing.outcome == Outcome.CONFIRMED else "✓ Sent to field", channel="dictate")
         elif landing.uncertain:
@@ -495,7 +495,7 @@ class Pipeline:
             copied = outcome == Outcome.COPIED
             body = f"{landing.reason}; {self.journal.path(job.id, '.txt')}"
             if job.target.kind == "clipboard" or job.session_id:
-                self.notify("📋 Copied" if copied else "voicekey: transcript saved", body, channel="dictate", ms=10000)
+                self.notify("📋 Copied" if copied else "voicekey: transcript saved", body, channel="dictate", ms=10000, attention=True)
             else:
                 # A bound destination refused the text. A transient notice went
                 # unnoticed in practice; this one persists until dismissed.

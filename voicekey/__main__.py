@@ -249,7 +249,7 @@ def check(cfg) -> int:
             InputMethod().close()
             print("input method: OK (live text goes into the focused field)")
         except ImeUnavailable as exc:
-            print(f"input method: unavailable ({exc}); previews use notifications")
+            print(f"input method: unavailable ({exc}); no in-field preview")
     if cfg.polish.backend == "none":
         print("polish: off")
     else:

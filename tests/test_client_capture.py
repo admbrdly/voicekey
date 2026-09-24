@@ -224,7 +224,7 @@ class ClientCaptureTests(CaptureHarness):
                     notify.assert_not_called()
                     for value in (1, 0):
                         self.daemon._on_key('keyboard', ecodes.KEY_F9, value)
-                    notify.assert_called_once_with('voicekey: busy', 'Client capture is still processing', error=True)
+                    notify.assert_called_once_with('voicekey: busy', 'Client capture is still processing', attention=True, ms=3000)
                     self.assertFalse(self.daemon.status()['listening'])
                     submit.assert_called_once()
                     persistent.assert_not_called()
