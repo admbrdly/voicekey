@@ -8,6 +8,7 @@ It is a small, opinionated Linux tool; Fedora with Niri is the tested setup.
 - **Hold the hotkey** to speak and release to stop, or **tap it** to listen until the next press.
 - Speech is transcribed locally in batches at pauses, with live previews where supported.
 - Emacs delivery uses a pinned buffer through `emacsclient`, with Evil insertion rules.
+- Neovim users can dictate straight into the buffer with the [Neovim plugin](contrib/nvim/README.md).
 - On Niri, new speech follows window switches; pending text retains its original destination.
 - Optional language-model cleanup, word corrections, and a separate hotkey for [sending prompts to an agent](docs/reference.md#agent-key-optional).
 
