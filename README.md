@@ -11,7 +11,9 @@ would run as commands. The additions keep dictation safe there.
   `:VoiceKey` or `<F12>` records, and the transcript is inserted with
   `nvim_buf_set_text` at the point where you started, whatever the mode. Nothing is
   typed. An inline marker shows loading, recording and transcribing; `:VoiceKey cancel`
-  discards. Open as [PR #1](https://github.com/ejerzak/voicekey/pull/1).
+  discards. Recording and transcription go through the running daemon, which is the
+  only process that loads speech models. Open as
+  [PR #1](https://github.com/ejerzak/voicekey/pull/1).
 - **One key everywhere** (`contrib/nvim/voicekey-route`): a Niri keybinding that
   inserts into the Neovim that has focus, starts the daemon in GUI apps, and refuses
   other terminal programs, where single letters are commands.
@@ -36,14 +38,15 @@ Quick start for the Neovim plugin (lazy.nvim, with voicekey installed as below):
 
 | Branch | Contents |
 | --- | --- |
-| [`neovim-plugin`](https://github.com/admbrdly/voicekey/tree/neovim-plugin) | Neovim plugin and `voicekey-route` (PR #1) |
+| [`neovim-plugin`](https://github.com/admbrdly/voicekey/tree/neovim-plugin) | Neovim plugin and `voicekey-route` (PR #1), on upstream's `daemon-client-capture` |
 | [`terminal-extras`](https://github.com/admbrdly/voicekey/tree/terminal-extras) | Adds bash, Claude Code and Codex routing |
 | [`control-without-keyboard`](https://github.com/admbrdly/voicekey/tree/control-without-keyboard) | Daemon: control commands without evdev, `evdev = false` |
 | [`adam-local`](https://github.com/admbrdly/voicekey/tree/adam-local) | All of the above merged; rebuilt, not a stable history |
 
-Status: upstream is adding a client-capture protocol to the daemon. The Neovim
-plugin will switch to it so only the daemon loads speech models; until then it runs
-`voicekey --capture-to-stdout`, which loads its own copy. This `master` is otherwise
+Status: the Neovim plugin uses upstream's client-capture protocol (branch
+`daemon-client-capture`, not yet in upstream `master`). `voicekey --capture-to-stdout`
+is a thin client of the running daemon, so the daemon must be running and up to date;
+dictations are recoverable with `voicekey --last`. This `master` is otherwise
 identical to upstream; the original README follows.
 
 ## VoiceKey
