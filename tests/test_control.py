@@ -32,7 +32,9 @@ class ControlTests(unittest.TestCase):
         self.addCleanup(client.close)
         stream = client.makefile('rb')
         self.addCleanup(stream.close)
-        self.assertEqual(json.loads(stream.readline())['type'], 'status')
+        status = json.loads(stream.readline())
+        self.assertEqual(status['type'], 'status')
+        self.assertEqual(status['protocol_version'], 1)
         return client, stream
 
     def test_status_and_private_socket(self):
@@ -46,10 +48,13 @@ class ControlTests(unittest.TestCase):
         client, stream = self.connect()
         client.sendall(b'{"command":"start","id":7}\n')
         wait_for(lambda: not self.server.commands.empty())
-        handler = Mock()
+        handler = Mock(return_value=None)
         handler.assert_not_called()
         self.server.drain(handler)
-        handler.assert_called_once_with('start')
+        handler.assert_called_once()
+        self.assertEqual(handler.call_args.args, ('start',))
+        self.assertEqual(handler.call_args.kwargs['args'], {})
+        self.assertEqual(handler.call_args.kwargs['request_id'], 7)
         while (reply := json.loads(stream.readline()))['type'] != 'reply':
             pass
         self.assertEqual(reply, {'type': 'reply', 'id': 7, 'error': None})
@@ -57,12 +62,14 @@ class ControlTests(unittest.TestCase):
     def test_expired_request_cannot_start_recording_late(self):
         client, _ = self.connect()
         self.server.commands.put((client, {'command': 'start'}, time.monotonic()-1))
-        handler = Mock()
+        handler = Mock(return_value=None)
         self.server.drain(handler)
         handler.assert_not_called()
 
     def test_unknown_and_oversized_input_disconnect_without_mutation(self):
-        for data in (b'{"command":"shell"}\n', b'x'*9000):
+        for data in (b'{"command":"shell"}\n', b'x'*9000,
+                     b'{"command":"start","args":[]}\n',
+                     b'{"command":"start","id":{}}\n'):
             client, stream = self.connect()
             client.sendall(data)
             # An initial status heartbeat may precede disconnect.
@@ -85,6 +92,26 @@ class ControlTests(unittest.TestCase):
         self.addCleanup(self.server.close)
         self.server.publish({'state': 'idle'})
         self.assertEqual(request('status', self.path)['state'], 'idle')
+
+    def test_wrong_peer_uid_is_refused(self):
+        with patch('voicekey.control.os.getuid', return_value=os.getuid() + 1):
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(1)
+                client.connect(str(self.path))
+                self.assertEqual(client.recv(1), b'')
+        self.assertTrue(self.server.commands.empty())
+
+    def test_fragmented_request_keeps_arguments_and_returns_handler_data(self):
+        client, stream = self.connect()
+        client.sendall(b'{"command":"capture-start","id":"capture-a","args":')
+        client.sendall(b'{"seconds":5}}\n')
+        wait_for(lambda: not self.server.commands.empty())
+        handler = Mock(return_value={'capture_id': 'abc'})
+        self.server.drain(handler)
+        self.assertEqual(handler.call_args.kwargs['args'], {'seconds': 5})
+        while (reply := json.loads(stream.readline()))['type'] != 'reply':
+            pass
+        self.assertEqual(reply, {'type': 'reply', 'id': 'capture-a', 'error': None, 'capture_id': 'abc'})
 
 
 class DaemonControlTests(unittest.TestCase):
