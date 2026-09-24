@@ -160,6 +160,8 @@ class RouteTests(unittest.TestCase):
         self.stub('python', 'echo "daemon $*" >> "$CALLS"\n'
                   '[ "$*" = "-m voicekey --control status" ] && printf \'{"listening": %s}\\n\' "$LISTENING"\n'
                   '[ -n "$DAEMON_DOWN" ] && exit 1\n'
+                  '[ -n "$DAEMON_BUSY" ] && [ "$*" = "-m voicekey --control start" ] && '
+                  '{ echo \'{"type": "reply", "error": "Finish the current dictation before starting another"}\'; exit 1; }\n'
                   'exit 0')
 
     def stub(self, name, body):
@@ -167,8 +169,8 @@ class RouteTests(unittest.TestCase):
         path.write_text('#!/bin/sh\n' + body + '\n')
         path.chmod(0o755)
 
-    def route(self, app, listening=False, title='~/notes', window=7, down=False):
-        env = {'DAEMON_DOWN': '1' if down else '', 'FOCUSED_TITLE': title, 'FOCUSED_ID': str(window), **os.environ, 'PATH': f'{self.bin}:{os.environ["PATH"]}', 'XDG_RUNTIME_DIR': str(self.runtime),
+    def route(self, app, listening=False, title='~/notes', window=7, down=False, busy=False):
+        env = {'DAEMON_DOWN': '1' if down else '', 'DAEMON_BUSY': '1' if busy else '', 'FOCUSED_TITLE': title, 'FOCUSED_ID': str(window), **os.environ, 'PATH': f'{self.bin}:{os.environ["PATH"]}', 'XDG_RUNTIME_DIR': str(self.runtime),
                'VOICEKEY_PYTHON': str(self.bin / 'python'), 'FOCUSED_APP': app, 'CALLS': str(self.log),
                'LISTENING': 'true' if listening else 'false'}
         root = Path(__file__).resolve().parents[1]
@@ -272,6 +274,18 @@ class RouteTests(unittest.TestCase):
         code, calls = self.route('com.mitchellh.ghostty', title='htop')
         self.assertEqual(code, 1)
         self.assertNotIn('daemon -m voicekey --control start', calls)
+
+    def test_daemon_refusal_reason_is_reported(self):
+        code, calls = self.route('org.mozilla.firefox', busy=True)
+        self.assertEqual(code, 1)
+        self.assertTrue(any('Finish the current dictation' in call for call in calls), calls)
+        self.assertFalse(any('voicekey.service' in call for call in calls), calls)
+
+    def test_refused_terminal_start_leaves_no_session_flag(self):
+        code, calls = self.route('com.mitchellh.ghostty', title='❯ ~/notes', busy=True)
+        self.assertEqual(code, 1)
+        self.assertTrue(any('Finish the current dictation' in call for call in calls), calls)
+        self.assertFalse((self.runtime / 'voicekey' / 'shell-session').exists())
 
     def test_unknown_focus_refuses(self):
         code, calls = self.route('')

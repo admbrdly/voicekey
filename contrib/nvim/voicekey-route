@@ -34,6 +34,16 @@ refuse() {
     exit 1
 }
 
+# The daemon replies with a reason when it refuses (for example while the last
+# dictation is still finishing); no reply means it is not running. $1, if
+# given, is a session flag to remove when the start fails.
+start_daemon() {
+    reply=$("$py" -m voicekey --control start 2>&1) && return 0
+    [ -n "${1:-}" ] && rm -f "$1"
+    reason=$(printf '%s\n' "$reply" | jq -r '.error // empty' 2>/dev/null)
+    refuse "Voicekey could not start dictation: ${reason:-is voicekey.service running?}"
+}
+
 # Fields are separated by US (0x1f): unlike tabs, read never merges them.
 us=$(printf '\037')
 focused() {
@@ -82,10 +92,8 @@ for terminal in $terminals; do
     # Written first, so an Enter pressed at once still stops the daemon.
     mkdir -p -m 700 "$state"
     echo "$window" > "$session"
-    "$py" -m voicekey --control start >/dev/null ||
-        { rm -f "$session"; refuse "Voicekey could not start dictation; is voicekey.service running?"; }
+    start_daemon "$session"
     exit 0
 done
 
-"$py" -m voicekey --control start >/dev/null 2>&1 ||
-    refuse "Voicekey could not start dictation; is voicekey.service running?"
+start_daemon
