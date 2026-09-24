@@ -3,6 +3,9 @@
 # (KEY_RIGHTMETA, KEY_RIGHTALT+KEY_F23, ...). The compositor must not act on them —
 # see README "Install".
 
+evdev       = true         # false: open no input devices and need no 'input' group; start/stop
+                           # through the control socket (panel, --control, a compositor keybinding).
+                           # Hotkeys below, hold-to-talk and the agent key then do nothing.
 dictate_key = "KEY_RIGHTMETA" # Right Win/Super: hold to dictate; tap to keep listening; press again to stop
 agent_key   = "KEY_RIGHTALT+KEY_RIGHTMETA" # hold Right Alt, then Right Win; release to send to the agent
 dictate_toggle_key = ""    # optional: first press starts, second press stops

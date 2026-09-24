@@ -1,6 +1,7 @@
 import json
 import os
 import queue
+import select
 import socket
 import tempfile
 import threading
@@ -62,6 +63,12 @@ class ControlTests(unittest.TestCase):
         while (reply := json.loads(stream.readline()))['type'] != 'reply':
             pass
         self.assertEqual(reply, {'type': 'reply', 'id': 7, 'error': None})
+
+    def test_queued_mutation_wakes_the_controller_loop(self):
+        client, _ = self.connect()
+        self.assertEqual(select.select([self.server.wake_fd], [], [], 0)[0], [])
+        client.sendall(b'{"command":"stop","id":1}\n')
+        self.assertEqual(select.select([self.server.wake_fd], [], [], 1)[0], [self.server.wake_fd])
 
     def test_expired_request_cannot_start_recording_late(self):
         client, _ = self.connect()
@@ -281,6 +288,20 @@ class DaemonControlTests(unittest.TestCase):
         d.persistent.request_stop.assert_called_once_with('stopped from panel')
         self.assertIsNone(d._gesture)
         d.persistent = None
+
+    def test_start_without_key_devices_forgets_spacing_continuation(self):
+        d = self.daemon
+        with patch.object(d, '_start_persistent', side_effect=lambda *a, **k: setattr(d, 'persistent', Mock())), \
+                patch.object(d.pipeline.spacing, 'user_typed') as typed:
+            d.listener = Mock(devices={'/dev/input/event3': Mock()})
+            d.command('start')
+            typed.assert_not_called()
+            d.persistent = None
+            d.listener = Mock(devices={})
+            d.command('start')
+            typed.assert_called_once()
+        d.persistent = None
+        d.listener = None
 
     def test_start_is_idempotently_refused_while_busy(self):
         d = self.daemon

@@ -159,6 +159,7 @@ class AgentConfig:
 
 @dataclass
 class Config:
+    evdev: bool = True
     dictate_key: str = "KEY_RIGHTMETA"
     agent_key: str = "KEY_RIGHTALT+KEY_RIGHTMETA"
     dictate_toggle_key: str = ""
@@ -270,6 +271,7 @@ def _validate_polish(cfg: PolishConfig) -> None:
 
 
 def _validate(cfg: Config) -> None:
+    cfg.evdev = _boolean("evdev", cfg.evdev)
     cfg.dictate_key = _string("dictate_key", cfg.dictate_key)
     cfg.agent_key = _string("agent_key", cfg.agent_key)
     cfg.dictate_toggle_key = _string(

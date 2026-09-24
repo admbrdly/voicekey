@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import os
+import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 
 from evdev import ecodes
 
+from voicekey import listener as listener_module
 from voicekey.listener import KeyboardListener, _is_keyboard, _supports_any_key
 
 
@@ -46,6 +50,82 @@ class RescanTests(unittest.TestCase):
             listener._rescan()
         self.assertIn("/dev/input/event1", listener.devices, "watched for activity")
         on_no_access.assert_called_once()
+
+
+class _Stop(Exception):
+    pass
+
+
+class NoDeviceLoopTests(unittest.TestCase):
+    def test_wake_ticks_at_once_and_rescans_stay_rate_limited(self):
+        ticks = []
+        wake_r, wake_w = os.pipe()
+        self.addCleanup(os.close, wake_r)
+        self.addCleanup(os.close, wake_w)
+        os.set_blocking(wake_r, False)
+
+        def on_tick():
+            ticks.append(time.monotonic())
+            if len(ticks) == 3:
+                raise _Stop
+
+        listener = KeyboardListener({ecodes.KEY_F9}, Mock(), Mock(), on_tick, Mock(), wake_fd=wake_r)
+        errors = []
+
+        def run():
+            try:
+                listener.run()
+            except _Stop:
+                pass
+            except Exception as exc:  # surfaced below
+                errors.append(exc)
+
+        with patch("voicekey.listener.all_event_devices", return_value=set()) as scan, \
+                patch.object(listener_module, "TICK", 30.0):
+            thread = threading.Thread(target=run, daemon=True)
+            thread.start()
+            for count in (1, 2, 3):
+                started = time.monotonic()
+                os.write(wake_w, b".")
+                while len(ticks) < count and time.monotonic() - started < 2:
+                    time.sleep(0.005)
+                self.assertEqual(len(ticks), count, "a wake must tick without waiting for TICK")
+            thread.join(2)
+        self.assertEqual(errors, [])
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(scan.call_count, 1, "only the initial scan within NO_ACCESS_RETRY")
+
+    def test_wake_with_devices_ticks_without_treating_the_pipe_as_a_device(self):
+        wake_r, wake_w = os.pipe()
+        self.addCleanup(os.close, wake_r)
+        self.addCleanup(os.close, wake_w)
+        os.set_blocking(wake_r, False)
+        device = Mock(path="/dev/input/event3")
+        listener = KeyboardListener({ecodes.KEY_F9}, Mock(), Mock(), Mock(side_effect=_Stop), Mock(),
+                                    wake_fd=wake_r)
+        listener.devices = {device.path: device}
+        listener._last_rescan = time.monotonic()
+        os.write(wake_w, b".")
+        with patch("voicekey.listener.select.select", return_value=([wake_r], [], [])), \
+                patch.object(listener, "_rescan"), patch.object(listener, "_read") as read:
+            with self.assertRaises(_Stop):
+                listener.run()
+        read.assert_not_called()
+        with self.assertRaises(BlockingIOError):
+            os.read(wake_r, 10)
+
+
+class DisabledTests(unittest.TestCase):
+    def test_disabled_listener_opens_no_devices_and_reports_nothing(self):
+        on_no_access = Mock()
+        listener = KeyboardListener({ecodes.KEY_F9}, Mock(), Mock(), Mock(), on_no_access, enabled=False)
+        with patch("voicekey.listener.all_event_devices") as scan, \
+                patch("voicekey.listener.InputDevice") as open_device:
+            listener._rescan()
+        scan.assert_not_called()
+        open_device.assert_not_called()
+        on_no_access.assert_not_called()
+        self.assertEqual(listener.devices, {})
 
 
 class DispatchTests(unittest.TestCase):

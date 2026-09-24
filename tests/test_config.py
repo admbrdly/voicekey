@@ -23,6 +23,12 @@ class ConfigTests(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(ConfigError):
                 self._load_text('[persistent]\n' + text)
 
+    def test_evdev_can_be_disabled(self):
+        self.assertTrue(self._load_text('').evdev)
+        self.assertFalse(self._load_text('evdev = false').evdev)
+        with self.assertRaises(ConfigError):
+            self._load_text('evdev = "no"')
+
     def test_multiline_apps_require_explicit_app_ids(self):
         self.assertEqual(self._load_text('').dictation.multiline_apps, [])
         cfg = self._load_text('[dictation]\nmultiline_apps = ["example.composer"]')

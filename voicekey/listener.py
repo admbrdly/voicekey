@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import glob
 import logging
+import os
 import select
 import time
 
@@ -22,6 +23,7 @@ log = logging.getLogger("voicekey.listener")
 
 RESCAN_INTERVAL = 2.0
 NO_ACCESS_RETRY = 10.0
+TICK = 1.0  # longest wait between on_tick calls
 
 
 TYPING_KEYS = {ecodes.KEY_A, ecodes.KEY_SPACE, ecodes.KEY_ENTER}
@@ -57,14 +59,16 @@ class KeyboardListener:
       on_key(device_path, keycode, value)  — value 1=press, 0=release (repeats
                                              are filtered out here)
       on_device_lost(device_path)          — device vanished (may hold a key)
-      on_tick()                            — every loop iteration (~1s max)
+      on_tick()                            — every loop iteration (~1s max; at once
+                                             when `wake_fd` becomes readable)
       on_no_access(message)                — no readable key devices (once per outage)
       on_activity()                        — any other key or button was pressed,
                                              modifiers aside (the fact only; never which one)
     """
 
     def __init__(self, keycodes: set[int], on_key, on_device_lost, on_tick,
-                 on_no_access, on_activity=None, *, required_keycodes=None) -> None:
+                 on_no_access, on_activity=None, *, required_keycodes=None,
+                 wake_fd: int | None = None, enabled: bool = True) -> None:
         self.keycodes = keycodes
         # Optional observed keys (e.g. draft cancellation) must not hide a
         # missing/inaccessible device that provides the dictation hotkey.
@@ -74,6 +78,12 @@ class KeyboardListener:
         self.on_tick = on_tick
         self.on_no_access = on_no_access
         self.on_activity = on_activity
+        # Readable when the control socket queues a command, so commands are
+        # handled promptly with or without key devices. A pipe, not an Event:
+        # SIGTERM raises KeyboardInterrupt here, which select survives cleanly.
+        self.wake_fd = wake_fd
+        # False: never open input devices (activation through the control socket only).
+        self.enabled = enabled
         self.devices: dict[str, InputDevice] = {}
         self._last_rescan = 0.0
         self._no_access_reported = False
@@ -81,6 +91,8 @@ class KeyboardListener:
 
     def _rescan(self) -> None:
         self._last_rescan = time.monotonic()
+        if not self.enabled:
+            return
         seen_paths = all_event_devices()
         for path in list(self.devices):
             if path not in seen_paths:
@@ -168,13 +180,15 @@ class KeyboardListener:
         self._rescan()
         while True:
             if not self.devices:
-                time.sleep(NO_ACCESS_RETRY)
-                self._rescan()
+                if select.select(self._wakers(), [], [], TICK)[0]:
+                    self._drain_wake()
+                if time.monotonic() - self._last_rescan >= NO_ACCESS_RETRY:
+                    self._rescan()
                 self.on_tick()
                 continue
             try:
                 readable, _, _ = select.select(
-                    list(self.devices.values()), [], [], 1.0
+                    list(self.devices.values()) + self._wakers(), [], [], TICK
                 )
             except (OSError, ValueError):
                 log.warning("keyboard select failed; reopening input devices")
@@ -185,6 +199,9 @@ class KeyboardListener:
                 continue
             if time.monotonic() - self._last_rescan > RESCAN_INTERVAL:
                 self._rescan()
+            if self.wake_fd in readable:
+                readable.remove(self.wake_fd)
+                self._drain_wake()
             for dev in readable:
                 if dev.path not in self.devices:
                     continue
@@ -193,6 +210,16 @@ class KeyboardListener:
                     continue
                 self.dispatch(dev.path, events)
             self.on_tick()
+
+    def _wakers(self) -> list[int]:
+        return [] if self.wake_fd is None else [self.wake_fd]
+
+    def _drain_wake(self) -> None:
+        try:
+            while os.read(self.wake_fd, 4096):
+                pass
+        except (BlockingIOError, OSError):
+            pass
 
     def close(self) -> None:
         for device in self.devices.values():
