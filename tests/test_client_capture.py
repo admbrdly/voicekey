@@ -217,9 +217,14 @@ class ClientCaptureTests(CaptureHarness):
                 self.daemon.actions = {chord: (action, behavior)}
                 with patch.object(self.daemon, '_start_persistent') as persistent, \
                         patch.object(self.daemon, '_start') as hold, \
+                        patch('voicekey.daemon.notify') as notify, \
                         patch.object(self.daemon.pipeline, 'submit', wraps=self.daemon.pipeline.submit) as submit:
-                    for value in (1, 2, 0, 1, 0):
+                    for value in (1, 2, 0):
                         self.daemon._on_key('keyboard', ecodes.KEY_F9, value)
+                    notify.assert_not_called()
+                    for value in (1, 0):
+                        self.daemon._on_key('keyboard', ecodes.KEY_F9, value)
+                    notify.assert_called_once_with('voicekey: busy', 'Client capture is still processing', error=True)
                     self.assertFalse(self.daemon.status()['listening'])
                     submit.assert_called_once()
                     persistent.assert_not_called()

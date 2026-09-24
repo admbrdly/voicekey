@@ -346,7 +346,10 @@ class Daemon:
         chord, (action, behavior) = matches[0]
         if self.client_capture is not None:
             if action in ("persistent", "dictate"):
-                self.client_capture.finish()
+                if self.client_capture.submitted:
+                    notify("voicekey: busy", "Client capture is still processing", error=True)
+                else:
+                    self.client_capture.finish()
             else:
                 notify("voicekey: busy", "Finish the client capture before using the agent key", error=True)
             return
