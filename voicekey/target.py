@@ -108,8 +108,8 @@ class ImePreview:
 
 
 class Window:
-    def __init__(self, window_id, verify: bool):
-        self.id, self.verify = window_id, verify
+    def __init__(self, window_id, verify: bool, pid=None):
+        self.id, self.verify, self.pid = window_id, verify, pid
 
     def focused(self, deadline: float) -> bool:
         if time.monotonic() >= deadline:
@@ -231,6 +231,12 @@ class PinnedEditorTarget(Target):
     def before(self, wait=0.0):
         return self.pinning.before(wait)
 
+    def show_tail(self, text, deadline):
+        self.preview.show(text)
+
+    def availability_issue(self, deadline=None):
+        return ""
+
     def insert_pinned(self, text, deadline, operation, prefix, permit, cancelled):
         raise NotImplementedError
 
@@ -335,6 +341,33 @@ class ClipboardTarget(Target):
         return Landing(reason="clipboard target")
 
 
+class RefusedTarget(Target):
+    kind = "refused"
+    clipboard_fallback = False
+
+    def __init__(self, window, app_id, reason):
+        super().__init__(NotifyPreview("dictate"), window, app_id)
+        self.reason = reason
+
+    def describe(self):
+        return self.reason
+
+    def _land(self, text, deadline, operation_id, prefix):
+        return Landing(reason=self.reason)
+
+
+def terminal_target(destination, window):
+    """Terminal destinations resolve here; future adapters precede plain typing."""
+    from . import nvim
+    from .nvim_target import NeovimTarget
+    registration, reason = nvim.resolve(destination)
+    if reason:
+        return RefusedTarget(window, destination.app_id, reason)
+    if registration is not None:
+        return NeovimTarget(window, destination.app_id, registration)
+    return None
+
+
 def bind(ime: InputMethod | None, cfg: DictationConfig, landing: bool, *,
          activation_wait: float = ACTIVATION_WAIT) -> Target:
     """Check the window on both sides of activation acquisition.
@@ -351,7 +384,13 @@ def bind(ime: InputMethod | None, cfg: DictationConfig, landing: bool, *,
     while focused.id is None and activation_wait > ACTIVATION_WAIT and time.monotonic() < deadline:
         time.sleep(0.1)
         focused = focus.focused(timeout=0.2)
-    window = Window(focused.id, cfg.require_same_window)
+    window = Window(focused.id, cfg.require_same_window, focused.pid)
+    terminal_editor = terminal_target(focused, window)
+    if terminal_editor is not None:
+        if focus.focused(timeout=0.2) != focused:
+            terminal_editor.cancel()
+            return RefusedTarget(window, focused.app_id, "Focus changed while binding Neovim; terminal typing refused")
+        return terminal_editor
     editor = (EmacsTarget(NotifyPreview("dictate"), window, focused.app_id, pid=focused.pid)
               if focused.app_id == "emacs" else None)
     generation = None

@@ -59,23 +59,25 @@ class SessionTarget:
                                        else u.raw or u.live) for u in snapshots
                                      if u.id != exclude and u.id not in self._omitted))
 
-    def field_issue(self):
+    def field_issue(self, deadline=None):
         """No synthetic-key fallback unless explicitly enabled for this session."""
         if isinstance(self.target, PinnedEditorTarget):
-            return ""
+            return self.target.availability_issue(deadline)
         if isinstance(self.target, ImeTarget):
             return ("" if self.target.ime.activation() == self.target.preview.generation
                     else "Text field is no longer active")
         if isinstance(self.target, WtypeTarget) and self.allow_typing:
             return ""
-        return "No text field detected"
+        return getattr(self.target, "reason", "No text field detected")
 
-    def _show(self, text):
+    def _show(self, text, deadline=None):
         if self.closed or self.departed.is_set():
             return
         preview = self.target.preview
         if isinstance(preview, ImePreview) and preview.ime.activation() != preview.generation:
             self._fallback.show(text)
+        elif deadline is not None and isinstance(self.target, PinnedEditorTarget):
+            self.target.show_tail(text, deadline)
         else:
             preview.show(text)
 
@@ -103,7 +105,7 @@ class SessionTarget:
             if self.closed or self.failed.is_set() or cancelled.is_set() or time.monotonic() >= deadline:
                 return Landing(reason="persistent destination is unavailable")
             target = self.target
-            if issue := self.field_issue():
+            if issue := self.field_issue(deadline):
                 self.failed.set()
                 return Landing(reason=issue)
             if self.departed.is_set() and not isinstance(target, PinnedEditorTarget):
@@ -141,7 +143,7 @@ class SessionTarget:
             if landing.landed:
                 self._omitted.add(identity)
                 self.target.prefix = " " if text and not text[-1].isspace() else ""
-                self._show(tail)
+                self._show(tail, deadline)
                 self._last = tail
             else:
                 self.failed.set()

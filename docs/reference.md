@@ -77,6 +77,25 @@ reported as uncertain: inspect the field and the saved transcript before
 repeating it. Buffer text edits are grouped atomically; terminal writes cannot
 be rolled back.
 
+Terminal Neovim uses the same pinned-editor interface, with a separate Lua
+implementation. With the [plugin](../contrib/nvim/README.md) loaded at startup,
+the normal daemon keys resolve a uniquely focused, responding Neovim under the
+terminal's PID and insert through its buffer API. Neovim uses inline virtual text
+at an advancing extmark, including persistent previews. It keeps that position
+when the cursor moves, unlike Emacs's follow-point behavior. Every RPC has a
+timeout; Lua checks expiry and the journal permit before insertion. Failed pins
+or insertions never become terminal keystrokes. Unresolved audio/text stays in
+recovery, and uncertain insertion is never retried automatically.
+
+Registrations are per instance. Focus is unconfirmed until `FocusGained` or
+`VimResume`; switch away and back if no initial focus event arrives. In a known
+terminal, a Neovim descendant with no validated focused registration causes
+refusal. Without such a descendant, ordinary terminal delivery stays unchanged.
+This conservatively refuses a shell beside Neovim in another Ghostty tab.
+Conversely, a lost focus event can leave a stale true claim; ancestry cannot
+identify Ghostty tabs. Detached tmux/remote processes can escape that ancestry
+check. See the plugin README for setup and the precise limits.
+
 When a generic field loses focus, applications may keep or discard its
 provisional text without reporting what happened. Voicekey stops the session
 and preserves pending text instead of guessing which field or text to replace.
@@ -462,15 +481,15 @@ forces a cut during uninterrupted speech. All three settings are configurable.
 
 - `"pause"` (default): leaving the starting window stops listening, including
   switching to another window of the same application. Already-recorded
-  speech for Emacs finishes through its original buffer pin, without checking
+  speech for Emacs or Neovim finishes through its original buffer pin, without checking
   focus. Pending text for generic destinations is kept in recovery.
   A tap starts a fresh session; returning never resumes automatically.
 - `"follow"` (Niri): focus events cut captured audio. Speech before the switch
   belongs to the old destination; new speech belongs to the new one. Pending
   generic text stays in recovery even if you return before transcription ends.
-  Pending Emacs text can finish through its original acknowledged buffer pin.
+  Pending editor text can finish through its original acknowledged buffer pin.
   New destinations have separate previews, polish styles and polish context.
-- `"pin"`: retain the starting destination. Emacs can receive dictation in its
+- `"pin"`: retain the starting destination. Emacs and Neovim can receive dictation in its
   pinned buffer while you read another window. Generic destinations pause when
   their original field/window becomes unavailable.
 
@@ -482,13 +501,16 @@ tolerated; two consecutive unknown replies stop capture with a tracking error.
 Without events, brief away-and-back transitions between polls can go unobserved.
 An acknowledged Emacs buffer without a compositor window identity remains
 usable through its pin; the listening notice says window tracking is unavailable.
-It cannot promise pause-on-window-switch in that case. Policies do not distinguish
-tabs, terminal panes or buffers within a window. Emacs follows point within its pin.
+It cannot promise pause-on-window-switch in that case. Neovim additionally reports
+terminal-local focus events to the daemon's control socket; pause/follow process
+them just like window switches. This depends on terminal focus reporting (tmux
+needs `focus-events on`). Other application tabs and fields remain invisible.
+Emacs follows point within its pin; Neovim retains its advancing extmark.
 
 Every persistent destination must expose a live input-method field or an
-acknowledged Emacs buffer. Opening speech is retained for recovery if no field
-is found or Emacs refuses its pin. That refusal is final for the session: a late
-Emacs acknowledgement cannot authorize insertion of its recovery text. The guard
+acknowledged editor buffer. Opening speech is retained for recovery if no field
+is found or the editor refuses its pin. That refusal is final for the session: a late
+editor acknowledgement cannot authorize insertion of its recovery text. The guard
 is checked at binding, during capture
 (including with a focus watcher), and before delivery. Missing or expired
 fields pause listening and preserve pending speech; field loss never triggers

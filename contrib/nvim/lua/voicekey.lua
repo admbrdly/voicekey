@@ -53,8 +53,8 @@ end
 
 local function place(capture, row, col)
   local opts = { id = capture.mark, right_gravity = true }
-  if config.marker then
-    opts.virt_text = { { labels[capture.state], "Comment" } }
+  if config.marker or capture.preview ~= nil then
+    opts.virt_text = { { capture.preview or labels[capture.state] or "", "Comment" } }
     opts.virt_text_pos = "inline"
   end
   capture.mark = api.nvim_buf_set_extmark(capture.buf, ns, row, col, opts)
@@ -105,39 +105,22 @@ local function spaced(buf, row, col, text)
   return text
 end
 
-local function deliver(capture, result)
+-- Shared by client capture and daemon pins; never selects a window/buffer.
+local function position(capture)
+  if not capture or not api.nvim_buf_is_valid(capture.buf) then
+    return nil, "buffer closed"
+  end
+  if not api.nvim_buf_is_loaded(capture.buf) then return nil, "buffer unloaded" end
+  if not vim.bo[capture.buf].modifiable then return nil, "buffer is not modifiable" end
+  local pos = api.nvim_buf_get_extmark_by_id(capture.buf, ns, capture.mark, {})
+  if #pos == 0 then return nil, "insertion point lost" end
+  return pos
+end
+
+local function put(capture, text, keep_pin)
+  local pos, reason = position(capture)
+  if not pos then return false, reason end
   local buf = capture.buf
-  if not api.nvim_buf_is_valid(buf) then
-    notify("buffer closed; " .. recovery_hint(), vim.log.levels.WARN)
-    return
-  end
-  local pos = api.nvim_buf_get_extmark_by_id(buf, ns, capture.mark, {})
-  api.nvim_buf_del_extmark(buf, ns, capture.mark)
-  if result.signal ~= 0 and result.code == 0 then
-    result.code = 128 + result.signal
-  end
-  if capture.cancelled then
-    notify("cancelled")
-    return
-  end
-  local text = prepare(result.stdout or "")
-  if result.code ~= 0 or text == "" then
-    local reason = result.code ~= 0 and ("exit " .. result.code) or "no speech"
-    local detail = vim.trim(capture.stderr:match("[^\n]*voicekey capture:[^\n]*") or "")
-    if detail:find("No such file", 1, true) or detail:find("Connection refused", 1, true) then
-      detail = detail .. " (is voicekey.service running?)"
-    end
-    notify("no text (" .. reason .. ")" .. (detail ~= "" and ": " .. detail or ""), vim.log.levels.WARN)
-    return
-  end
-  if #pos == 0 then
-    notify("insertion point lost; " .. recovery_hint(), vim.log.levels.WARN)
-    return
-  end
-  if not vim.bo[buf].modifiable then
-    notify("buffer is not modifiable; " .. recovery_hint(), vim.log.levels.WARN)
-    return
-  end
   local row, col = pos[1], pos[2]
   text = spaced(buf, row, col, text)
   local lines = vim.split(text, "\n", { plain = true })
@@ -151,14 +134,125 @@ local function deliver(capture, result)
   end
   local ok, err = pcall(api.nvim_buf_set_text, buf, row, col, row, col, lines)
   if not ok then
-    notify("insert failed (" .. err .. "); " .. recovery_hint(), vim.log.levels.WARN)
-    return
+    return false, "insert failed (" .. err .. ")", true
   end
   local end_row = row + #lines - 1
   local end_col = (#lines == 1 and col or 0) + #lines[#lines]
-  for _, win in ipairs(follow) do
-    api.nvim_win_set_cursor(win, { end_row + 1, end_col })
+  if keep_pin then
+    capture.preview = ""
+    place(capture, end_row, end_col)
+  else
+    api.nvim_buf_del_extmark(buf, ns, capture.mark)
   end
+  for _, win in ipairs(follow) do
+    -- Cursor housekeeping must not turn a confirmed buffer edit into a retry.
+    pcall(api.nvim_win_set_cursor, win, { end_row + 1, end_col })
+  end
+  return true
+end
+
+local function remove(capture)
+  if capture and api.nvim_buf_is_valid(capture.buf) then
+    pcall(api.nvim_buf_del_extmark, capture.buf, ns, capture.mark)
+  end
+end
+
+local function deliver(capture, result)
+  if result.signal ~= 0 and result.code == 0 then result.code = 128 + result.signal end
+  if capture.cancelled then remove(capture); notify("cancelled"); return end
+  local text = prepare(result.stdout or "")
+  if result.code ~= 0 or text == "" then
+    remove(capture)
+    local reason = result.code ~= 0 and ("exit " .. result.code) or "no speech"
+    local detail = vim.trim(capture.stderr:match("[^\n]*voicekey capture:[^\n]*") or "")
+    if detail:find("No such file", 1, true) or detail:find("Connection refused", 1, true) then
+      detail = detail .. " (is voicekey.service running?)"
+    end
+    notify("no text (" .. reason .. ")" .. (detail ~= "" and ": " .. detail or ""), vim.log.levels.WARN)
+    return
+  end
+  local ok, reason = put(capture, text, false)
+  if not ok then
+    remove(capture)
+    notify(reason .. "; " .. recovery_hint(), vim.log.levels.WARN)
+  end
+end
+
+-- Daemon protocol. Requests carry a wall-clock expiry and insertions additionally
+-- carry the journal's revocable permission file and unique operation ID.
+local pins, operations = {}, {}
+local function now()
+  local seconds, micros = vim.uv.gettimeofday()
+  return seconds + micros / 1000000
+end
+local function refused(reason) return { status = "refused", reason = reason } end
+
+local function dispatch(request)
+  local method, args = request.method, request.args
+  if type(request.expires) ~= "number" or now() >= request.expires then
+    return refused("Neovim request expired")
+  end
+  -- Bound caches: abandoned pins expire after a day; operation results are kept
+  -- through their execution deadline, after which the request itself is refused.
+  for id, pin in pairs(pins) do
+    if now() - pin.used > 86400 then remove(pin); pins[id] = nil end
+  end
+  for id, op in pairs(operations) do if now() > op.expires then operations[id] = nil end end
+  if method == "status" then
+    return { status = "ok", pid = vim.fn.getpid(), server = vim.v.servername,
+      focused = vim.g.voicekey_focused == true }
+  elseif method == "pin" then
+    if vim.g.voicekey_focused ~= true then return refused("Neovim is not focused") end
+    if active then return refused("Neovim client capture is active") end
+    local buf = api.nvim_get_current_buf()
+    if not vim.bo[buf].modifiable or vim.bo[buf].buftype ~= "" then
+      return refused("buffer is not an editable text buffer")
+    end
+    local mode = api.nvim_get_mode().mode
+    if mode:find("^no") or mode:find("^[vV]") or mode:byte() == 22 then
+      return refused("selection or operator pending")
+    end
+    if not pins[args.id] then
+      local pin = { buf = buf, used = now(), preview = "[voicekey: listening]" }
+      place(pin, insertion_point())
+      pins[args.id] = pin
+    end
+    local pin = pins[args.id]
+    local pos, reason = position(pin)
+    if not pos then return refused(reason) end
+    local line = api.nvim_buf_get_lines(buf, pos[1], pos[1] + 1, false)[1]
+    return { status = "ok", before = line:sub(1, pos[2]), buffer = api.nvim_buf_get_name(buf) }
+  elseif method == "unpin" then
+    remove(pins[args.id]); pins[args.id] = nil
+    return { status = "ok" }
+  end
+  if method == "insert" and operations[args.operation] then return operations[args.operation].reply end
+  local pin = pins[args.id]
+  local pos, reason = position(pin)
+  if not pos then return refused(reason) end
+  pin.used = now()
+  if method == "check" then return { status = "ok" } end
+  if method == "preview" then
+    pin.preview = (args.text or ""):gsub("[\r\n]", " ↵ ")
+    place(pin, pos[1], pos[2])
+    return { status = "ok" }
+  elseif method == "insert" then
+    if args.permit and args.permit ~= vim.NIL and vim.fn.filereadable(args.permit) ~= 1 then return refused("insertion cancelled") end
+    local text = prepare(args.text)
+    if now() >= request.expires then return refused("insertion expired") end
+    local ran, ok, why, uncertain = pcall(put, pin, text, args.keep_pin)
+    if not ran then why, ok, uncertain = tostring(ok), false, true end
+    local reply = ok and { status = "ok" } or { status = uncertain and "unknown" or "refused", reason = why }
+    operations[args.operation] = { reply = reply, expires = request.expires }
+    if not args.keep_pin then remove(pin); pins[args.id] = nil end
+    return reply
+  end
+  return refused("unknown Neovim method")
+end
+
+function M.rpc(payload)
+  local ok, reply = pcall(function() return dispatch(vim.json.decode(payload)) end)
+  return vim.json.encode(ok and reply or { status = "unknown", reason = tostring(reply) })
 end
 
 --- Start recording; the transcript lands at the current cursor position.

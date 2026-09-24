@@ -5,6 +5,18 @@ session previews, ordered delivery and the persistent controller on top of
 the [audited foundation](audit-2026-09-05.md). Persistent listening is now
 implemented. The earlier feasibility study is historical context.
 
+**Pinned editor interface (2026-09-24).** Persistent capture now depends on
+`PinnedEditorTarget` for pin acknowledgement, validity, repeated insertion,
+description and release; Emacs's protocol and follow-point behavior are unchanged.
+Terminal Neovim implements the second adapter using its existing server socket,
+per-instance registration and a Lua extmark. Its preview is virtual text in the
+buffer, not Wayland preedit. Plugin focus reports enter the same pause/follow
+boundary handling as compositor events, including within a single Ghostty window.
+Neovim retains an advancing insertion position rather than following point.
+See [implementation and verification](neovim-integration.md) for the terminal
+policy, remaining focus uncertainty and testing. Earlier implementation notes
+below describe the Emacs-only starting point.
+
 **Destination safety (2026-09-22).** The default is now pause-on-window-switch,
 with follow and pin as explicit alternatives. All persistent sessions require
 an input-method field or acknowledged Emacs buffer. A one-session typing

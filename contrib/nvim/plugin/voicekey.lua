@@ -21,42 +21,73 @@ end, {
   desc = "Dictate into the buffer with voicekey",
 })
 
--- While this Neovim has terminal focus, record its server address so that a
--- compositor keybinding (contrib/nvim/voicekey-route) can dictate into it
--- instead of sending input-method text to the terminal. Relies on the
--- terminal's focus reporting; set vim.g.voicekey_track_focus = false to skip.
-if vim.g.voicekey_track_focus == false or vim.v.servername == "" then
-  return
-end
-
+-- Per-instance discovery for the daemon, plus the legacy router's focus file.
+-- Terminal focus reports are evidence, not an atomic compositor tab identity.
+if vim.g.voicekey_track_focus == false or vim.v.servername == "" then return end
 local runtime = vim.env.XDG_RUNTIME_DIR
-if not runtime or runtime == "" then
-  return
-end
+if not runtime or runtime == "" then return end
 local dir = runtime .. "/voicekey"
 local path = dir .. "/nvim-focus"
+local registration = dir .. "/nvim/" .. vim.fn.getpid() .. ".json"
+local terminal_focus = false
+local sequence = 0
+vim.g.voicekey_focused = false
 
-local function claim()
-  if vim.fn.isdirectory(dir) == 0 and vim.fn.mkdir(dir, "p", tonumber("700", 8)) == 0 then
-    return
-  end
-  local tmp = ("%s.%d"):format(path, vim.fn.getpid())
-  if pcall(vim.fn.writefile, { vim.v.servername }, tmp) then
+local function report(focused)
+  vim.g.voicekey_focused = focused
+  sequence = sequence + 1
+  vim.fn.mkdir(dir .. "/nvim", "p", tonumber("700", 8))
+  local record = vim.json.encode({ pid = vim.fn.getpid(), server = vim.v.servername })
+  local tmp = registration .. ".tmp"
+  if pcall(vim.fn.writefile, { record }, tmp) then
     vim.fn.setfperm(tmp, "rw-------")
-    vim.uv.fs_rename(tmp, path)
+    vim.uv.fs_rename(tmp, registration)
+  end
+  -- Async local notification: no subprocess, prompt or blocked editor loop.
+  local pipe, timer = vim.uv.new_pipe(false), vim.uv.new_timer()
+  local function close()
+    if not timer:is_closing() then timer:stop(); timer:close() end
+    if not pipe:is_closing() then pipe:close() end
+  end
+  local message = vim.json.encode({ command = "editor-focus", args = {
+    pid = vim.fn.getpid(), server = vim.v.servername, focused = focused,
+    sequence = sequence,
+  } }) .. "\n"
+  timer:start(1500, 0, close)
+  pipe:connect(dir .. "/control.sock", function(err)
+    if err then close(); return end
+    pipe:write(message, function() close() end)
+  end)
+  if focused then
+    local legacy = path .. "." .. vim.fn.getpid()
+    if pcall(vim.fn.writefile, { vim.v.servername }, legacy) then
+      vim.fn.setfperm(legacy, "rw-------")
+      vim.uv.fs_rename(legacy, path)
+    end
+  else
+    local ok, lines = pcall(vim.fn.readfile, path, "", 1)
+    if ok and lines[1] == vim.v.servername then os.remove(path) end
   end
 end
 
-local function release()
-  local ok, lines = pcall(vim.fn.readfile, path, "", 1)
-  if ok and lines[1] == vim.v.servername then
-    os.remove(path)
-  end
+local function gain()
+  terminal_focus = true
+  report(vim.bo.buftype == "")
 end
-
+local function lose()
+  terminal_focus = false
+  report(false)
+end
 local group = vim.api.nvim_create_augroup("voicekey_focus", { clear = true })
-vim.api.nvim_create_autocmd({ "VimEnter", "FocusGained" }, { group = group, callback = claim })
-vim.api.nvim_create_autocmd({ "FocusLost", "VimLeavePre" }, { group = group, callback = release })
-if vim.v.vim_did_enter == 1 then
-  claim()
-end
+vim.api.nvim_create_autocmd({ "FocusGained", "VimResume" }, { group = group, callback = gain })
+vim.api.nvim_create_autocmd({ "FocusLost", "VimSuspend" }, { group = group, callback = lose })
+vim.api.nvim_create_autocmd({ "BufEnter", "TermEnter", "TermLeave" }, { group = group, callback = function()
+  local focused = terminal_focus and vim.bo.buftype == ""
+  if focused ~= vim.g.voicekey_focused then report(focused) end
+end })
+vim.api.nvim_create_autocmd("VimLeavePre", { group = group, callback = function()
+  lose()
+  os.remove(registration)
+end })
+vim.api.nvim_create_autocmd("VimEnter", { group = group, callback = function() report(terminal_focus and vim.bo.buftype == "") end })
+if vim.v.vim_did_enter == 1 then report(false) end

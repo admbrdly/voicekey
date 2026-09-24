@@ -1,22 +1,16 @@
 # Neovim
 
-Dictate into the current Neovim buffer. The plugin runs
-`python -m voicekey --capture-to-stdout` and inserts the transcript with
-`nvim_buf_set_text`. Nothing is typed, so the editor mode cannot turn dictated
-words into commands, and this path needs no `input` group or input method.
-Neovim in a terminal is otherwise the case the daemon's desktop delivery cannot
-serve safely: Ghostty and other terminals accept input-method text, so words
-committed in normal mode would run as commands.
+The daemon's normal dictation keys (including Right Win and Copilot/F23) now
+resolve focused terminal Neovim to its buffer API, in single-shot and persistent
+mode. No compositor binding or F12 is needed. The daemon still owns the
+microphone, recognizers, polish and journal. The widget says **Neovim**.
 
-`--capture-to-stdout` is a thin client of the running daemon. The daemon records
-and transcribes with the models it already has loaded (nothing is loaded per
-capture), and its own configuration applies: `[backend]`, `[polish]`,
-`[text.word_overrides]` and the dictation hook.
+Requires Neovim 0.10+, the plugin loaded at startup, a local Neovim server socket,
+and an updated daemon. Live and provisional text appears as inline virtual text
+at the insertion pin, never as Wayland preedit in the terminal.
 
-Requires Neovim 0.10 and a running, up-to-date voicekey daemon
-(`voicekey.service`) with client capture support; restart the service after
-upgrading. With no daemon, or an older one, the plugin warns and inserts
-nothing.
+`:VoiceKey` remains an independent single-shot client of the same daemon using
+`--capture-to-stdout`. It does not create another microphone/model owner.
 
 ## Install
 
@@ -26,10 +20,7 @@ With lazy.nvim, from your checkout:
 {
   dir = "~/src/voicekey/contrib/nvim",
   name = "voicekey",
-  cmd = "VoiceKey",
-  keys = {
-    { "<F12>", function() require("voicekey").toggle() end, mode = { "n", "i" }, desc = "Dictate" },
-  },
+  lazy = false, -- registration and focus reporting must run before the key press
 }
 ```
 
@@ -37,12 +28,11 @@ Without a plugin manager, add the directory to `runtimepath`:
 
 ```lua
 vim.opt.runtimepath:append(vim.fn.expand("~/src/voicekey/contrib/nvim"))
-vim.keymap.set({ "n", "i" }, "<F12>", function() require("voicekey").toggle() end, { desc = "Dictate" })
 ```
 
-## Use
+## Optional single-shot client
 
-Press the key to start and again to finish. `:VoiceKey cancel` discards the
+Run `:VoiceKey` to start and again to finish. `:VoiceKey cancel` discards the
 recording. `:VoiceKey start`, `stop` and `toggle` are also available.
 
 - The transcript lands where the cursor was when recording started: after
@@ -74,44 +64,85 @@ Restart the daemon after upgrading to enable client labels; older daemons with
 capture support still work, with a generic status label. This is a display name,
 not a change to the daemon's default polish style.
 
-## One keybinding for Neovim and everything else
+## Normal daemon keys and destination safety
 
-The daemon's input-method delivery cannot see Neovim's mode, so dictating into
-a terminal with it would send words that normal mode runs as commands.
-`voicekey-route` lets one Niri keybinding choose the safe path:
+Load `plugin/voicekey.lua` at startup, rather than lazy-loading on `:VoiceKey`.
+`vim.v.servername` must name a local socket (Neovim normally creates one; an
+explicit `nvim --listen /path/to/socket` also works). The plugin registers each
+instance separately under `$XDG_RUNTIME_DIR/voicekey/nvim/<pid>.json`.
+The daemon checks that the socket responds, its PID matches the registration,
+the process belongs to the focused terminal when the compositor supplies a PID,
+and the plugin reports focus. Multiple focused claims are refused.
 
-> **Warning:** focus tracking relies on the terminal reporting focus changes
-> for windows, tabs and splits. Where it does not (tmux without
-> `focus-events on`, some tab setups), a Neovim that lost focus can stay
-> recorded, and the keybinding would dictate into it while you look at
-> something else. Check this before relying on it.
+Focus starts **unconfirmed** until `FocusGained` (or `VimResume`). If the terminal
+does not send an initial event, switch away and back once after opening Neovim.
+`FocusLost`, suspension, or entering a Neovim terminal buffer clears focus.
+The plugin sends these changes directly to the daemon's control socket without
+waiting for the keyboard listener's next tick. For tmux, enable:
 
-- If the daemon is listening, it stops it, wherever focus is.
-- If a terminal is focused, it toggles `:VoiceKey` in the Neovim that has
-  focus there, and refuses (with a notification) when none does, for example
-  at a shell prompt.
-- Otherwise, it starts the daemon for input-method dictation.
-
-```kdl
-Mod+Shift+D hotkey-overlay-title="Dictate" { spawn "/home/you/src/voicekey/contrib/nvim/voicekey-route"; }
+```tmux
+set -g focus-events on
 ```
 
-It needs `jq`, and `plugin/voicekey.lua` loaded at startup (with lazy.nvim,
-`lazy = false`): each Neovim records its server address in
-`$XDG_RUNTIME_DIR/voicekey/nvim-focus` on `FocusGained` and removes it on
-`FocusLost`, using the terminal's focus reporting. Set
-`vim.g.voicekey_track_focus = false` to turn that off. Terminal app IDs default
-to Ghostty, foot, kitty, Alacritty and WezTerm; override them with
-`VOICEKEY_TERMINALS`. The daemon is driven through `--control start` and
-`--control stop`; if it is not running, the script says so in a notification.
+Check focus reporting with your actual terminal tabs and tmux panes. A lost
+`FocusLost` can leave one stale true flag and send dictation to the wrong Neovim
+buffer. Ghostty uses one PID across windows/tabs; ancestry cannot distinguish
+them. A detached tmux server, SSH, containers, hidden process information or a
+renamed process can also defeat the ancestry check. Remote Neovim is unsupported.
 
-The daemon's own hotkey (`dictate_key`, Right Super by default) bypasses this
-script when starting dictation and sends input-method text to the focused
-terminal. **Listening → Ghostty** means terminal delivery, not the Neovim
-plugin. Use `:VoiceKey`, the plugin's key, or a separate `voicekey-route` binding
-for buffer insertion. Binding the daemon's existing key in Niri does not disable
-its low-level keyboard listener. During an existing client capture, the daemon
-key finishes that capture instead of starting desktop dictation.
+Terminal policy (Ghostty, foot, kitty, Alacritty, WezTerm; additional app IDs via
+`VOICEKEY_TERMINALS` in the daemon environment):
+
+- A uniquely validated Neovim gets API delivery.
+- No valid registration, but a Neovim descendant of the terminal exists: refuse
+  and retain speech/text for recovery. A shell tab beside Neovim in the same
+  Ghostty process is therefore also refused.
+- No Neovim descendant: retain ordinary input-method delivery (or the existing
+  configured fallback). This is not proof that a shell or another terminal
+  application is safe for typing.
+
+If the compositor supplies no PID, discovery considers all local Neovims and
+therefore refuses more often. There is no narrower reliable tab/pane identity in
+this integration. A socket failure, dead/unloaded/unmodifiable buffer or pin
+failure never falls back to terminal input. Timeouts after submission are
+uncertain: inspect the buffer and journal before manually recovering text.
+
+## Persistent sessions
+
+The daemon's tap-to-listen and hold-to-talk behavior is unchanged. A session pins
+one buffer position and inserts each utterance in order, advancing the extmark.
+Edits elsewhere move the mark with the buffer. Moving the cursor does **not**
+retarget it: this deliberately differs from Emacs's follow-point behavior.
+Normal-mode pins start after the cursor character; insert-mode pins start at it.
+Selections and pending operators are refused at pin acquisition.
+
+- **pause**: a window switch or reported terminal-local focus loss stops capture;
+  already-recorded speech still finishes through the original pin.
+- **follow**: a focus event cuts the audio, then the same daemon resolver chooses
+  the next destination. Old editor pins remain until earlier speech drains, then
+  are released. An unverified shell/terminal destination pauses with recovery.
+- **pin**: capture and insertion may continue into the original buffer in the
+  background. Editor/socket loss stops capture and preserves undelivered speech.
+
+The plugin's events cover terminal tabs/panes only when the terminal forwards
+those events. Moving between ordinary buffers inside Neovim keeps the original
+pin. Focus boundaries are observed events, not exact physical input timestamps.
+Exiting Neovim removes its registration; periodic pin health checks also catch a
+crash or vanished socket even if the exit notification cannot be sent.
+
+## Upgrade and legacy routing
+
+Update the installed Python package if it is not an editable checkout, then
+restart `voicekey.service` yourself. Change a lazy plugin declaration to
+`lazy = false` in `init.lua`, then restart Neovim to reload both Lua files and
+install focus reporting. No Emacs reload, new keybinding or model change is
+needed. If already loading the plugin at startup, no `init.lua` change is needed.
+
+`voicekey-route` is retained for compatibility with existing explicit Niri
+bindings. It still toggles the single-shot `:VoiceKey` client and uses the older
+`nvim-focus` file; it lacks the daemon resolver's ancestry and ambiguity checks.
+It is not required or called by the daemon. Remove an old routing binding if you
+want to use only the normal daemon keys; do not bind the same key to both paths.
 
 ## Options
 
@@ -132,6 +163,9 @@ require("voicekey").setup({
 
 ## Tests
 
-`nvim --headless -u NONE -i NONE -l tests/nvim-tests.lua`, also run by
-`python -m unittest` when Neovim 0.10 or newer is installed. The tests use a
-stand-in capture command, not the microphone.
+`python -m unittest` runs the existing client-capture Lua tests and the isolated
+RPC/resolver/key/persistent tests in `tests/test_nvim_target.py` when Neovim 0.10+
+is installed. Tests use temporary sockets/runtime directories, fake compositor
+and process trees, synthetic PCM and stubbed recognizers. No live editor or
+microphone is used. See [implementation report](../../docs/neovim-integration.md)
+for baseline/results and the remaining real-microphone checks.

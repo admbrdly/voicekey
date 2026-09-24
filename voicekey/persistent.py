@@ -47,6 +47,7 @@ class PersistentSession:
         self._focus_lock = threading.Lock()
         self.focused = None
         self._focus_serial = 0
+        self._editor_events = {}
         self.ready = threading.Event()
         self.vad, self.vad_slot, self.streaming = vad, vad_slot, streaming
         self.segmenter = Segmenter(cfg.persistent)
@@ -80,10 +81,12 @@ class PersistentSession:
         return SessionTarget(self.id, target, self.pipeline.ledger, scoped=True,
                              allow_typing=self.allow_typing)
 
-    def focus_changed(self, destination):
+    def focus_changed(self, destination, *, force=False, expected=None):
         """Called by the event reader; no desktop I/O on this thread."""
         with self._focus_lock:
-            if (self.focused is not None and (destination.id, destination.app_id) == (self.focused.id, self.focused.app_id)) or self.stopping.is_set():
+            if expected is not None and self.focused != expected:
+                return
+            if (not force and self.focused is not None and (destination.id, destination.app_id) == (self.focused.id, self.focused.app_id)) or self.stopping.is_set():
                 return
             self.focused = destination
             self._focus_serial += 1
@@ -98,6 +101,30 @@ class PersistentSession:
         if self.policy == "pause":
             self.request_stop("Window changed", paused=True, attention=False)
         self.wake.set()
+
+    def editor_focus_changed(self, event):
+        """Terminal-local focus evidence uses the same PCM boundary as Niri.
+
+        Only discovery knows terminal/editor details. The session still rebinds
+        through its original resolver, and retains old pins until work drains.
+        """
+        destination = self.focused
+        if destination is None:
+            return
+        key = (event['pid'], event['server'])
+        identity = getattr(self.target.target, 'focus_identity', None)
+        if not event['focused'] and key != identity:
+            return  # a background editor cannot pause the foreground destination
+        with self._focus_lock:
+            previous = self._editor_events.get(key)
+            if previous is not None and event['sequence'] <= previous[0]:
+                return
+            self._editor_events[key] = (event['sequence'], event['focused'])
+            if previous is None and event['focused'] and key == identity:
+                return  # startup/gain report for the editor already bound
+            if previous is not None and event['focused'] == previous[1]:
+                return
+        self.focus_changed(destination, force=True, expected=destination)
 
     def _drain_audio(self, end):
         """Classify through a focus boundary, including a partial VAD window."""
@@ -372,7 +399,7 @@ class PersistentSession:
                 self.pipeline.spacing.prefix(self.target.target.window_id))
             self.current.target = self.target.attempt(self.current.id)
             self.focused = focus.Focus(self.target.target.window_id, self.target.target.app_id,
-                                       getattr(getattr(self.target.target, "pinning", None), "pid", None))
+                                       self.target.target.window.pid)
             if (self.policy == "pause" and self.target.target.window_id is None
                     and isinstance(self.target.target, PinnedEditorTarget)):
                 self.tracking_notice = "Window tracking unavailable; dictating to the original buffer"
@@ -398,12 +425,11 @@ class PersistentSession:
             while True:
                 self.wake.wait(0.05)
                 self.wake.clear()
-                if self.watcher is not None:
-                    while not self.focus_events.empty():
-                        end, destination, serial = self.focus_events.get_nowait()
-                        if not self._move_destination(end, destination, serial):
-                            break
-                    self._collect_targets()
+                while not self.focus_events.empty():
+                    end, destination, serial = self.focus_events.get_nowait()
+                    if not self._move_destination(end, destination, serial):
+                        break
+                self._collect_targets()
                 if time.monotonic() - last_poll >= poll_seconds:
                     self._check_destination()
                     last_poll = time.monotonic()

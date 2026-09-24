@@ -16,9 +16,9 @@ import threading
 import time
 
 PROTOCOL_VERSION = 1
-CAPABILITIES = ['capture-client-name']
+CAPABILITIES = ['capture-client-name', 'editor-focus']
 CAPTURE_COMMANDS = ('capture-start', 'capture-finish', 'capture-cancel')
-COMMANDS = ('status', 'start', 'start-typing', 'stop', 'pause-on-switch', 'follow-focus', 'pin', 'free-memory') + CAPTURE_COMMANDS
+COMMANDS = ('status', 'start', 'start-typing', 'stop', 'pause-on-switch', 'follow-focus', 'pin', 'free-memory', 'editor-focus') + CAPTURE_COMMANDS
 
 
 def socket_path():
@@ -32,7 +32,8 @@ class Receipt:
 
 
 class ControlServer:
-    def __init__(self, path=None):
+    def __init__(self, path=None, *, editor_focus=None):
+        self.editor_focus = editor_focus
         self.path = Path(path) if path else socket_path()
         self.commands = queue.Queue(maxsize=32)
         self.responses = queue.SimpleQueue()
@@ -163,6 +164,20 @@ class ControlServer:
                                     if message.get('id') is not None and (isinstance(message['id'], bool) or
                                             not isinstance(message['id'], (str, int))):
                                         raise ValueError('id must be a string or integer')
+                                    if message['command'] == 'editor-focus':
+                                        args = message.get('args', {})
+                                        peer_pid, _, _ = struct.unpack('3i', client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+                                        if (set(args) != {'pid', 'server', 'focused', 'sequence'}
+                                                or type(args['pid']) is not int or args['pid'] != peer_pid
+                                                or not isinstance(args['server'], str) or len(args['server']) > 4096
+                                                or type(args['focused']) is not bool
+                                                or type(args['sequence']) is not int or args['sequence'] < 1):
+                                            raise ValueError('Invalid editor focus event')
+                                        # Unlike controller commands this only marks a focus boundary.
+                                        # Do it on receipt, even while evdev select is asleep.
+                                        if self.editor_focus is not None:
+                                            self.editor_focus(args)
+                                        continue
                                     if message['command'] == 'status':
                                         send(client, {'type': 'reply', 'id': message.get('id'),
                                              'error': 'status takes no arguments' if message.get('args') else None,

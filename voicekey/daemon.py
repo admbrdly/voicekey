@@ -274,7 +274,7 @@ class Daemon:
     def run(self):
         fix_environment()
         self.gate.open()
-        self.control = ControlServer()
+        self.control = ControlServer(editor_focus=self._editor_focus)
         self.control.start()
         self.load()
         self.start_workers()
@@ -512,7 +512,8 @@ class Daemon:
                  "unavailable" if self.backend is None or self.vad is None else
                  "paused" if pause_reason else "idle")
         destination = (client_capture.target if client_capture is not None else
-                       persistent.target.target if persistent is not None else None)
+                       persistent.target.target if persistent is not None else
+                       self.session.target if self.session is not None else None)
         return {"state": state, "listening": listening, "client_capture": client_capture is not None,
                 "binding": persistent is not None and not persistent.ready.is_set(),
                 "models": self.model_state, "unload_pending": self._unload_requested,
@@ -524,7 +525,7 @@ class Daemon:
                 "allow_typing": persistent.allow_typing if persistent is not None else False,
                 "can_follow": focus.compositor() == "niri",
                 "destination": destination.describe() if destination is not None else "",
-                "destination_name": destination.application_name if destination is not None else "",
+                "destination_name": getattr(destination, "application_name", "") if destination is not None else "",
                 "model": self.cfg.backend.type,
                 "error": self.model_error or (self.backend_error or
                     ("Speech detector unavailable" if self.vad is None else "")
@@ -534,6 +535,13 @@ class Daemon:
         capture = self.client_capture
         if capture is not None and capture.id == identity:
             capture.completed(outcome, reason)
+
+    def _editor_focus(self, event):
+        session = self.persistent
+        if session is not None and session.focused is not None:
+            from . import nvim
+            if nvim.event_matches(session.focused, event['pid']):
+                session.editor_focus_changed(event)
 
     def command(self, command, *, args=None, client=None, request_id=None):
         if self._stopping:
