@@ -146,4 +146,3 @@ class NeovimTarget(PinnedEditorTarget):
             nvim.call(self.pinning.server, 'unpin', {'id': self.pinning.id}, timeout=.1)
         except nvim.NvimError:
             pass
-
