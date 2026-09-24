@@ -208,7 +208,7 @@ class RouteTests(unittest.TestCase):
         self.assertFalse((self.runtime / 'voicekey' / 'shell-session').exists())
 
     def test_idle_claude_code_and_codex_start_the_daemon(self):
-        for title in ('✳ Mail agent', 'codex', 'codex --model o5'):
+        for title in ('✳ Mail agent', 'codex | voicekey-nvim'):
             with self.subTest(title=title):
                 code, calls = self.route('com.mitchellh.ghostty', title=title)
                 self.assertEqual(code, 0)
@@ -217,7 +217,7 @@ class RouteTests(unittest.TestCase):
                 self.assertFalse((self.runtime / 'voicekey' / 'shell-session').exists())
 
     def test_working_claude_code_refuses(self):
-        for title in ('◐ Voicekey security review', '✶ Mail agent', 'codexfoo'):
+        for title in ('◐ Voicekey security review', '✶ Mail agent', 'codexfoo', 'codex ⠋ voicekey-nvim', 'codex', 'codex --model o5', 'codex | a | b', 'adam'):
             with self.subTest(title=title):
                 code, calls = self.route('com.mitchellh.ghostty', title=title)
                 self.assertEqual(code, 1)

@@ -6,8 +6,17 @@ terminal, through the daemon's input method, when:
 - Claude Code is idle: its title starts with `✳ `. While it works (spinner
   titles) dictation is refused, because permission dialogs appear then and
   a dictated "1" or "yes" could answer them.
-- Codex has focus: it sets no title, so bash's `codex …` command title from
-  [contrib/bash](../bash/README.md) identifies it.
+- Codex is idle. Codex titles show only the project by default; add the app
+  name in `~/.codex/config.toml`:
+
+  ```toml
+  [tui]
+  terminal_title = ["app-name", "spinner", "project"]
+  ```
+
+  The title is then `codex | <project>` only when idle; while Codex works it
+  is `codex <spinner> <project>`, and at startup plain `codex`. Only the idle
+  form is accepted.
 
 Submitting a Claude Code prompt stops that dictation first. Add the hook to
 `~/.claude/settings.json`:

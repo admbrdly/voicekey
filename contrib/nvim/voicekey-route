@@ -8,7 +8,7 @@
 #                              before the command runs (contrib/bash).
 #     Claude Code, idle     -> start the daemon; a UserPromptSubmit hook stops
 #                              it on submit (contrib/claude-code).
-#     Codex                 -> start the daemon; press again before submitting.
+#     Codex, idle           -> start the daemon; press again before submitting.
 #     anything else         -> refuse: letters could be commands.
 #   Other applications      -> start the daemon (input-method delivery).
 #
@@ -59,12 +59,16 @@ for terminal in $terminals; do
         exit 0
     fi
     # Titles: "❯ dir" from contrib/bash at the prompt; Claude Code shows "✳ "
-    # when idle and a spinner while working (permission dialogs come then);
-    # Codex sets none, so bash's "codex …" command title remains.
+    # when idle and a spinner while working (permission dialogs come then).
     case "$title" in
         "$mark"*) session=$shell_session ;;
         "✳ "*) session=$tui_session ;;
-        codex | "codex "*) session=$tui_session ;;
+        # Codex with tui.terminal_title = ["app-name", "spinner", "project"]
+        # shows "codex | <project>" only when idle; working it shows
+        # "codex <spinner> <project>". Anything else (startup, a trust or
+        # approval prompt) is refused.
+        "codex | "*" | "*) refuse "Codex is not idle; not dictating." ;;
+        "codex | "*) session=$tui_session ;;
         *) refuse "No Neovim, shell prompt, idle Claude Code or Codex has focus in this terminal; not dictating." ;;
     esac
     # Written first, so an Enter pressed at once still stops the daemon.
