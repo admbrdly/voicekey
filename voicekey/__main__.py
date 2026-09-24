@@ -10,8 +10,8 @@ import sys
 
 def main() -> int:
     parser = argparse.ArgumentParser("voicekey")
-    from .control import COMMANDS
-    parser.add_argument("--control", choices=COMMANDS,
+    from .control import CAPTURE_COMMANDS, COMMANDS
+    parser.add_argument("--control", choices=[c for c in COMMANDS if c not in CAPTURE_COMMANDS],
                         help="query or control the running daemon")
     parser.add_argument("--config", help="config path (default ~/.config/voicekey/config.toml)")
     parser.add_argument("--check", action="store_true",
@@ -62,6 +62,12 @@ def main() -> int:
         from .history import show
         return show(copy=args.copy_last, diagnostic=args.explain_last)
 
+    if args.capture_to_stdout:
+        if args.config:
+            parser.error("--capture-to-stdout uses the running daemon configuration; --config is not supported")
+        from .stdout import capture
+        return capture(wav=args.replay, seconds=args.seconds)
+
     from .config import ConfigError, load
     try:
         cfg = load(args.config)
@@ -80,10 +86,6 @@ def main() -> int:
 
     if args.check:
         return check(cfg)
-
-    if args.capture_to_stdout:
-        from .stdout import capture
-        return capture(cfg, wav=args.replay, seconds=args.seconds)
 
     from .daemon import Daemon, fix_environment
     daemon = Daemon(cfg)

@@ -312,14 +312,34 @@ python -m voicekey --capture-to-stdout --seconds 10 > transcript.txt
 python -m voicekey --capture-to-stdout --replay recording.wav > transcript.txt
 ```
 
-Without `--seconds`, Ctrl-C finishes recording; `max_seconds` always caps capture.
-SIGTERM cancels. The command uses the same transcription and text-processing
-pipeline, with the dictation hook and default polish style. It writes only the
-prepared text to stdout; diagnostics go to stderr. It uses no keyboard listener,
-input method, clipboard, notifications or agent dispatch, and can run alongside
-the daemon. It loads its own final model and, if configured, a separate local
-polish server. Its recovery journal lives in `~/.local/state/voicekey/stdout`
-(respecting `XDG_STATE_HOME`) and is separate from desktop dictation history.
+Without `--seconds`, Ctrl-C finishes recording; the daemon's `max_seconds` always
+caps capture. SIGTERM cancels (exit 130). The command is a thin client of the
+running daemon: it loads no models, polisher, recorder or desktop integrations.
+The daemon uses its existing transcription and text-processing pipeline, including
+word overrides, the dictation hook and default polish style. Only prepared text
+goes to stdout, without an added newline; diagnostics and the flushed
+`Recording; Ctrl-C finishes, SIGTERM cancels.` line go to stderr. Failures exit 1.
+
+The daemon must be running and support protocol version 1; an older daemon needs
+a restart after upgrading. There is no standalone fallback. The daemon's loaded
+configuration applies; `--config` is rejected with this command. `--replay` sends
+an absolute local WAV path for the daemon to record at real-time pace. It does not
+load a second model. Captures are refused while desktop dictation or another
+client capture is active, or earlier dictation is still processing.
+
+Transcripts use the daemon's normal `~/.local/state/voicekey/sessions` journal
+(respecting `XDG_STATE_HOME`), so `--last` and `--copy-last` recover undelivered
+client text. Disconnecting finishes and preserves the recording. Explicit
+cancellation during recording discards it; cancellation after processing has
+started suppresses delivery but may leave audio/text already journaled. Neither
+path falls back to clipboard or window delivery. See the socket protocol below
+for clients that want to connect directly.
+
+The diagnostic `--check` and desktop `--replay` modes still load models themselves;
+they are offline diagnostics, not client capture paths. Stop the service before
+using them. They are retained to test model startup and desktop delivery without
+changing the existing persistent/Emacs replay behaviour. The standalone scripts
+in `benchmarks/` also load models for direct performance and memory measurements.
 
 ## Agent key (optional)
 
@@ -553,6 +573,118 @@ socket at `$XDG_RUNTIME_DIR/voicekey/control.sock`. The DMS widget uses this
 socket directly, so there are no polling subprocesses. Model selection and
 per-app settings remain in the configuration file for this first version.
 
+### Local control and capture protocol (version 1)
+
+Connect a Unix stream socket to `$XDG_RUNTIME_DIR/voicekey/control.sock`
+(fallback: `/run/user/<uid>/voicekey/control.sock`). The socket is mode `0600`,
+its newly created directory is `0700`, and the server checks the peer UID.
+There is no TCP listener. Messages are UTF-8 JSON objects, one per newline.
+Keep the connection open for the entire capture and read continuously.
+
+The first message is `{"type":"status","protocol_version":1,...}`. Status is
+also broadcast on changes and approximately every two seconds. It includes
+`state`, `listening`, `models`, `unload_pending`, `client_capture`, `error` and
+desktop destination-policy fields. Status never contains transcript text or
+capture IDs. Ignore extra fields and unrelated status messages for forward
+compatibility; reject an unsupported protocol version.
+
+Requests have `command`, optional `id` (string or integer, echoed in replies),
+and optional `args` (object, default `{}`). Use distinct IDs for outstanding
+requests. Replies are `{"type":"reply","id":ID,"error":null,...}` on success,
+or have a human-readable `error` string on refusal. The existing commands are
+`status`, `start`, `start-typing`, `stop`, `pause-on-switch`, `follow-focus`, `pin`
+and `free-memory`; they take no arguments. `status` replies include current
+status fields. `start` addresses desktop dictation. `stop` finishes the active
+recording, including a client capture, and is available from any connection
+without a capture ID. A client capture's result still goes to its original owner.
+
+A complete capture exchange looks like this (angle brackets mark example IDs):
+
+```json
+{"id":1,"command":"capture-start","args":{"seconds":30}}
+{"type":"reply","id":1,"error":null,"capture_id":"<capture>"}
+{"type":"capture-progress","id":1,"capture_id":"<capture>","state":"recording","models":"ready"}
+{"id":2,"command":"capture-finish","args":{"capture_id":"<capture>"}}
+{"type":"capture-progress","id":1,"capture_id":"<capture>","state":"transcribing"}
+{"type":"reply","id":2,"error":null}
+{"type":"capture-result","id":1,"capture_id":"<capture>","text":"The transcript.","error":null,"reason":null}
+```
+
+- **`capture-start`** accepts `seconds` (positive finite number, capped at the
+  daemon's `max_seconds`, which is also the default), and optionally `wav`
+  (absolute local path to a 16 kHz mono PCM WAV, replacing microphone input).
+  Unknown arguments are refused. The reply admits the capture and assigns its
+  opaque `capture_id`; recording starts immediately afterward. A failure to open
+  the recorder is a final error event. Only one capture is admitted at a time.
+- **`capture-finish`** requires `args.capture_id`. It stops recording and submits
+  the audio for transcription. Repeating it while that capture is processing is
+  harmless. Reaching the time cap or end of the audio source finishes automatically.
+- **`capture-cancel`** requires `args.capture_id`. It stops/discards recording
+  and emits a final `cancelled` result. During processing, native inference may
+  finish in the background, but later processing/delivery is skipped and already journaled work
+  is retained. Resources remain busy until cleanup completes. Cancellation loses
+  a race with an already committed result; the command then returns an error.
+
+Only the owning connection may use `capture-finish` or `capture-cancel`;
+reconnecting does not regain ownership. The global `stop` command and dictation
+hotkeys can also finish a client capture. Progress and results go exclusively
+to the owning connection.
+All capture events echo the *start request's* `id`, plus `capture_id`, regardless
+of the ID used to finish/cancel. Events can interleave with command replies
+(the start reply precedes its events). Do not assume a finish/cancel reply comes
+before its events. An accepted capture emits one terminal `capture-result` if
+its connection remains writable. Refused starts emit only a reply.
+
+Progress states are `loading`, `recording`, and `transcribing`. `loading` is
+emitted when freed models are reloading. As with a hotkey, recording starts
+while loading continues; the `recording` event also reports `models`. The
+transcription stage waits for loading within its recognition budget. There is
+no preview text stream. Client capture ignores follow/pause/pin window policy
+and never binds to a window, editor, input method, or clipboard.
+
+A final success has `text` (prepared transcript), `error:null`, `reason:null`.
+A failure has `text:null`, a stable `error` code (`cancelled`, `no_speech`, or
+`capture_failed`), and a human-readable `reason`. For example:
+
+```json
+{"type":"capture-result","id":1,"capture_id":"<capture>","text":null,"error":"capture_failed","reason":"transcription failed (transcribe)"}
+```
+
+Commands must reach the controller within two seconds and are acknowledged
+without waiting for recording/transcription. That deadline does **not** apply
+to an admitted capture. Recording lasts up to `seconds`; processing has the
+configured `pipeline.transcription_seconds` plus `polish.max_wait_seconds` and
+10 seconds for finalization, text hooks and delivery. The recognition call also
+has its own `transcription_seconds` limit. A hung native call occupies its
+existing worker slot; the daemon does not spawn another recognizer to replace it.
+
+A busy microphone, active client capture, pending dictation or unavailable
+recovery storage causes immediate refusal, never a queued recording. Desktop
+panel starts and agent hotkeys are likewise refused during a client capture.
+Dictation hotkeys finish the client capture without starting desktop dictation;
+the DMS stop button and routing scripts can do the same with `stop`. Repeated
+stops while processing are harmless. `free-memory` also finishes a client capture
+and waits for processing before unloading. Stopping the service preserves
+pending work under the normal shutdown budget.
+
+On disconnect, recording stops and is transcribed into the regular recovery
+journal. If delivery fails, `--last`/`--copy-last` can recover the prepared text;
+there is no clipboard fallback. Successful delivery means the complete JSON
+result was written to the socket, not that an editor inserted it. The journal
+records this as `submitted`. There is no application acknowledgement or automatic
+redelivery; a client that loses its connection near completion should inspect
+history before inserting recovered text.
+
+Input is limited to 8192 buffered bytes per connection; malformed JSON, unknown
+commands, invalid envelope types, queue overflow, and oversized input close the
+connection. Valid commands with invalid/unknown arguments receive error replies.
+There are at most 16 connections and 32 queued commands. Output buffers are
+bounded at 1 MiB per connection; slow readers are disconnected (normally after
+three seconds). Result frames can exceed 64 KiB, up to roughly 600 KiB for a
+100,000-byte transcript after JSON escaping; read through the newline. Partial
+writes are buffered. On EOF, a client should report failure and offer recovery,
+not silently retry capture.
+
 ### Free memory and disable
 
 The widget's **Free memory** action stops capture, finishes or preserves pending
@@ -587,8 +719,8 @@ and status checks, not as a continuous polling loop.
 
 Stopping applies to this login session; the installed service still starts on
 next login. To change that separately, use `systemctl --user disable voicekey.service`.
-This control does not mute the microphone system-wide or stop separate stdout
-capture, replay, or other applications.
+This control also stops daemon-backed stdout capture. It does not mute the
+microphone system-wide or stop standalone diagnostic replay or other applications.
 
 ## Recovery and limits
 
