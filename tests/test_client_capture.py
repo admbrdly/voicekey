@@ -151,12 +151,13 @@ class ClientCaptureTests(CaptureHarness):
             self.assertIn('Microphone busy', self.read(stream, 'reply')['error'])
             setattr(self.daemon, attr, None)
         identity = self.start(client, stream)
-        for command in ('capture-start', 'start', 'start-typing', 'stop', 'follow-focus', 'pin'):
+        for command in ('capture-start', 'start', 'start-typing', 'follow-focus', 'pin'):
             self.assertIsNotNone(self.send(client, stream, command)['error'])
         with patch.object(self.daemon, '_start_persistent') as persistent, patch.object(self.daemon, '_start') as hold:
-            self.daemon._on_key('keyboard', ecodes.KEY_RIGHTMETA, 1)
-            self.daemon._on_key('keyboard', ecodes.KEY_RIGHTMETA, 0)
-            self.daemon._on_key('keyboard', ecodes.KEY_F10, 1)
+            with patch('voicekey.daemon.notify') as notify:
+                self.daemon._on_key('keyboard', ecodes.KEY_F10, 1)
+                notify.assert_called_once()
+            self.assertTrue(self.daemon.client_capture.listening)
             persistent.assert_not_called()
             hold.assert_not_called()
         self.send(client, stream, 'capture-cancel', {'capture_id': identity})
@@ -174,6 +175,59 @@ class ClientCaptureTests(CaptureHarness):
         self.daemon.backend.transcribe.assert_not_called()
         self.assertEqual(list(self.daemon.pipeline.journal.directory.glob('*.jsonl')), [])
         self.copy.assert_not_called()
+
+    def test_global_stop_from_another_connection_finishes_once_for_original_owner(self):
+        client, stream = self.connect()
+        other, other_stream = self.connect()
+        identity = self.start(client, stream)
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def transcribe(samples):
+            entered.set()
+            release.wait(2)
+            return 'Stopped from the panel.'
+
+        self.daemon.backend.transcribe.side_effect = transcribe
+        with patch.object(self.daemon.pipeline, 'submit', wraps=self.daemon.pipeline.submit) as submit:
+            self.assertIsNone(self.send(other, other_stream, 'stop')['error'])
+            self.assertTrue(entered.wait(1))
+            self.assertFalse(self.daemon.status()['listening'])
+            self.assertTrue(self.daemon.status()['client_capture'])
+            self.assertIsNone(self.send(other, other_stream, 'stop')['error'])
+            submit.assert_called_once()
+            self.assertFalse(any(e['type'].startswith('capture-') for e in self.events))
+            release.set()
+            result = self.read(stream, 'capture-result')
+        self.assertEqual(result['capture_id'], identity)
+        self.assertEqual(result['text'], 'Stopped from the panel.')
+        self.settle()
+        self.events.clear()
+        self.assertIsNone(self.send(other, other_stream, 'stop')['error'])
+        self.assertFalse(any(e['type'].startswith('capture-') for e in self.events))
+        self.bind.assert_not_called()
+        self.copy.assert_not_called()
+
+    def test_dictation_hotkeys_finish_client_without_starting_desktop_capture(self):
+        client, stream = self.connect()
+        chord = frozenset({ecodes.KEY_F9})
+        for action, behavior in (('persistent', 'tap/hold'), ('persistent', 'toggle'), ('dictate', 'hold')):
+            with self.subTest(action=action, behavior=behavior):
+                identity = self.start(client, stream)
+                self.daemon.actions = {chord: (action, behavior)}
+                with patch.object(self.daemon, '_start_persistent') as persistent, \
+                        patch.object(self.daemon, '_start') as hold, \
+                        patch.object(self.daemon.pipeline, 'submit', wraps=self.daemon.pipeline.submit) as submit:
+                    for value in (1, 2, 0, 1, 0):
+                        self.daemon._on_key('keyboard', ecodes.KEY_F9, value)
+                    self.assertFalse(self.daemon.status()['listening'])
+                    submit.assert_called_once()
+                    persistent.assert_not_called()
+                    hold.assert_not_called()
+                result = self.read(stream, 'capture-result')
+                self.assertEqual(result['capture_id'], identity)
+                self.assertEqual(result['text'], 'Hello from the daemon.')
+                self.settle()
 
     def test_cancel_during_transcription_suppresses_delivery(self):
         client, stream = self.connect()
@@ -336,17 +390,19 @@ class ClientCaptureTests(CaptureHarness):
 
     def test_partial_hotkey_chord_does_not_interrupt_editor_typing(self):
         client, stream = self.connect()
-        identity = self.start(client, stream)
+        self.start(client, stream)
         self.daemon.actions = {frozenset({ecodes.KEY_LEFTALT, ecodes.KEY_F9}): ('dictate', 'hold')}
         with patch('voicekey.daemon.notify') as notify:
             self.daemon._on_key('keyboard', ecodes.KEY_LEFTALT, 1)
             notify.assert_not_called()
+            self.assertTrue(self.daemon.client_capture.listening)
             self.daemon._on_key('keyboard', ecodes.KEY_F9, 1)
-            notify.assert_called_once()
+            notify.assert_not_called()
+            self.assertTrue(self.daemon.client_capture.submitted)
             self.daemon._on_key('keyboard', ecodes.KEY_F9, 0)
             self.daemon._on_key('keyboard', ecodes.KEY_LEFTALT, 0)
         self.assertEqual(self.daemon.pressed['keyboard'], set())
-        self.send(client, stream, 'capture-cancel', {'capture_id': identity})
+        self.assertIsNone(self.read(stream, 'capture-result')['error'])
         self.settle()
 
     def test_shutdown_before_first_tick_does_not_start_capture(self):

@@ -594,7 +594,9 @@ requests. Replies are `{"type":"reply","id":ID,"error":null,...}` on success,
 or have a human-readable `error` string on refusal. The existing commands are
 `status`, `start`, `start-typing`, `stop`, `pause-on-switch`, `follow-focus`, `pin`
 and `free-memory`; they take no arguments. `status` replies include current
-status fields. `start`/`stop` address desktop dictation, not a client's capture.
+status fields. `start` addresses desktop dictation. `stop` finishes the active
+recording, including a client capture, and is available from any connection
+without a capture ID. A client capture's result still goes to its original owner.
 
 A complete capture exchange looks like this (angle brackets mark example IDs):
 
@@ -623,8 +625,10 @@ A complete capture exchange looks like this (angle brackets mark example IDs):
   is retained. Resources remain busy until cleanup completes. Cancellation loses
   a race with an already committed result; the command then returns an error.
 
-Only the owning connection may finish or cancel a capture; reconnecting does
-not regain ownership. Progress and results go exclusively to that connection.
+Only the owning connection may use `capture-finish` or `capture-cancel`;
+reconnecting does not regain ownership. The global `stop` command and dictation
+hotkeys can also finish a client capture. Progress and results go exclusively
+to the owning connection.
 All capture events echo the *start request's* `id`, plus `capture_id`, regardless
 of the ID used to finish/cancel. Events can interleave with command replies
 (the start reply precedes its events). Do not assume a finish/cancel reply comes
@@ -656,10 +660,12 @@ existing worker slot; the daemon does not spawn another recognizer to replace it
 
 A busy microphone, active client capture, pending dictation or unavailable
 recovery storage causes immediate refusal, never a queued recording. Desktop
-hotkeys and panel starts are likewise refused during a client capture.
-`free-memory` is an administrative exception: it finishes a client capture and
-waits for processing before unloading. Stopping the service preserves pending
-work under the normal shutdown budget.
+panel starts and agent hotkeys are likewise refused during a client capture.
+Dictation hotkeys finish the client capture without starting desktop dictation;
+the DMS stop button and routing scripts can do the same with `stop`. Repeated
+stops while processing are harmless. `free-memory` also finishes a client capture
+and waits for processing before unloading. Stopping the service preserves
+pending work under the normal shutdown budget.
 
 On disconnect, recording stops and is transcribed into the regular recovery
 journal. If delivery fails, `--last`/`--copy-last` can recover the prepared text;

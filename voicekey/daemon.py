@@ -345,7 +345,10 @@ class Daemon:
             return
         chord, (action, behavior) = matches[0]
         if self.client_capture is not None:
-            notify("voicekey: busy", "Finish the client capture before starting desktop dictation", error=True)
+            if action in ("persistent", "dictate"):
+                self.client_capture.finish()
+            else:
+                notify("voicekey: busy", "Finish the client capture before using the agent key", error=True)
             return
         if self.persistent is not None:
             if self.persistent.done.is_set():
@@ -559,8 +562,8 @@ class Daemon:
             return
         if args:
             raise ValueError("This command takes no arguments")
-        if self.client_capture is not None and command != "free-memory":
-            raise ValueError("Client capture active: only its owner can finish or cancel it")
+        if self.client_capture is not None and command not in ("stop", "free-memory"):
+            raise ValueError("Client capture active: use stop to finish it before starting or changing desktop dictation")
         if command == "free-memory":
             if self.model_state == "unloaded":
                 return
@@ -574,6 +577,8 @@ class Daemon:
             self._pause_reason = ""
             self._typing_fallback = False
             self._gesture = None
+            if self.client_capture is not None:
+                self.client_capture.finish()
             if self.persistent is not None:
                 self.persistent.request_stop("stopped from panel")
             if self.session is not None:

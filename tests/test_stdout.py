@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import os
 from pathlib import Path
 import signal
@@ -70,6 +71,26 @@ class StdoutTests(CaptureHarness):
         self.assertEqual(process.returncode, 130, errors)
         self.assertEqual(output, '')
         self.daemon.backend.transcribe.assert_not_called()
+
+    def test_cli_global_stop_finishes_stdout_capture_without_signalling_client(self):
+        self.controller()
+        process = self.cli()
+        self.assertIn('Recording;', process.stderr.readline())
+        env = {**os.environ, 'XDG_RUNTIME_DIR': self.tmp.name}
+        # Match the route script's status -> stop sequence, using another process.
+        for command in ('status', 'stop'):
+            result = subprocess.run([sys.executable, '-m', 'voicekey', '--control', command],
+                                    env=env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            reply = json.loads(result.stdout)
+            if command == 'status':
+                self.assertFalse(reply['error'])  # Status carries the daemon's error string.
+                self.assertTrue(reply['listening'])
+            else:
+                self.assertIsNone(reply['error'])
+        output, errors = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0, errors)
+        self.assertEqual(output, 'Hello from the daemon.')
 
     def test_cli_no_models_imported_and_no_config_required(self):
         self.controller()
