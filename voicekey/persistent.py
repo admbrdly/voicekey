@@ -56,6 +56,7 @@ class PersistentSession:
         self.stopping = threading.Event()
         self.done = threading.Event()
         self._stop_lock = threading.Lock()
+        self._stop_attention = False
         self.deadline = float("inf")
         self.reason = ""
         self.stop_instruction = "press a dictation key to stop"
@@ -95,7 +96,7 @@ class PersistentSession:
                 except queue.Full:
                     self.request_stop("too many focus changes; audio preserved", paused=True)
         if self.policy == "pause":
-            self.request_stop("Window changed", paused=True)
+            self.request_stop("Window changed", paused=True, attention=False)
         self.wake.set()
 
     def _drain_audio(self, end):
@@ -182,7 +183,7 @@ class PersistentSession:
                 self._last_focus_poll = time.monotonic()
                 if identity is not None and identity != target.target.window_id:
                     target.departed.set()
-                    self.request_stop("Window changed", paused=True)
+                    self.request_stop("Window changed", paused=True, attention=False)
                     return
                 if identity is None and self._focus_unknown:
                     self.request_stop("Window tracking unavailable", paused=True)
@@ -249,11 +250,12 @@ class PersistentSession:
         summary = f"● Listening → {destination}" if destination else "● Listening · no destination"
         notify(summary, detail, ms=0, channel="persistent")
 
-    def request_stop(self, reason="stopped by key", *, paused=False):
+    def request_stop(self, reason="stopped by key", *, paused=False, attention=None):
         with self._stop_lock:
             if self.stopping.is_set():
                 return
             self.reason, self.paused = reason, paused
+            self._stop_attention = paused if attention is None else attention
             self.deadline = time.monotonic() + self.cfg.pipeline.shutdown_seconds
             self.pipeline.stop_session(self.id, self.deadline)
             self.stopping.set()
@@ -450,7 +452,8 @@ class PersistentSession:
                     failure = failure or str(exc)
                 except Exception as exc:
                     failure = failure or f"capture cleanup failed: {exc}"
-                self.request_stop(failure or "audio source ended", paused=bool(failure))
+                self.request_stop(failure or "audio source ended", paused=bool(failure),
+                                  attention=self.device != "replay")
                 if failure:
                     # A stop requested earlier must not hide a microphone error
                     # discovered when collecting its exit status and stderr.
@@ -475,9 +478,10 @@ class PersistentSession:
                 if self._pending():
                     self.pipeline.expire_session(self.id)
                 recovery_path = self.pipeline._save("session", lambda: self.pipeline.journal.close_session(self.id))
-            except Exception:
+            except Exception as exc:
                 log.exception("persistent shutdown failed")
                 self.pipeline._storage_failed = True
+                failure = failure or f"dictation cleanup failed: {exc}"
             finally:
                 for target in self.targets:
                     target.close()
@@ -485,10 +489,13 @@ class PersistentSession:
                 self.pipeline.settled()
                 self.done.set()
                 detail = self.reason + "; press the key to start a new session"
+                if failure and failure not in detail:
+                    detail += f"; {failure}"
                 if recovery_path:
                     detail += f"; recovery: {recovery_path}"
                 notify("■ Dictation stopped" if self.paused else "■ Persistent dictation off",
-                       detail, channel="persistent", ms=0)
+                       detail, channel="persistent", attention=self._stop_attention,
+                       error=bool(failure or recovery_path))
 
     def _pending(self):
         return any(u.session_id == self.id for u in self.pipeline.ledger.snapshots())

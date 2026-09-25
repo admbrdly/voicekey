@@ -3,20 +3,32 @@
 The DMS widget subscribes to status; no model imports, polling subprocesses or
 second copy of dictation state are needed in the shell. Slow clients are dropped.
 """
+from collections import deque
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
 import queue
 import selectors
 import socket
+import struct
 import threading
 import time
 
-COMMANDS = ('status', 'start', 'start-typing', 'stop', 'pause-on-switch', 'follow-focus', 'pin', 'free-memory')
+PROTOCOL_VERSION = 1
+CAPABILITIES = ['capture-client-name', 'capture-preview']
+CAPTURE_COMMANDS = ('capture-start', 'capture-finish', 'capture-cancel')
+COMMANDS = ('status', 'start', 'start-typing', 'stop', 'pause-on-switch', 'follow-focus', 'pin', 'free-memory') + CAPTURE_COMMANDS
 
 
 def socket_path():
     return Path(os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')) / 'voicekey' / 'control.sock'
+
+
+@dataclass
+class Receipt:
+    done: threading.Event = field(default_factory=threading.Event)
+    sent: bool = False
 
 
 class ControlServer:
@@ -57,6 +69,15 @@ class ControlServer:
     def publish(self, status):
         self.status = dict(status)
 
+    def emit(self, client, message, *, deadline=None, cancelled=None):
+        """Queue a private event. Receipt confirms transport write, not consumption."""
+        receipt = Receipt()
+        if self.closed.is_set():
+            receipt.done.set()
+        else:
+            self.responses.put((client, message, receipt, deadline, cancelled))
+        return receipt
+
     def drain(self, handler):
         for _ in range(32):
             try:
@@ -64,75 +85,126 @@ class ControlServer:
             except queue.Empty:
                 break
             error = None
+            extra = {}
             if time.monotonic() > deadline or client.fileno() < 0:
                 error = 'Control request expired'
             else:
                 try:
-                    handler(message['command'])
+                    result = handler(message['command'], args=message.get('args', {}),
+                                     client=client, request_id=message.get('id'))
+                    if result:
+                        extra.update(result)
                 except (ValueError, RuntimeError) as exc:
                     error = str(exc)
-            self.responses.put((client, {'type': 'reply', 'id': message.get('id'), 'error': error}))
+            self.emit(client, {'type': 'reply', 'id': message.get('id'), 'error': error, **extra})
 
     def _run(self):
         clients = {}
+        outputs = {}
         with selectors.DefaultSelector() as selector:
             selector.register(self.listener, selectors.EVENT_READ)
+
             def drop(client):
                 if client in clients:
                     selector.unregister(client)
                     clients.pop(client)
+                    for _, _, receipt, _, _ in outputs.pop(client):
+                        receipt.done.set()
                     client.close()
-            def send(client, message):
+
+            def send(client, message, receipt=None, deadline=None, cancelled=None):
+                receipt = receipt or Receipt()
+                if client not in clients:
+                    receipt.done.set()
+                    return
                 data = (json.dumps(message, ensure_ascii=True) + '\n').encode()
-                try:
-                    if client.send(data) != len(data):
-                        drop(client)
-                except OSError:
+                pending = outputs[client]
+                if sum(len(data) - offset for data, offset, *_ in pending) + len(data) > 1024 * 1024:
                     drop(client)
+                    receipt.done.set()
+                    return
+                pending.append((data, 0, receipt, deadline or time.monotonic() + 3, cancelled))
+                selector.modify(client, selectors.EVENT_READ | selectors.EVENT_WRITE)
+
             previous, heartbeat = None, 0.0
             try:
                 while not self.closed.is_set():
-                    for key, _ in selector.select(.1):
+                    for key, mask in selector.select(.05):
                         client = key.fileobj
                         if client is self.listener:
                             client, _ = self.listener.accept()
-                            if len(clients) >= 16:
+                            # Permissions plus peer credentials: even a permissive
+                            # pre-existing runtime directory cannot admit another UID.
+                            _, uid, _ = struct.unpack('3i', client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+                            if uid != os.getuid() or len(clients) >= 16:
                                 client.close()
                                 continue
                             client.setblocking(False)
                             clients[client] = b''
+                            outputs[client] = deque()
                             selector.register(client, selectors.EVENT_READ)
-                            send(client, {'type': 'status', **self.status})
+                            send(client, {'type': 'status', 'protocol_version': PROTOCOL_VERSION,
+                                          'capabilities': CAPABILITIES, **self.status})
                             continue
                         try:
-                            data = client.recv(4096)
-                            if not data or len(clients[client]) + len(data) > 8192:
-                                drop(client)
-                                continue
-                            clients[client] += data
-                            while client in clients and b'\n' in clients[client]:
-                                line, clients[client] = clients[client].split(b'\n', 1)
-                                message = json.loads(line)
-                                if not isinstance(message, dict) or message.get('command') not in COMMANDS:
-                                    raise ValueError('Unknown control command')
-                                if message['command'] == 'status':
-                                    send(client, {'type': 'reply', 'id': message.get('id'), 'error': None, **self.status})
+                            if mask & selectors.EVENT_READ:
+                                data = client.recv(4096)
+                                if not data or len(clients[client]) + len(data) > 8192:
+                                    drop(client)
+                                    continue
+                                clients[client] += data
+                                while client in clients and b'\n' in clients[client]:
+                                    line, clients[client] = clients[client].split(b'\n', 1)
+                                    message = json.loads(line)
+                                    if not isinstance(message, dict) or message.get('command') not in COMMANDS:
+                                        raise ValueError('Unknown control command')
+                                    if not isinstance(message.get('args', {}), dict):
+                                        raise ValueError('args must be an object')
+                                    if message.get('id') is not None and (isinstance(message['id'], bool) or
+                                            not isinstance(message['id'], (str, int))):
+                                        raise ValueError('id must be a string or integer')
+                                    if message['command'] == 'status':
+                                        send(client, {'type': 'reply', 'id': message.get('id'),
+                                             'error': 'status takes no arguments' if message.get('args') else None,
+                                             'protocol_version': PROTOCOL_VERSION, 'capabilities': CAPABILITIES, **self.status})
+                                    else:
+                                        self.commands.put_nowait((client, message, time.monotonic() + 2))
+                            if client in clients and mask & selectors.EVENT_WRITE:
+                                data, offset, receipt, deadline, cancelled = outputs[client][0]
+                                if time.monotonic() >= deadline or cancelled is not None and cancelled.is_set():
+                                    drop(client)
+                                    continue
+                                count = client.send(data[offset:])
+                                if not count:
+                                    drop(client)
+                                elif offset + count == len(data):
+                                    outputs[client].popleft()
+                                    receipt.sent = True
+                                    receipt.done.set()
+                                    if not outputs[client]:
+                                        selector.modify(client, selectors.EVENT_READ)
                                 else:
-                                    self.commands.put_nowait((client, message, time.monotonic() + 2))
-                        except (OSError, ValueError, queue.Full):
+                                    outputs[client][0] = (data, offset + count, receipt, deadline, cancelled)
+                        except BlockingIOError:
+                            pass
+                        except (OSError, ValueError, RecursionError, queue.Full):
                             drop(client)
                     while not self.responses.empty():
-                        client, message = self.responses.get_nowait()
-                        if client in clients:
-                            send(client, message)
+                        send(*self.responses.get_nowait())
+                    for client, pending in tuple(outputs.items()):
+                        if pending and time.monotonic() >= pending[0][3]:
+                            drop(client)
                     status = self.status
                     if status != previous or time.monotonic() - heartbeat > 2:
                         for client in tuple(clients):
-                            send(client, {'type': 'status', **status})
+                            send(client, {'type': 'status', 'protocol_version': PROTOCOL_VERSION,
+                                          'capabilities': CAPABILITIES, **status})
                         previous, heartbeat = status, time.monotonic()
             finally:
                 for client in tuple(clients):
                     drop(client)
+                while not self.responses.empty():
+                    self.responses.get_nowait()[2].done.set()
 
     def close(self):
         self.closed.set()
@@ -144,11 +216,11 @@ class ControlServer:
             self.listener = None
 
 
-def request(command, path=None):
+def request(command, path=None, *, args=None):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
         client.settimeout(3)
         client.connect(str(path or socket_path()))
-        client.sendall((json.dumps({'command': command, 'id': 1}) + '\n').encode())
+        client.sendall((json.dumps({'command': command, 'id': 1, 'args': args or {}}) + '\n').encode())
         with client.makefile('rb') as stream:
             while line := stream.readline(65536):
                 result = json.loads(line)

@@ -1,113 +1,110 @@
-"""One bounded recording through the ordinary pipeline, delivered to stdout."""
+"""Thin stdout client for the running daemon; no model or desktop imports."""
 from __future__ import annotations
 
-import contextlib
-import signal
-import sys
-import threading
-import time
-from dataclasses import replace
+import json
 from pathlib import Path
+import signal
+import socket
+import sys
+import time
 
-from .backends import create_backend
-from .capture import Session
-from .pipeline import Pipeline
-from .polish import diagnostic_polisher
-from .recorder import Recorder
-from .recovery import Journal, STATE_DIR
-from .target import Landing, Outcome
+from .control import PROTOCOL_VERSION, socket_path
 
 
-class StdoutTarget:
-    kind = "stdout"
-    app_id = None
-    window_id = None
-    clipboard_fallback = False
-
-    def __init__(self):
-        self.cancelled = threading.Event()
-        self.delivered = False
-
-    def show(self, text):
-        pass
-
-    def clear(self):
-        pass
-
-    def cancel(self):
-        self.cancelled.set()
-
-    def describe(self):
-        return "standard output"
-
-    def land(self, text, deadline, **kwargs):
-        if self.cancelled.is_set() or time.monotonic() >= deadline:
-            return Landing(reason="stdout delivery expired")
-        sys.stdout.write(text)
-        sys.stdout.flush()
-        self.delivered = True
-        return Landing(Outcome.CONFIRMED)
-
-
-def capture(cfg, *, wav=None, seconds=None) -> int:
-    """Ctrl-C finishes recording; SIGTERM aborts. No keyboard or desktop access."""
-    stopped = threading.Event()
-    aborted = threading.Event()
+def capture(*, wav=None, seconds=None, path=None, client_name=None, preview=False) -> int:
+    """Ctrl-C finishes; SIGTERM cancels. Configuration belongs to the daemon."""
+    stopped = aborted = False
 
     def stop(signum, frame):
-        stopped.set()
-        if signum == signal.SIGTERM:
-            aborted.set()
+        nonlocal stopped, aborted
+        stopped = True
+        aborted |= signum == signal.SIGTERM
 
     previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGINT, signal.SIGTERM)}
-    recorder = Recorder([sys.executable, "-m", "voicekey.replay", wav]) if wav else Recorder()
-    pipeline = None
     try:
-        backend = create_backend(cfg.backend, cfg.language)
-        with diagnostic_polisher(cfg.polish) as polisher:
-            # This command has no ageing desktop destination. Allow the configured
-            # recognition budget, then cleanup and a bounded stdout write.
-            budget = cfg.pipeline.transcription_seconds + cfg.polish.max_wait_seconds + 10
-            cfg = replace(cfg, dictation=replace(cfg.dictation, max_delay_seconds=budget))
-            pipeline = Pipeline(cfg, backend=lambda: backend, polisher=lambda: polisher,
-                                notifier=lambda *args, **kwargs: None,
-                                journal=Journal(str(Path(STATE_DIR) / "stdout"),
-                                    megabytes=cfg.pipeline.recovery_megabytes, history_days=cfg.pipeline.history_days))
-            pipeline.start(recover=False)
-            if stopped.is_set():
-                return 130
-            identity = pipeline.admit()
-            if identity is None:
-                raise RuntimeError("capture unavailable; check recovery storage")
-            session = Session("dictate", "hold", frozenset(), "stdout", identity=identity)
-            session.target = target = StdoutTarget()
-            limit = min(seconds if seconds is not None else cfg.max_seconds, cfg.max_seconds)
-            recorder.max_samples = int(limit * 16000)
-            recorder.start(session.feed)
-            print("Recording; Ctrl-C finishes, SIGTERM cancels.", file=sys.stderr)
-            while not stopped.wait(0.05) and not recorder.finished and recorder.elapsed < limit:
-                pass
-            recorder.request_stop()
-            if aborted.is_set():
-                return 130
-            pipeline.submit(session, recorder, time.monotonic())
-            deadline = time.monotonic() + budget
-            while pipeline.ledger.busy and time.monotonic() < deadline:
-                if aborted.wait(0.02):
-                    target.cancel()
-                    return 130
-            if not target.delivered:
-                print(f"No transcript written; inspect {pipeline.journal.directory}", file=sys.stderr)
-                return 1
-            return 0
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(3)
+            client.connect(str(path or socket_path()))
+            client.settimeout(.1)
+            buffer = b''
+            ready = False
+            identity = None
+            pending = {}
+            next_id = 0
+            finish_sent = cancel_sent = False
+            greeting_deadline = time.monotonic() + 3
+
+            def send(command, args):
+                nonlocal next_id
+                next_id += 1
+                client.sendall((json.dumps({'id': next_id, 'command': command, 'args': args}) + '\n').encode())
+                pending[next_id] = time.monotonic() + 3
+
+            while True:
+                if identity is not None:
+                    if aborted and not cancel_sent:
+                        send('capture-cancel', {'capture_id': identity})
+                        cancel_sent = True
+                    elif stopped and not finish_sent and not cancel_sent:
+                        send('capture-finish', {'capture_id': identity})
+                        finish_sent = True
+                now = time.monotonic()
+                if ((not ready and now >= greeting_deadline)
+                        or any(now >= deadline for deadline in pending.values())):
+                    raise RuntimeError('Daemon did not acknowledge the command')
+                try:
+                    data = client.recv(65536)
+                except socket.timeout:
+                    continue
+                if not data:
+                    raise RuntimeError('Daemon disconnected; recover prepared text with --last')
+                buffer += data
+                if len(buffer) > 1024 * 1024:
+                    raise RuntimeError('Oversized daemon response')
+                while b'\n' in buffer:
+                    line, buffer = buffer.split(b'\n', 1)
+                    message = json.loads(line)
+                    if not ready:
+                        if message.get('type') != 'status' or message.get('protocol_version') != PROTOCOL_VERSION:
+                            raise RuntimeError('Daemon lacks client capture support; restart voicekey.service')
+                        ready = True
+                        args = {}
+                        if seconds is not None:
+                            args['seconds'] = seconds
+                        if wav is not None:
+                            args['wav'] = str(Path(wav).resolve())
+                        # Older version-1 daemons can still record; only the
+                        # optional destination label needs the new capability.
+                        if client_name and 'capture-client-name' in message.get('capabilities', []):
+                            args['client_name'] = client_name
+                        if preview and 'capture-preview' in message.get('capabilities', []):
+                            args['preview'] = True
+                        send('capture-start', args)
+                    elif message.get('type') == 'reply':
+                        pending.pop(message.get('id'), None)
+                        if message.get('error'):
+                            raise RuntimeError(message['error'])
+                        if message.get('id') == 1:
+                            identity = message['capture_id']
+                    elif message.get('type') == 'capture-progress' and message.get('capture_id') == identity:
+                        if message.get('state') == 'recording':
+                            print('Recording; Ctrl-C finishes, SIGTERM cancels.', file=sys.stderr, flush=True)
+                        elif message.get('state') == 'transcribing':
+                            print('Transcribing; microphone stopped.', file=sys.stderr, flush=True)
+                        elif message.get('state') == 'preview' and isinstance(message.get('text'), str):
+                            # One line per revision; JSON keeps newlines inside the line.
+                            print('Preview; ' + json.dumps(message['text']), file=sys.stderr, flush=True)
+                    elif message.get('type') == 'capture-result' and message.get('capture_id') == identity:
+                        if aborted or message.get('error') == 'cancelled':
+                            return 130
+                        if message.get('error'):
+                            raise RuntimeError(message.get('reason') or message['error'])
+                        sys.stdout.write(message['text'])
+                        sys.stdout.flush()
+                        return 0
     except Exception as exc:
-        print(f"voicekey capture: {exc}", file=sys.stderr)
-        return 1
+        print(f'voicekey capture: {exc}', file=sys.stderr)
+        return 130 if aborted else 1
     finally:
-        if pipeline is not None:
-            pipeline.close(timeout=0)
-        if recorder.active:
-            with contextlib.suppress(Exception):
-                recorder.stop()
         for sig, handler in previous.items():
             signal.signal(sig, handler)

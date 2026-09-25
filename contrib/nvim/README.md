@@ -1,0 +1,150 @@
+# Neovim
+
+Dictate into the current Neovim buffer. The plugin runs
+`python -m voicekey --capture-to-stdout` and inserts the transcript with
+`nvim_buf_set_text`. Nothing is typed, so the editor mode cannot turn dictated
+words into commands, and this path needs no `input` group or input method.
+Neovim in a terminal is otherwise the case the daemon's desktop delivery cannot
+serve safely: Ghostty and other terminals accept input-method text, so words
+committed in normal mode would run as commands.
+
+`--capture-to-stdout` is a thin client of the running daemon. The daemon records
+and transcribes with the models it already has loaded (nothing is loaded per
+capture), and its own configuration applies: `[backend]`, `[polish]`,
+`[text.word_overrides]` and the dictation hook.
+
+Requires Neovim 0.10 and a running, up-to-date voicekey daemon
+(`voicekey.service`) with client capture support; restart the service after
+upgrading. With no daemon, or an older one, the plugin warns and inserts
+nothing.
+
+## Install
+
+With lazy.nvim, from your checkout:
+
+```lua
+{
+  dir = "~/src/voicekey/contrib/nvim",
+  name = "voicekey",
+  cmd = "VoiceKey",
+  keys = {
+    { "<F12>", function() require("voicekey").toggle() end, mode = { "n", "i" }, desc = "Dictate" },
+  },
+}
+```
+
+Without a plugin manager, add the directory to `runtimepath`:
+
+```lua
+vim.opt.runtimepath:append(vim.fn.expand("~/src/voicekey/contrib/nvim"))
+vim.keymap.set({ "n", "i" }, "<F12>", function() require("voicekey").toggle() end, { desc = "Dictate" })
+```
+
+## Use
+
+Press the key to start and again to finish. `:VoiceKey cancel` discards the
+recording. `:VoiceKey start`, `stop` and `toggle` are also available.
+
+- The transcript lands where the cursor was when recording started: after
+  the cursor character in normal mode, like `a`, and at the cursor in insert
+  mode. You can move or edit elsewhere while speaking.
+- Your words appear at that point as you speak, as dimmed virtual text
+  (highlight `VoiceKeyPreview`, linked to `Comment`). This is a live draft
+  from the daemon's streaming recognizer: it revises itself as you talk, and
+  a trailing `…` means recording stopped and the final text is being prepared.
+  The buffer is not touched until the final transcript arrives and replaces the
+  draft, so there is one undo step and no churn for LSP or autocommands. The
+  final text is recognized again from the whole recording and polished, so it
+  can differ from the draft.
+- Before the first words (and with `preview = false`) an inline marker shows
+  `loading`, `recording`, then `transcribing`. Wait for `recording` before
+  speaking: after **Free memory** the daemon reloads its models in the
+  background, and recording can begin while they load. A capture that starts
+  while models are loading has no live draft, only the final text. The marker
+  also switches to `transcribing` after an external stop or the recording
+  limit, before the transcript arrives.
+- A space is added next to adjacent words. Paragraph breaks become lines;
+  other control characters are removed.
+- Recording stops by itself after the daemon's `max_seconds` (90 s by
+  default). Stopping dictation elsewhere (the panel, `--control stop`,
+  `voicekey-route`, a dictation hotkey) also finishes the capture, and the
+  transcript still lands in this buffer. Only this Neovim can cancel it.
+- While the daemon is dictating elsewhere or still processing, the capture is
+  refused with a warning and nothing is inserted.
+- Transcripts go to the daemon's normal journal. If the buffer is closed or
+  the text cannot be inserted, recover the latest prepared dictation manually:
+
+```sh
+~/.local/share/voicekey/venv/bin/python -m voicekey --last
+~/.local/share/voicekey/venv/bin/python -m voicekey --copy-last
+```
+
+The default command labels its destination **Neovim** in the DMS widget.
+Restart the daemon after upgrading to enable client labels and live drafts;
+older daemons with capture support still work, with a generic status label and
+only the final text. This is a display name,
+not a change to the daemon's default polish style.
+
+## One keybinding for Neovim and everything else
+
+The daemon's input-method delivery cannot see Neovim's mode, so dictating into
+a terminal with it would send words that normal mode runs as commands.
+`voicekey-route` lets one Niri keybinding choose the safe path:
+
+> **Warning:** focus tracking relies on the terminal reporting focus changes
+> for windows, tabs and splits. Where it does not (tmux without
+> `focus-events on`, some tab setups), a Neovim that lost focus can stay
+> recorded, and the keybinding would dictate into it while you look at
+> something else. Check this before relying on it.
+
+- If the daemon is listening, it stops it, wherever focus is.
+- If a terminal is focused, it toggles `:VoiceKey` in the Neovim that has
+  focus there, and refuses (with a notification) when none does, for example
+  at a shell prompt.
+- Otherwise, it starts the daemon for input-method dictation.
+
+```kdl
+Mod+Shift+D hotkey-overlay-title="Dictate" { spawn "/home/you/src/voicekey/contrib/nvim/voicekey-route"; }
+```
+
+It needs `jq`, and `plugin/voicekey.lua` loaded at startup (with lazy.nvim,
+`lazy = false`): each Neovim records its server address in
+`$XDG_RUNTIME_DIR/voicekey/nvim-focus` on `FocusGained` and removes it on
+`FocusLost`, using the terminal's focus reporting. Set
+`vim.g.voicekey_track_focus = false` to turn that off. Terminal app IDs default
+to Ghostty, foot, kitty, Alacritty and WezTerm; override them with
+`VOICEKEY_TERMINALS`. The daemon is driven through `--control start` and
+`--control stop`; if it is not running, the script says so in a notification.
+
+The daemon's own hotkey (`dictate_key`, Right Super by default) bypasses this
+script when starting dictation and sends input-method text to the focused
+terminal. **Listening → Ghostty** means terminal delivery, not the Neovim
+plugin. Use `:VoiceKey`, the plugin's key, or a separate `voicekey-route` binding
+for buffer insertion. Binding the daemon's existing key in Niri does not disable
+its low-level keyboard listener. During an existing client capture, the daemon
+key finishes that capture instead of starting desktop dictation.
+
+## Options
+
+```lua
+require("voicekey").setup({
+  -- A client that records until SIGINT, cancels on SIGTERM, prints the
+  -- transcript to stdout and "Recording;" / "Transcribing;" / `Preview; "<json>"`
+  -- on stderr. The daemon's configuration applies; --config is not accepted.
+  cmd = { vim.fn.expand("~/.local/share/voicekey/venv/bin/python"), "-m", "voicekey",
+          "--capture-to-stdout", "--client-name", "Neovim", "--preview" },
+  preview = true,  -- live draft at the insertion point while you speak
+  marker = true,   -- inline status at the insertion point
+  spacing = true,  -- separate the transcript from adjacent words
+  notify = true,   -- informational messages; warnings always show
+})
+```
+
+`require("voicekey").status()` returns `"loading"`, `"recording"`,
+`"transcribing"` or `nil`, for a statusline component.
+
+## Tests
+
+`nvim --headless -u NONE -i NONE -l tests/nvim-tests.lua`, also run by
+`python -m unittest` when Neovim 0.10 or newer is installed. The tests use a
+stand-in capture command, not the microphone.

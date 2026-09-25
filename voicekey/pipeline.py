@@ -48,11 +48,12 @@ class Job:
 
 
 class Pipeline:
-    def __init__(self, cfg, *, backend, polisher, settled=lambda: None, journal=None, send_agent=None, notifier=None):
+    def __init__(self, cfg, *, backend, polisher, settled=lambda: None, journal=None, send_agent=None, notifier=None, completed=lambda *args: None):
         self.cfg = cfg
         self.notify = notifier or (lambda *args, **kwargs: notify(*args, **kwargs))
         self.backend = backend
         self.polisher = polisher
+        self.completed = completed
         self.settled = settled
         limits = cfg.pipeline
         self.ledger = Ledger(limits.max_pending, limits.max_audio_seconds)
@@ -93,7 +94,7 @@ class Pipeline:
             if recovered:
                 self.notify("voicekey: interrupted dictation recovered",
                        f"{len(recovered)} session(s) in {self.journal.directory}; latest: {recovered[-1]}",
-                       channel="persistent", ms=0)
+                       channel="persistent", ms=0, attention=True)
             self._journal_slots["startup"].call(lambda: self.journal.prepare(self._disk_reservation),
                                                 time.monotonic() + self.cfg.pipeline.journal_seconds)
         except Exception as exc:
@@ -184,6 +185,7 @@ class Pipeline:
                 log.exception("pipeline stage failed")
                 target = item[0].target if isinstance(item, tuple) else item.target
                 target.clear()
+                self.completed(identity, "failed", str(exc))
                 self.ledger.complete(identity, "failed")
                 with self._items_lock:
                     self._items.pop(identity, None)
@@ -222,6 +224,7 @@ class Pipeline:
             if job.session_id:
                 job.target.completed(outcome)
             job.target.clear()
+            self.completed(job.id, str(outcome), reason)
             self.ledger.complete(job.id, str(outcome))
             log.info("%s outcome=%s%s", job.id, outcome, f" ({reason})" if reason else "")
             with self._items_lock:
@@ -235,10 +238,13 @@ class Pipeline:
             samples, duration = recorder.stop()
         except RecordingError as exc:
             samples, duration, failure = exc.samples, exc.duration, str(exc)
-        # A deliberate tap is the only discarded audio path.
-        if duration < self.cfg.min_seconds and not failure and not getattr(session, "session_id", ""):
+        # Discard accidental taps and explicitly cancelled client recordings.
+        if getattr(session, "discard", False) or (duration < self.cfg.min_seconds and not failure
+                                                    and not getattr(session, "session_id", "")):
             session.cancel()
             session.target.clear()
+            self.completed(session.id, "dropped", "Capture cancelled" if getattr(session, "discard", False)
+                           else "Recording shorter than min_seconds")
             self.ledger.complete(session.id, "dropped")
             with self._items_lock:
                 self._items.pop(session.id, None)
@@ -255,6 +261,8 @@ class Pipeline:
         session.finish(timeout=min(1.0, max(0, self._stop_at - time.monotonic())))
         deadline = finished_at + (self.cfg.dictation.max_delay_seconds if session.action == "dictate"
                                   else self.cfg.pipeline.transcription_seconds)
+        if hasattr(session, "processing_seconds"):
+            deadline = finished_at + session.processing_seconds
         if session_id:
             deadline = float("inf")  # queue age does not revoke a persistent binding
         job = Job(session.id, session.action, session.target, samples, finished_at, deadline,
@@ -266,6 +274,8 @@ class Pipeline:
         self.jobs.put_nowait(job)
 
     def _transcribe(self, job):
+        if self._discard_client(job, "transcribe"):
+            return
         backend = self.backend()
         failure = job.failure
         try:
@@ -288,6 +298,8 @@ class Pipeline:
         model = self.cfg.backend.model_dir if self.cfg.backend.type == "parakeet" else self.cfg.backend.model
         self._save("transcribe", lambda: self.journal.append(job.id, "transcribed", raw=raw,
             live=job.live, failure=failure, action=job.action, backend=self.cfg.backend.type, model=model))
+        if self._discard_client(job, "transcribe"):
+            return
         if not raw:
             self._complete(job, Outcome.SAVED if failure else Outcome.DROPPED, failure, "transcribe")
             if failure:
@@ -305,6 +317,8 @@ class Pipeline:
         self.polishing.put_nowait(job)
 
     def _polish(self, job):
+        if self._discard_client(job, "polish"):
+            return
         final = job.raw
         polisher = self.polisher()
         deadline = min(job.polish_deadline, self._deadline(job))
@@ -351,6 +365,8 @@ class Pipeline:
                 polish_result = f"raw fallback: {exc}"
                 log.warning("polish skipped: %s", exc)
         if self.ledger.get(job.id) is None:
+            return
+        if self._discard_client(job, "polish"):
             return
         polished = final
         final, overridden, hook_result = self._prepare_text(job, final) if not drop else (final, final, "disabled")
@@ -405,7 +421,15 @@ class Pipeline:
             log.warning("transcription hook %s", reason)
             return value, value, reason
 
+    def _discard_client(self, job, lane):
+        if not getattr(job.target, "discarded", False):
+            return False
+        self._complete(job, Outcome.DROPPED, "Capture cancelled", lane)
+        return True
+
     def _deliver(self, job):
+        if self._discard_client(job, "deliver"):
+            return
         if job.drop_reason:
             # Preserve raw/final tiers before a deliberate drop, in queue order.
             # No insertion attempt, clipboard operation or model-authorized
@@ -447,8 +471,8 @@ class Pipeline:
             self.spacing.inserted(job.target.window_id, job.final, mark)
             self._complete(job, landing.outcome)
             if job.failure:
-                self.notify("voicekey: recording warning", f"{job.failure}; audio saved in {self.journal.directory}", ms=10000)
-            else:
+                self.notify("voicekey: recording warning", f"{job.failure}; audio saved in {self.journal.directory}", ms=10000, attention=True)
+            elif job.target.kind != "client":
                 self.notify("✓ Inserted" if landing.outcome == Outcome.CONFIRMED else "✓ Sent to field", channel="dictate")
         elif landing.uncertain:
             if not job.session_id:
@@ -471,7 +495,7 @@ class Pipeline:
             copied = outcome == Outcome.COPIED
             body = f"{landing.reason}; {self.journal.path(job.id, '.txt')}"
             if job.target.kind == "clipboard" or job.session_id:
-                self.notify("📋 Copied" if copied else "voicekey: transcript saved", body, channel="dictate", ms=10000)
+                self.notify("📋 Copied" if copied else "voicekey: transcript saved", body, channel="dictate", ms=10000, attention=True)
             else:
                 # A bound destination refused the text. A transient notice went
                 # unnoticed in practice; this one persists until dismissed.

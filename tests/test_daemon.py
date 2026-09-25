@@ -12,6 +12,8 @@ from voicekey.daemon import Daemon
 from voicekey.gate import Gate
 from voicekey.recovery import Journal
 from tests.test_pipeline import FakeRecorder, FakeTarget, wait_for
+from tests.test_notify import queued_notifications
+from voicekey.notify import notify
 
 
 class ControllerTests(unittest.TestCase):
@@ -44,6 +46,19 @@ class ControllerTests(unittest.TestCase):
 
     def done(self):
         wait_for(lambda: not self.daemon.pipeline.ledger.busy)
+
+    def test_recording_processing_and_success_stay_in_status_without_popups(self):
+        with queued_notifications() as pending, \
+                patch('voicekey.daemon.notify', side_effect=notify), \
+                patch('voicekey.pipeline.notify', side_effect=notify):
+            self.key(1)
+            self.assertTrue(self.daemon.status()['listening'])
+            self.key(0)
+            self.done()
+            self.daemon.pipeline.deliveries.join()
+            self.assertFalse(self.daemon.status()['listening'])
+            self.assertEqual(self.targets[0].calls[0][0], 'hello')
+            self.assertTrue(pending.empty())
 
     def test_hold_key_transfers_gate_ownership_through_finalization(self):
         entered, release = threading.Event(), threading.Event()

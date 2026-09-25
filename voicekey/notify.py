@@ -1,6 +1,9 @@
-"""Desktop notifications. Every user-visible state change and every error path
-goes through here — silent failure is the worst outcome. notify() never raises
-and never blocks the caller: one worker thread sends them, in order."""
+"""Attention-only desktop notifications; routine state belongs in the indicator.
+
+Existing status/preview callers are silent unless they explicitly request
+attention. Errors always qualify. One worker sends notifications without
+blocking capture or delivery.
+"""
 
 from __future__ import annotations
 
@@ -11,8 +14,8 @@ import threading
 
 log = logging.getLogger("voicekey.notify")
 
-# Independent replace ids keep an agent status update from overwriting a
-# simultaneous dictation status update. Errors skip replacement and persist.
+# Independent channels keep an agent notice from overwriting a dictation notice.
+# Errors skip replacement and persist.
 _REPLACE_IDS = {
     "dictate": "91021",
     "agent": "91022",
@@ -26,8 +29,8 @@ _lock = threading.Lock()
 
 def _coalesce(items: list[tuple[str | None, list[str]]]) -> list[list[str]]:
     """Errors are all sent; of replaceable notifications (channel set) only
-    the newest per channel survives a backlog — a stalled notify-send must
-    not replay every live-preview update afterwards."""
+    the newest per channel survives a backlog so a stalled notify-send does
+    not replay superseded notices afterwards."""
     errors = []
     newest: dict[str, list[str]] = {}
     for channel, cmd in items:
@@ -56,8 +59,15 @@ def _send() -> None:
 
 
 def notify(summary: str, body: str = "", *, error: bool = False,
-           ms: int = 6000, channel: str = "system") -> None:
+           attention: bool = False, ms: int = 6000, channel: str = "system") -> None:
+    """Use attention=True for actionable notices, error=True for lasting failures.
+
+    Neither flag means routine status, success or preview text: no desktop popup,
+    queue entry or notification worker is created. This also applies without DMS.
+    """
     global _worker
+    if not (attention or error):
+        return
     cmd = ["notify-send", "-a", "voicekey"]
     key: str | None = None
     if error:

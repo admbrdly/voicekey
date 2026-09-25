@@ -25,6 +25,7 @@ from voicekey.target import EmacsTarget, ImeTarget, ImePreview, NotifyPreview, W
 from voicekey.work import Slot
 from tests.test_ime import _offline_input_method
 from tests.test_pipeline import wait_for
+from tests.test_notify import queued_notifications
 
 
 class BufferAndSegmentTests(unittest.TestCase):
@@ -283,6 +284,46 @@ class PersistentTests(unittest.TestCase):
         self.session.request_stop()
         self.assertTrue(self.session.done.wait(5))
 
+    def test_routine_session_lifecycle_and_preview_are_silent(self):
+        with queued_notifications('persistent', 'pipeline', 'target') as pending:
+            for reason in ('stopped by key', 'stopped from panel', 'silence timeout', 'daemon stopping'):
+                with self.subTest(reason=reason):
+                    self.start()
+                    self.session.status()
+                    self.speak()
+                    self.session.target.target.preview.show('Provisional words')
+                    self.session.request_stop(reason)
+                    self.assertTrue(self.session.done.wait(3))
+                    self.session.thread.join(1)
+                    self.assertFalse(self.pipeline.ledger.busy)
+                    self.assertTrue(pending.empty())
+            self.assertEqual(self.insert.call_count, 4)
+
+    def test_window_change_pause_is_quiet_when_nothing_needs_recovery(self):
+        from voicekey.focus import Focus
+        self.cfg.persistent.destination_policy = 'pause'
+        with queued_notifications('persistent', 'pipeline', 'target') as pending, \
+                patch('voicekey.target.focus.window_id', return_value=7):
+            self.start()
+            self.session.focus_changed(Focus(8, 'other'))
+            self.assertTrue(self.session.done.wait(3))
+            self.session.thread.join(1)
+            self.assertTrue(self.session.paused)
+            self.assertEqual(self.session.reason, 'Window changed')
+            self.assertTrue(pending.empty())
+
+    def test_refused_field_still_shows_one_brief_actionable_notice(self):
+        self.binding = WtypeTarget(NotifyPreview('dictate'), Window(7, True), 'browser')
+        with queued_notifications('persistent', 'pipeline', 'target') as pending:
+            self.start()
+            self.assertTrue(self.session.done.wait(3))
+            self.session.thread.join(1)
+            _, command = pending.get_nowait()
+            self.assertIn('No text field detected', command[-1])
+            self.assertNotIn('critical', command)
+            self.assertEqual(command[command.index('-t') + 1], '6000')
+            self.assertTrue(pending.empty())
+
     def test_unverified_field_preserves_opening_speech_without_typing(self):
         def bind():
             self.recorder.push(np.ones(6400, dtype=np.float32) * .2)
@@ -430,7 +471,7 @@ class PersistentTests(unittest.TestCase):
         # Three actual recorder frames leave 192 samples beyond the VAD window.
         self.recorder.push(np.zeros(4800, dtype=np.float32))
         wait_for(lambda: self.session.segmenter.position == 4608)
-        with patch('voicekey.persistent.notify') as notify:
+        with queued_notifications('persistent') as pending:
             self.recorder.failure = 'pw-record: microphone disconnected'
             self.recorder.finished = True
             self.session.wake.set()
@@ -438,8 +479,11 @@ class PersistentTests(unittest.TestCase):
             self.session.thread.join(1)
         self.assertTrue(self.session.paused)
         self.assertEqual(self.session.reason, self.recorder.failure)
-        self.assertIn('stopped', notify.call_args.args[0])
-        self.assertIn(self.recorder.failure, notify.call_args.args[1])
+        _, command = pending.get_nowait()
+        self.assertIn('stopped', command[-2])
+        self.assertIn(self.recorder.failure, command[-1])
+        self.assertIn('critical', command)
+        self.assertTrue(pending.empty())
         self.backend.transcribe.assert_not_called()
         self.assertFalse(list(Path(self.tmp.name).rglob('*.wav')))
         self.assertFalse((Path(self.tmp.name) / 'last-recovery.txt').exists())

@@ -17,7 +17,8 @@ import time
 from evdev import ecodes
 
 from . import focus
-from .control import ControlServer
+from .control import CAPTURE_COMMANDS, ControlServer
+from .client_capture import ClientCapture
 from .follow import NiriFocusWatch
 from . import polish as polish_mod
 from . import target as target_mod
@@ -78,6 +79,7 @@ class Daemon:
         self.recorder = recorder_factory()
         self.session = None
         self.persistent = None
+        self.client_capture = None
         self._pause_reason = ""
         self._typing_fallback = False
         self._gesture = None  # (session, key-down time), until its chord is released
@@ -88,7 +90,7 @@ class Daemon:
         self.backend_error = None
         self.gate = Gate()
         self.pipeline = Pipeline(cfg, backend=lambda: self if self.model_state == "loading" else self.backend, polisher=lambda: self.polisher,
-                                 settled=self._settle_gate, journal=journal)
+                                 settled=self._settle_gate, journal=journal, completed=self._capture_completed)
         self._live_session = None
         self._stopping = False
         self._closed = False
@@ -111,7 +113,7 @@ class Daemon:
             except ImeUnavailable as exc:
                 log.info("no in-field preview: %s", exc)
             except Exception:
-                log.exception("input method failed to start; previews use notifications")
+                log.exception("input method failed to start; in-field previews unavailable")
 
     def _load_models(self):
         self.backend_error = None
@@ -131,19 +133,19 @@ class Daemon:
         try:
             self.streaming = create_streaming(self.cfg.streaming)
         except BackendUnavailable as exc:
-            notify("voicekey: live preview unavailable", str(exc), error=True)
+            notify("voicekey: live preview unavailable", str(exc), attention=True)
         except Exception as exc:
             log.exception("streaming backend failed to load")
-            notify("voicekey: live preview unavailable", f"{type(exc).__name__}: {exc}", error=True)
+            notify("voicekey: live preview unavailable", f"{type(exc).__name__}: {exc}", attention=True)
         if self.cfg.polish.backend != "none":
             try:
                 self.polish_server = polish_mod.start_server(self.cfg.polish)
                 self.polisher = polish_mod.create_polisher(self.cfg.polish, self.polish_server)
             except polish_mod.PolishError as exc:
-                notify("voicekey: polish unavailable", f"{exc}; transcripts land unpolished", error=True)
+                notify("voicekey: polish unavailable", f"{exc}; transcripts land unpolished", attention=True)
             except Exception as exc:
                 log.exception("polish failed to start")
-                notify("voicekey: polish unavailable", f"{type(exc).__name__}: {exc}", error=True)
+                notify("voicekey: polish unavailable", f"{type(exc).__name__}: {exc}", attention=True)
     def _ensure_models(self):
         if self._unload_requested or self.model_state == "unloading":
             raise ValueError("Wait for memory release to finish")
@@ -211,7 +213,7 @@ class Daemon:
     def _unload_when_idle(self):
         if not self._unload_requested or self.model_state in ("loading", "unloading"):
             return
-        if self.persistent is not None or self.session is not None or self.pipeline.ledger.busy:
+        if self.client_capture is not None or self.persistent is not None or self.session is not None or self.pipeline.ledger.busy:
             return
         # Ledger completion does not imply a timed-out native call has exited.
         if (self._vad_slot.busy or any(slot.busy for slot in self.pipeline._slots.values())
@@ -244,6 +246,11 @@ class Daemon:
         if self.control is not None:
             self.control.close()
         try:
+            if self.client_capture is not None:
+                if self.client_capture.started:
+                    self.client_capture.finish()
+                elif not self.client_capture.target.terminal:
+                    self.client_capture.cancel()
             if self.persistent is not None:
                 self.persistent.close()
             if self.session is not None:
@@ -337,6 +344,15 @@ class Daemon:
             log.warning("ambiguous dictation chord")
             return
         chord, (action, behavior) = matches[0]
+        if self.client_capture is not None:
+            if action in ("persistent", "dictate"):
+                if self.client_capture.submitted:
+                    notify("voicekey: busy", "Client capture is still processing", attention=True, ms=3000)
+                else:
+                    self.client_capture.finish()
+            else:
+                notify("voicekey: busy", "Finish the client capture before using the agent key", attention=True, ms=3000)
+            return
         if self.persistent is not None:
             if self.persistent.done.is_set():
                 self._retire_persistent()
@@ -344,7 +360,7 @@ class Daemon:
                 if action == "persistent":
                     self.persistent.request_stop()
                 else:
-                    notify("voicekey: busy", "stop persistent dictation before using another dictation key")
+                    notify("voicekey: busy", "stop persistent dictation before using another dictation key", attention=True, ms=3000)
                 return
         if session is not None:
             if behavior == TOGGLE and chord == session.chord and device == session.device:
@@ -374,14 +390,14 @@ class Daemon:
         try:
             self._ensure_models()
         except ValueError as exc:
-            notify("voicekey: busy", str(exc), error=True)
+            notify("voicekey: busy", str(exc), attention=True, ms=3000)
             return
         if (self.model_state != "loading" and (self.vad is None or self.backend is None)) or self._vad_slot.busy:
-            notify("voicekey: persistent mode unavailable", "speech models unavailable or a detector call is still running", error=True)
+            notify("voicekey: persistent mode unavailable", "speech models unavailable or a detector call is still running", attention=True, ms=3000)
             return
         # A new session cannot share the previous gesture's decoder or preview.
         if self.pipeline.ledger.busy or self._live_session is not None and self._live_session.stuck:
-            notify("voicekey: busy", "let pending dictation finish before starting persistent mode", error=True)
+            notify("voicekey: busy", "let pending dictation finish before starting persistent mode", attention=True, ms=3000)
             return
         track_windows = allow_typing or self.cfg.persistent.destination_policy != "pin"
         watch_factory = (NiriFocusWatch if track_windows and focus.compositor() == "niri"
@@ -404,7 +420,7 @@ class Daemon:
         try:
             if not session.start():
                 self.persistent = None
-                notify("voicekey: busy", "pending work or recovery storage is full", error=True)
+                notify("voicekey: busy", "pending work or recovery storage is full", attention=True, ms=3000)
         except Exception as exc:
             self.persistent = None
             self._settle_gate()
@@ -414,11 +430,11 @@ class Daemon:
         try:
             self._ensure_models()
         except ValueError as exc:
-            notify("voicekey: busy", str(exc), error=True)
+            notify("voicekey: busy", str(exc), attention=True, ms=3000)
             return
         identity = self.pipeline.admit()
         if identity is None:
-            notify("voicekey: busy", "recording did not start; pending work or recovery storage is full", error=True)
+            notify("voicekey: busy", "recording did not start; pending work or recovery storage is full", attention=True, ms=3000)
             return
         session = Session(action, behavior, chord, device, identity=identity, on_text=self.pipeline.ledger.live)
         if action == "dictate":
@@ -449,7 +465,7 @@ class Daemon:
         except Exception as exc:
             log.exception("preview setup failed; capture continues")
             session.cancel()
-            notify("voicekey: preview unavailable", str(exc), error=True)
+            notify("voicekey: preview unavailable", str(exc), attention=True)
         notify(f"● Recording ({LABEL[action]})", instruction, ms=60000, channel=action)
         log.info("recording %s (%s)", identity, action)
 
@@ -484,16 +500,20 @@ class Daemon:
 
     def status(self):
         persistent = self.persistent
-        listening = bool(persistent is not None and not persistent.stopping.is_set()) or self.session is not None
-        busy = persistent is not None or self.pipeline.ledger.busy
+        client_capture = self.client_capture
+        listening = (bool(client_capture is not None and client_capture.listening)
+                     or bool(persistent is not None and not persistent.stopping.is_set())
+                     or self.session is not None)
+        busy = client_capture is not None or persistent is not None or self.pipeline.ledger.busy
         pause_reason = persistent.reason if persistent is not None and persistent.paused else self._pause_reason
         state = ("listening" if listening else "finishing" if busy else
                  "unloading" if self._unload_requested else
                  self.model_state if self.model_state in ("loading", "unloading", "unloaded") else
                  "unavailable" if self.backend is None or self.vad is None else
                  "paused" if pause_reason else "idle")
-        destination = persistent.target.target if persistent is not None else None
-        return {"state": state, "listening": listening,
+        destination = (client_capture.target if client_capture is not None else
+                       persistent.target.target if persistent is not None else None)
+        return {"state": state, "listening": listening, "client_capture": client_capture is not None,
                 "binding": persistent is not None and not persistent.ready.is_set(),
                 "models": self.model_state, "unload_pending": self._unload_requested,
                 "destination_policy": self.cfg.persistent.destination_policy,
@@ -510,19 +530,60 @@ class Daemon:
                     ("Speech detector unavailable" if self.vad is None else "")
                     if self.model_state == "ready" else "")}
 
-    def command(self, command):
+    def _capture_completed(self, identity, outcome, reason):
+        capture = self.client_capture
+        if capture is not None and capture.id == identity:
+            capture.completed(outcome, reason)
+
+    def command(self, command, *, args=None, client=None, request_id=None):
         if self._stopping:
             raise ValueError("Voicekey is shutting down")
+        args = args or {}
+        if command in CAPTURE_COMMANDS:
+            if client is None or self.control is None:
+                raise ValueError("Capture commands require a persistent control connection")
+            if command == "capture-start":
+                seconds, wav, client_name, preview = ClientCapture.arguments(args, self.cfg)
+                if self.client_capture is not None or self.persistent is not None or self.session is not None:
+                    raise ValueError("Microphone busy: finish the current capture first")
+                if self.pipeline.ledger.busy:
+                    raise ValueError("Dictation busy: wait for pending processing to finish")
+                self._ensure_models()
+                identity = self.pipeline.admit(audio_seconds=seconds, gated=False)
+                if identity is None:
+                    raise ValueError("Capture unavailable: pending work or recovery storage is full")
+                self.client_capture = ClientCapture(self, client, request_id, identity, seconds, wav,
+                                                   client_name, preview)
+                return {"capture_id": identity}
+            capture = self.client_capture
+            if set(args) != {'capture_id'} or not isinstance(args['capture_id'], str):
+                raise ValueError("capture_id is required")
+            if capture is None or capture.client is not client or capture.id != args['capture_id']:
+                raise ValueError("No matching capture owned by this connection")
+            if command == "capture-cancel":
+                capture.cancel()
+            else:
+                capture.finish()
+            return
+        if args:
+            raise ValueError("This command takes no arguments")
+        if self.client_capture is not None and command not in ("stop", "free-memory"):
+            raise ValueError("Client capture active: use stop to finish it before starting or changing desktop dictation")
         if command == "free-memory":
             if self.model_state == "unloaded":
                 return
             self._unload_requested = True
-            self.command("stop")
+            if self.client_capture is not None:
+                self.client_capture.finish()
+            else:
+                self.command("stop")
             self._unload_when_idle()
         elif command == "stop":
             self._pause_reason = ""
             self._typing_fallback = False
             self._gesture = None
+            if self.client_capture is not None:
+                self.client_capture.finish()
             if self.persistent is not None:
                 self.persistent.request_stop("stopped from panel")
             if self.session is not None:
@@ -547,6 +608,11 @@ class Daemon:
         if self.control is not None:
             self.control.drain(self.command)
             self.control.publish(self.status())
+        if self.client_capture is not None:
+            capture = self.client_capture
+            capture.tick()
+            if self.pipeline.ledger.get(capture.id) is None:
+                self.client_capture = None
         self._settle_gate()  # retry a shared lock which was occupied at key-down
         if self.persistent is not None:
             self.persistent.tick()

@@ -15,6 +15,8 @@ from voicekey.config import Config
 from voicekey.pipeline import Pipeline
 from voicekey.recovery import Journal
 from voicekey.target import Landing, Outcome, WtypeTarget, NotifyPreview, Window
+from voicekey.notify import notify
+from tests.test_notify import queued_notifications
 
 
 class FakeRecorder:
@@ -256,6 +258,23 @@ class PipelineTests(unittest.TestCase):
         self.done()
         self.assertEqual(self.notice.call_args.args[0], '📋 Copied')
         self.assertNotIn('error', self.notice.call_args.kwargs)
+
+    def test_successful_agent_dispatch_is_quiet_but_clipboard_recovery_notifies(self):
+        self.pipeline._send_agent = Mock()
+        with queued_notifications() as pending:
+            self.notice.side_effect = notify
+            self.submit(action='agent')
+            self.done()
+            self.pipeline.agents.join()
+            self.assertTrue(pending.empty())
+            target = FakeTarget(Outcome.REFUSED)
+            target.kind = 'clipboard'
+            self.submit(target)
+            self.done()
+            self.pipeline.deliveries.join()
+            _, command = pending.get_nowait()
+            self.assertIn('📋 Copied', command)
+            self.copy.assert_called_once_with('hello')
 
     def test_short_text_skips_polish_and_threshold_is_configurable(self):
         self.polisher = Mock(polish=Mock(return_value='Hello.'))
