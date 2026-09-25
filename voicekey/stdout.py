@@ -11,7 +11,7 @@ import time
 from .control import PROTOCOL_VERSION, socket_path
 
 
-def capture(*, wav=None, seconds=None, path=None, client_name=None) -> int:
+def capture(*, wav=None, seconds=None, path=None, client_name=None, preview=False) -> int:
     """Ctrl-C finishes; SIGTERM cancels. Configuration belongs to the daemon."""
     stopped = aborted = False
 
@@ -77,6 +77,8 @@ def capture(*, wav=None, seconds=None, path=None, client_name=None) -> int:
                         # optional destination label needs the new capability.
                         if client_name and 'capture-client-name' in message.get('capabilities', []):
                             args['client_name'] = client_name
+                        if preview and 'capture-preview' in message.get('capabilities', []):
+                            args['preview'] = True
                         send('capture-start', args)
                     elif message.get('type') == 'reply':
                         pending.pop(message.get('id'), None)
@@ -89,6 +91,9 @@ def capture(*, wav=None, seconds=None, path=None, client_name=None) -> int:
                             print('Recording; Ctrl-C finishes, SIGTERM cancels.', file=sys.stderr, flush=True)
                         elif message.get('state') == 'transcribing':
                             print('Transcribing; microphone stopped.', file=sys.stderr, flush=True)
+                        elif message.get('state') == 'preview' and isinstance(message.get('text'), str):
+                            # One line per revision; JSON keeps newlines inside the line.
+                            print('Preview; ' + json.dumps(message['text']), file=sys.stderr, flush=True)
                     elif message.get('type') == 'capture-result' and message.get('capture_id') == identity:
                         if aborted or message.get('error') == 'cancelled':
                             return 130
