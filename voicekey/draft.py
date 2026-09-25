@@ -138,10 +138,11 @@ class DraftTarget(SessionTarget):
             chunk, reason = job.raw, "disabled"
             model = pipeline.polisher()
             if model is not None and len(polish.words(job.raw)) >= pipeline.cfg.persistent.polish_min_words:
-                deadline = min(pipeline._deadline(job), cleanup_by,
-                               time.monotonic() + pipeline.cfg.polish.max_wait_seconds)
+                # Same budget as ordinary cleanup: a backlogged chunk whose
+                # deadline has passed joins the draft raw.
+                deadline = min(job.polish_deadline, pipeline._deadline(job), cleanup_by)
                 context = text if pipeline.cfg.persistent.polish_context else ""
-                reason = "raw: cleanup budget after acceptance spent"
+                reason = "raw: cleanup deadline reached"
                 if time.monotonic() < deadline:
                     try:
                         cleaned = pipeline._slots['polish'].call(
@@ -172,6 +173,7 @@ class DraftTarget(SessionTarget):
             self._through = entry.sequence
             if job.failure:
                 self.warning = job.failure
+        return chunk
 
     def commit(self, pipeline):
         """One durable, revocable attempt, with the usual delivery supervision."""
@@ -196,6 +198,11 @@ class DraftTarget(SessionTarget):
         pipeline._save('session', lambda: pipeline.journal.append(self.id, 'delivery-attempt',
             attempt=operation, final=final, target=self.target.describe(), deadline=deadline))
         permit = str(pipeline.journal.path(self.id, '.permit'))
+        if self.cancelled.is_set():
+            # A discard between the check above and creating the permit revoked
+            # nothing; revoke here so no editor request can see a live permit.
+            pipeline.journal.revoke(self.id)
+            return Landing(Outcome.DROPPED, "Draft cancelled")
         mark = pipeline.spacing.mark()
         try:
             landing = pipeline._slots['deliver'].call(
@@ -221,7 +228,7 @@ class DraftUtteranceTarget(UtteranceTarget):
         return self.session.cancelled.is_set()
 
     def prepare_draft(self, job, pipeline):
-        self.session.prepare(job, pipeline)
+        return self.session.prepare(job, pipeline)
 
     def completed(self, outcome):
         self._completed = True

@@ -320,7 +320,9 @@ class Pipeline:
         if self._discard_client(job, "polish"):
             return
         if hasattr(job.target, 'prepare_draft'):
-            job.target.prepare_draft(job, self)
+            chunk = job.target.prepare_draft(job, self)
+            if chunk is not None:
+                self._keep_recording(job, chunk)
             if not self._discard_client(job, "polish"):
                 self._complete(job, Outcome.DRAFT, job.failure, "polish")
             return
@@ -384,15 +386,7 @@ class Pipeline:
         self._save("polish", lambda: self.journal.append(job.id, "final", raw=job.raw, final=final,
             polished=polished, overridden=overridden, polish_result=polish_result,
             polish_style=style, polish_context=context, hook_result=hook_result, action=job.action))
-        if self.cfg.recordings_dir and job.samples is not None:
-            try:
-                self._slots["corpus"].call(lambda: recovery.keep(self.cfg.recordings_dir, job.samples,
-                                                                job.live, job.raw, final),
-                    min(job.deadline - 0.1, time.monotonic() + self.cfg.pipeline.journal_seconds))
-            except Exception as exc:
-                if isinstance(exc, WorkTimeout) and self._slots["corpus"].busy:
-                    self._stalled_corpus_audio = len(job.samples) / 16000
-                log.warning("optional recordings corpus unavailable: %s", exc)
+        self._keep_recording(job, final)
         job = replace(job, final=final, samples=None, drop_reason="filler-only utterance" if drop else "")
         if not self.ledger.transition(job.id, Stage.POLISHING, Stage.READY, final=final,
                                       audio_seconds=0, gated=job.action == "dictate"):
@@ -406,6 +400,17 @@ class Pipeline:
             self.notify("voicekey: agent busy", f"prompt saved to {self.journal.path(job.id, '.txt')}", error=True)
             return
         (self.agents if job.action == "agent" else self.deliveries).put_nowait(job)
+
+    def _keep_recording(self, job, final):
+        if self.cfg.recordings_dir and job.samples is not None:
+            try:
+                self._slots["corpus"].call(lambda: recovery.keep(self.cfg.recordings_dir, job.samples,
+                                                                job.live, job.raw, final),
+                    min(job.deadline - 0.1, time.monotonic() + self.cfg.pipeline.journal_seconds))
+            except Exception as exc:
+                if isinstance(exc, WorkTimeout) and self._slots["corpus"].busy:
+                    self._stalled_corpus_audio = len(job.samples) / 16000
+                log.warning("optional recordings corpus unavailable: %s", exc)
 
     def _prepare_text(self, job, value):
         """Apply explicit corrections, then the action's hook, within its budget."""

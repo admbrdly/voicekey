@@ -148,6 +148,9 @@ class PersistentSession:
             self.target.cancelled.set()
             self._draft_action = "cancel"
             self._draft_decision.set()
+        # An editor request may already be queued; the editor checks this
+        # permit immediately before mutating the buffer.
+        self.pipeline.journal.revoke(self.id)
         self.request_stop("Draft cancelled")
 
     def request_draft_key(self, action):

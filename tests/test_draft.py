@@ -3,6 +3,7 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -547,6 +548,75 @@ class DraftTests(unittest.TestCase):
         self.assertEqual(self.s.target._through, through)
         self.d.command('cancel')
         self.finished()
+
+    def test_discard_revokes_an_editor_request_already_queued_by_acceptance(self):
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        def insert(text, deadline, operation, prefix, permit, cancelled):
+            entered.set()
+            release.wait(3)
+            # The editor, not Python, performs the final check before mutation.
+            if not Path(permit).exists():
+                return Landing(reason='insertion cancelled')
+            self.editor.inserted.append(text)
+            return Landing(Outcome.CONFIRMED)
+        self.editor.insert_pinned = insert
+        self.start()
+        self.speak()
+        self.d.command('stop')
+        self.assertTrue(entered.wait(3))
+        self.d.command('cancel')
+        release.set()
+        self.finished()
+        self.assertEqual(self.editor.inserted, [])
+
+    def test_discard_just_before_permit_creation_cannot_insert(self):
+        self.start()
+        self.speak()
+        target, journal = self.s.target, self.d.pipeline.journal
+        def insert(text, deadline, operation, prefix, permit, cancelled):
+            # Model a request already handed to the editor: only the permit counts.
+            if not Path(permit).exists():
+                return Landing(reason='insertion cancelled')
+            self.editor.inserted.append(text)
+            return Landing(Outcome.CONFIRMED)
+        self.editor.insert_pinned = insert
+        append = journal.append
+        def racing_append(identity, event, **data):
+            result = append(identity, event, **data)
+            if event == 'delivery-attempt':
+                target.cancelled.set()  # discard lands after the pre-permit check
+            return result
+        with patch.object(journal, 'append', side_effect=racing_append):
+            self.d.command('stop')
+            self.finished()
+        self.assertEqual(self.editor.inserted, [])
+        self.assertFalse(journal.path(self.s.id, '.permit').exists())
+
+    def test_backlogged_chunk_past_its_cleanup_deadline_is_not_sent_to_the_model(self):
+        self.d.polisher = Mock(polish=Mock(side_effect=lambda text, *args, **kwargs: text.upper()))
+        self.start()
+        real = self.s.target.prepare
+        def backlogged(job, pipeline):
+            # The chunk waited in the queue past its ordinary cleanup deadline.
+            return real(replace(job, polish_deadline=time.monotonic() - 1), pipeline)
+        with patch.object(self.s.target, 'prepare', side_effect=backlogged):
+            self.speak('Late chunk.')
+        self.d.polisher.polish.assert_not_called()
+        self.assertEqual(self.s.target.text, 'Late chunk.')
+        self.d.command('cancel')
+        self.finished()
+
+    def test_recordings_dir_keeps_draft_chunks(self):
+        self.d.cfg.recordings_dir = self.tmp.name + '/corpus'
+        self.d.polisher = Mock(polish=Mock(return_value='Cleaned words.'))
+        self.start()
+        self.speak()
+        self.d.command('stop')
+        self.finished()
+        self.assertEqual(len(list(Path(self.d.cfg.recordings_dir).glob('*.wav'))), 1)
+        note, = Path(self.d.cfg.recordings_dir).glob('*.txt')
+        self.assertIn('Cleaned words.', note.read_text())
 
     def test_preview_never_drops_a_chunk_published_between_reads(self):
         self.start()
