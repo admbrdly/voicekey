@@ -47,6 +47,9 @@ ordinary sessions and adds an anchored, virtual preview for optional drafts.
 Neovim uses an advancing extmark: edits elsewhere move it with the buffer, but
 moving the cursor or selecting another buffer does not retarget dictation.
 Normal-mode pins start after the cursor character; insert-mode pins start at it.
+A normal-mode pin also enters insert mode (as `a` does) so the cursor follows
+the text, and the session's end returns to normal mode unless the user left
+insert mode meanwhile or another buffer is current.
 Selections and pending operators are refused when acquiring a pin.
 
 Live and provisional Neovim text appears as inline virtual text at the pin,

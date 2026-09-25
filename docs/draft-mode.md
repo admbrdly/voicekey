@@ -39,15 +39,19 @@ separately from the draft preference.
 
 - Press the normal dictation key to start. In an actual draft session it is always a toggle,
   even if you hold it down: releasing the key does not stop recording.
-- Text appears as a virtual preview in the original buffer. Emacs uses an
-  overlay at the insertion point; Neovim uses wrapped virtual lines below it.
-  Previews do not modify buffer text, the undo history, or the file on disk.
+- Text appears as a virtual preview in the original buffer. Emacs draws it at
+  the insertion point, with the cursor after it; Neovim uses wrapped virtual
+  lines below it. Previews do not modify buffer text, the undo history, or the
+  file on disk.
+- From Evil or Neovim normal mode, dictation switches to insert mode for the
+  session (as `a` does) and back to normal mode when the draft is accepted or
+  discarded, unless you changed mode yourself meanwhile.
 - Press the dictation key again to finish processing and insert the whole draft
   once, at its original anchor. Ordinary edits before the anchor move it with
   the surrounding text. Acceptance creates one buffer insertion/undo step.
 - Press Escape to discard the entire draft, including work still being
-  transcribed or cleaned up. Escape also reaches the application: in Evil or
-  Neovim it may change modes. To use a different chord, set, for example,
+  transcribed or cleaned up. Escape also reaches the editor, where it leaves
+  insert mode as usual. To use a different chord, set, for example,
   `draft_cancel_key = "KEY_LEFTCTRL+KEY_ESC"`.
 - The dictation and cancellation hotkeys act only while the draft's original
   window is focused (and, for terminal Neovim, its original instance reports
@@ -66,8 +70,10 @@ destination and pause on window switches, regardless of `destination_policy`.
 You can accept a prepared draft after unloading the models.
 
 The preview is not directly editable. You can edit other buffer text, but must
-accept the draft before editing its words. Normal editor undo remains available
-after acceptance. Escape cannot roll back an insertion already performed.
+accept the draft before editing its words. Typing at the insertion point goes
+into the buffer before the draft, and the draft lands after it. Normal editor
+undo remains available after acceptance. Escape cannot roll back an insertion
+already performed.
 
 Acceptance waits for pending chunks to be transcribed; the daemon's shutdown
 timeout does not expire a healthy draft backlog. Cleanup of chunks still queued
