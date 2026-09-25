@@ -143,16 +143,50 @@ local function prepare(text)
   return text
 end
 
+-- Characters after which a word follows without a space.
+local openers = {}
+for _, c in ipairs(vim.fn.split("([{\"'`“‘«¿¡「『（【〈《〔［｛", "\\zs")) do
+  openers[c] = true
+end
+
+-- Scripts written without spaces between words: kana, kanji, and CJK or
+-- fullwidth punctuation. Hangul is spaced like Latin text.
+local function unspaced(char)
+  local class = vim.fn.charclass(char)
+  if class == 0x3040 or class == 0x30a0 or class == 0x4e00 then
+    return true
+  end
+  local code = vim.fn.char2nr(char)
+  return (code >= 0x3000 and code <= 0x303f) or (code >= 0xff00 and code <= 0xffef)
+end
+
+local function first_char(s)
+  return vim.fn.strcharpart(s, 0, 1)
+end
+
+local function last_char(s)
+  return vim.fn.strcharpart(s, vim.fn.strchars(s) - 1)
+end
+
+-- Separate the transcript from neighbouring words, as desktop delivery does
+-- (voicekey/spacing.py): no space before closing punctuation or after an
+-- opening bracket or quote, and none between characters of unspaced scripts.
 function spaced(buf, row, col, text)
-  if not config.spacing then
+  if not config.spacing or text == "" then
     return text
   end
   local line = api.nvim_buf_get_lines(buf, row, row + 1, false)[1] or ""
-  local before, after = line:sub(col, col), line:sub(col + 1, col + 1)
-  if before ~= "" and not before:match("[%s%(%[{\"'`]") then
+  local before, after = last_char(line:sub(1, col)), first_char(line:sub(col + 1))
+  local head, tail = first_char(text), last_char(text)
+  if before ~= "" and vim.fn.charclass(before) ~= 0 and not openers[before]
+      and not (vim.fn.charclass(head) == 1 and not openers[head])
+      and not (unspaced(before) and unspaced(head)) then
     text = " " .. text
   end
-  if after ~= "" and after:match("[%w]") then
+  -- Only before a following word: punctuation and spaces stay attached.
+  local class = after ~= "" and vim.fn.charclass(after)
+  if class and class ~= 0 and class ~= 1 and not openers[tail]
+      and not (unspaced(tail) and unspaced(after)) then
     text = text .. " "
   end
   return text

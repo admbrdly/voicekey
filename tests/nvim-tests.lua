@@ -283,6 +283,27 @@ tests["preview can be turned off"] = function()
   assert(lines()[1] == "done", lines()[1])
 end
 
+tests["spacing follows punctuation, brackets and scripts"] = function()
+  -- { line, cursor column (normal mode inserts after it), transcript, expected }
+  local cases = {
+    { "foo bar", 2, ", and more", "foo, and more bar" },
+    { "done", 3, ".", "done." },
+    { "f(x)", 1, "value", "f(value x)" },
+    { "f(x)", 2, "plus one", "f(x plus one)" },
+    { "say “hi”", 4, "well", "say “well hi”" },
+    { "xéclair", 0, "word", "x word éclair" },
+    { "aЖ", 0, "слово", "a слово Ж" },
+    { "日本語", 3, "テスト", "日本テスト語" },
+    { "日本。", 6, "テスト", "日本。テスト" },
+    { "안녕", 3, "하세요", "안녕 하세요" },
+  }
+  for _, case in ipairs(cases) do
+    buffer({ case[1] }, 1, case[2])
+    dictate(case[3])
+    assert(lines()[1] == case[4], ("%q -> %q, expected %q"):format(case[1], lines()[1], case[4]))
+  end
+end
+
 tests["unmodifiable buffer is refused before recording"] = function()
   buffer({ "read only" }, 1, 0)
   vim.bo.modifiable = false
