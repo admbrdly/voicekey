@@ -7,13 +7,15 @@ for **Neovim** and other terminal programs. The daemon's input-method text canno
 see Neovim's mode, so words sent to a terminal running Neovim in normal mode
 would run as commands. The additions keep dictation safe there.
 
-- **Neovim plugin** ([contrib/nvim](https://github.com/admbrdly/voicekey/tree/neovim-plugin/contrib/nvim)):
+- **Neovim plugin** ([contrib/nvim](contrib/nvim)):
   `:VoiceKey` or `<F12>` records, and the transcript is inserted with
   `nvim_buf_set_text` at the point where you started, whatever the mode. Nothing is
-  typed. An inline marker shows loading, recording and transcribing; `:VoiceKey cancel`
-  discards. Recording and transcription go through the running daemon, which is the
-  only process that loads speech models. Open as
-  [PR #1](https://github.com/ejerzak/voicekey/pull/1).
+  typed. While you speak, the live transcript appears there as dimmed virtual text
+  and revises itself; the final, polished transcript replaces it when you stop.
+  `:VoiceKey cancel` discards. Recording and transcription go through the running
+  daemon, which is the only process that loads speech models. The plugin was merged
+  upstream as [PR #1](https://github.com/ejerzak/voicekey/pull/1); the live preview
+  is in this fork (branch `nvim-live-preview`).
 - **One key everywhere** (`contrib/nvim/voicekey-route`): a Niri keybinding that
   inserts into the Neovim that has focus, starts the daemon in GUI apps, and refuses
   other terminal programs, where single letters are commands.
@@ -42,12 +44,13 @@ Quick start for the Neovim plugin (lazy.nvim, with voicekey installed as below):
 | [`terminal-extras`](https://github.com/admbrdly/voicekey/tree/terminal-extras) | Adds bash, Claude Code and Codex routing |
 | [`control-without-keyboard`](https://github.com/admbrdly/voicekey/tree/control-without-keyboard) | Daemon: control commands without evdev, `evdev = false` |
 | [`adam-local`](https://github.com/admbrdly/voicekey/tree/adam-local) | All of the above merged; rebuilt, not a stable history |
+| [`nvim-live-preview`](https://github.com/admbrdly/voicekey/tree/nvim-live-preview) | Live transcript in Neovim while dictating (in this `master`) |
 
-Status: the Neovim plugin uses upstream's client-capture protocol (branch
-`daemon-client-capture`, not yet in upstream `master`). `voicekey --capture-to-stdout`
-is a thin client of the running daemon, so the daemon must be running and up to date;
-dictations are recoverable with `voicekey --last`. This `master` is otherwise
-identical to upstream; the original README follows.
+Status: this `master` is upstream `master` plus the Neovim live preview and this
+section. The plugin uses upstream's client-capture protocol: `voicekey
+--capture-to-stdout` is a thin client of the running daemon, so the daemon must be
+running and up to date (restart `voicekey.service` after pulling); dictations are
+recoverable with `voicekey --last`. The original README follows.
 
 ## VoiceKey
 
