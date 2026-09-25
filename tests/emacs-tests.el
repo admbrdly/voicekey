@@ -43,6 +43,19 @@
     (should (equal (buffer-string) "Before first accepted\nsecond"))
     (should-not (overlays-in (point-min) (point-max)))))
 
+(ert-deftest voicekey-draft-cursor-is-drawn-after-the-preview-only-at-the-anchor ()
+  (voicekey-test-buffer "a b"
+    (goto-char 2)
+    (voicekey-test-pin)
+    (should (equal (voicekey--draft "pin" (voicekey-test-expiry) "a long draft") "ok"))
+    (let* ((overlay (nth 3 (assoc "pin" voicekey--pins)))
+           (shown (overlay-get overlay 'after-string))
+           (last (1- (length shown))))
+      (should (equal (substring-no-properties shown) " a long draft "))
+      ;; An integer covers buffer positions [anchor, anchor + 1): point there.
+      (should (eql (get-text-property last 'cursor shown) 1))
+      (should-not (text-property-not-all 0 last 'cursor nil shown)))))
+
 (ert-deftest voicekey-draft-cancellation-only-removes-its-overlay ()
   (voicekey-test-buffer "unchanged"
     (voicekey-test-pin)

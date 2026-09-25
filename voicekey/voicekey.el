@@ -5,7 +5,7 @@
 (require 'seq)
 (require 'subr-x)
 
-(defconst voicekey--protocol-version 8)
+(defconst voicekey--protocol-version 9)
 (defvar voicekey--pins nil)
 (defvar voicekey--restore-normal nil
   "Pin IDs whose buffer voicekey moved from Evil normal to insert state.")
@@ -170,10 +170,14 @@ user has not left it since (`voicekey--insert-exited' forgets the entry)."
           (let ((pos (marker-position (nth 2 pin)))
                 (overlay (nth 3 pin)))
             (move-overlay overlay pos pos buffer)
+            ;; Left to itself, redisplay may draw the cursor at the start of
+            ;; the preview once it wraps. While point is at the anchor, draw
+            ;; it on a trailing space instead: where the draft will end.
             (overlay-put overlay 'after-string
-                         (propertize (if (string-empty-p text) " [voicekey: draft]"
-                                       (voicekey--spaced text pos))
-                                     'face 'shadow)))
+                         (concat (propertize (if (string-empty-p text) " [voicekey: draft]"
+                                               (voicekey--spaced text pos))
+                                             'face 'shadow)
+                                 (propertize " " 'cursor 1))))
           "ok")))))))
 
 (defun voicekey--prepare-text (text terminal)
