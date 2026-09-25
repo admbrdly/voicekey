@@ -5,7 +5,7 @@
 (require 'seq)
 (require 'subr-x)
 
-(defconst voicekey--protocol-version 7)
+(defconst voicekey--protocol-version 8)
 (defvar voicekey--pins nil)
 (defvar voicekey--restore-normal nil
   "Pin IDs whose buffer voicekey moved from Evil normal to insert state.")
@@ -100,10 +100,20 @@ states are left alone. `voicekey--unpin' returns ID's buffer to normal state."
                  (and (eq (voicekey--state) 'normal) (not buffer-read-only) (not (minibufferp))
                       (not (memq major-mode '(term-mode vterm-mode))))))
       (with-selected-window window (evil-append 1))
-      (push (cons id buffer) voicekey--restore-normal))))
+      (push (cons id buffer) voicekey--restore-normal)
+      (with-current-buffer buffer
+        (add-hook 'evil-insert-state-exit-hook #'voicekey--insert-exited nil t)))))
+
+(defun voicekey--insert-exited ()
+  "Leaving the insert state dictation entered hands the state back to the user.
+A later session end must not override a state they chose since."
+  (setq voicekey--restore-normal
+        (seq-remove (lambda (entry) (eq (cdr entry) (current-buffer))) voicekey--restore-normal))
+  (remove-hook 'evil-insert-state-exit-hook #'voicekey--insert-exited t))
 
 (defun voicekey--leave-insert (id)
-  "Return ID's buffer to normal state if voicekey entered insert and it remains."
+  "Return ID's buffer to normal state if voicekey entered insert state and the
+user has not left it since (`voicekey--insert-exited' forgets the entry)."
   (let ((buffer (cdr (assoc id voicekey--restore-normal))))
     (setq voicekey--restore-normal (assoc-delete-all id voicekey--restore-normal))
     (when (and (buffer-live-p buffer)

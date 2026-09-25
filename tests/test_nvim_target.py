@@ -139,6 +139,25 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(self.editor.text(), ['a b next'])
         self.assertEqual(self.mode(), 'n')
 
+    def test_insert_mode_reentered_by_the_user_is_kept(self):
+        target = self.bind()
+        self.assertEqual(self.mode(), 'i')
+        self.editor.lua('vim.cmd("stopinsert")')  # <Esc>: the mode is the user's now
+        self.assertEqual(self.mode(), 'n')
+        self.editor.lua('vim.cmd("startinsert")')  # and they chose insert again
+        self.assertEqual(self.mode(), 'i')
+        target.clear()
+        self.assertEqual(self.mode(), 'i')
+
+    def test_session_end_never_changes_another_buffers_mode(self):
+        self.editor.lua('vim.api.nvim_buf_set_lines(0,0,-1,false,{"buffer A"})')
+        target = self.bind()
+        self.assertEqual(self.mode(), 'i')
+        self.editor.lua('vim.api.nvim_set_current_buf(vim.api.nvim_create_buf(true, false))')
+        self.assertEqual(self.mode(), 'i')  # the user now inserts in buffer B
+        target.clear()
+        self.assertEqual(self.mode(), 'i')
+
     def test_mode_chosen_by_the_user_is_kept(self):
         target = self.bind()
         self.assertEqual(self.mode(), 'i')

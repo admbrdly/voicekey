@@ -24,7 +24,7 @@ from pathlib import Path
 log = logging.getLogger("voicekey.emacs")
 TIMEOUT = 5.0
 PIN_TIMEOUT = 0.25
-PROTOCOL_VERSION = 7
+PROTOCOL_VERSION = 8
 LIBRARY = str(Path(__file__).with_name("voicekey.el"))
 
 

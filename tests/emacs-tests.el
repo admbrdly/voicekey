@@ -412,6 +412,19 @@
     (voicekey--unpin "pin")
     (should (eq evil-state 'insert))))
 
+(ert-deftest voicekey-evil-insert-reentered-by-the-user-is-kept ()
+  (skip-unless (require 'evil nil t))
+  (voicekey-test-buffer "a b"
+    (evil-local-mode 1)
+    (evil-normal-state)
+    (voicekey-test-pin)
+    (should (eq evil-state 'insert))
+    (evil-normal-state)                 ; <Esc>: the state is the user's now
+    (evil-insert-state)                 ; and they chose insert again
+    (voicekey--unpin "pin")
+    (should (eq evil-state 'insert))
+    (should-not voicekey--restore-normal)))
+
 (ert-deftest voicekey-evicted-or-abandoned-pins-do-not-change-evil-state ()
   (skip-unless (require 'evil nil t))
   (voicekey-test-buffer "a b"

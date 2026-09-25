@@ -302,15 +302,18 @@ local function enter_insert(pin)
   pin.restore_normal = true
 end
 
--- Return to normal mode (like <Esc>) if this pin entered insert mode, it is
--- still active, and no other live pin also relies on it.
+-- Return to normal mode (like <Esc>) if this pin entered insert mode and the
+-- user has not left it since (see the ModeChanged autocmd), its buffer is
+-- still the current one, and no other live pin also relies on it.
 local function leave_insert(pin)
   if not (pin and pin.restore_normal) then return end
   pin.restore_normal = nil
   for _, other in pairs(pins) do
     if other ~= pin and other.restore_normal then return end
   end
-  if api.nvim_get_mode().mode:find("^i") then vim.cmd("stopinsert") end
+  if api.nvim_get_current_buf() == pin.buf and api.nvim_get_mode().mode:find("^i") then
+    vim.cmd("stopinsert")
+  end
 end
 
 local function dispatch(request)
@@ -490,6 +493,19 @@ end
 
 local group = api.nvim_create_augroup("voicekey", { clear = true })
 api.nvim_create_autocmd("ColorScheme", { group = group, callback = define_highlights })
+
+-- Leaving the insert mode that dictation entered hands the mode back to the
+-- user: a later session end must not override a mode they chose since.
+-- Completion menus and i_CTRL-O stay within that insert session.
+api.nvim_create_autocmd("ModeChanged", {
+  group = group,
+  pattern = "i*:*",
+  callback = function()
+    local new = vim.v.event.new_mode
+    if new:find("^i") or new:find("^ni") then return end
+    for _, pin in pairs(pins) do pin.restore_normal = nil end
+  end,
+})
 
 -- Never leave the microphone recording after Neovim exits.
 api.nvim_create_autocmd("VimLeavePre", {
