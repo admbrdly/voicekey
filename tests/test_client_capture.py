@@ -422,6 +422,31 @@ class ClientCaptureTests(CaptureHarness):
             self.assertIn('disk full', self.read(stream, 'capture-result')['reason'])
             self.settle()
 
+    def test_start_failure_releases_live_decoder_for_retry_and_unload(self):
+        self.live_stream()
+        client, stream = self.connect()
+        with patch.object(FakeRecorder, 'start', side_effect=OSError('no microphone')):
+            self.start(client, stream, preview=True)
+            self.assertIn('no microphone', self.read(stream, 'capture-result')['reason'])
+        session = self.daemon._live_session
+        self.addCleanup(session.decoder.join, 1)
+        self.addCleanup(session.cancel)
+        self.settle()
+        session.decoder.join(1)
+        self.assertFalse(session.stuck, 'failed recording left its live decoder running')
+
+        identity = self.start(client, stream, preview=True)
+        retry = self.daemon.client_capture.session
+        self.assertIsNotNone(retry.decoder, 'retry must still have live previews')
+        self.assertIs(self.daemon._live_session, retry)
+        self.send(client, stream, 'capture-finish', {'capture_id': identity})
+        self.assertEqual(self.read(stream, 'capture-result')['text'], 'Hello from the daemon.')
+        self.settle()
+
+        self.send(client, stream, 'free-memory')
+        wait_for(lambda: self.daemon.model_state == 'unloaded')
+        self.assertIsNone(self.daemon.streaming)
+
     def test_large_result_survives_partial_socket_writes(self):
         client, stream = self.connect()
         text = '界' * 30000

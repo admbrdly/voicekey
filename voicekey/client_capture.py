@@ -168,6 +168,8 @@ class ClientCapture:
                 self.recorder.start(self.session.feed)
                 self.target.progress('recording', models=self.daemon.model_state)
             except Exception as exc:
+                # No finalizer will run for this capture; wake its preview decoder.
+                self.session.cancel()
                 self.target.fail('capture_failed', f'Recording could not start: {exc}')
                 self.daemon.pipeline.ledger.complete(self.id, 'failed')
                 return
