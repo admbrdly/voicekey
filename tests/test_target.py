@@ -162,6 +162,18 @@ class TargetTests(unittest.TestCase):
             with patch('voicekey.target.emacs.insert', side_effect=error):
                 self.assertEqual(self.land(target).outcome, outcome)
 
+    def test_emacs_single_dictation_unpins_once_whatever_its_outcome(self):
+        # Unpinning restores the Evil state a pin changed, so even a refusal
+        # or empty result must reach it, after any in-flight pin has landed.
+        pinning = Mock(id='pin', valid=False, reason='refused')
+        target = EmacsTarget(NotifyPreview('dictate'), Window(7, True), 'emacs', pinning)
+        with patch('voicekey.target.emacs.unpin') as unpin:
+            self.assertEqual(self.land(target).outcome, Outcome.REFUSED)
+            target.clear()
+            target.unpin()
+        unpin.assert_called_once_with('pin')
+        pinning.before.assert_called()
+
     def test_emacs_delivery_uses_buffer_without_compositor_focus(self):
         pinning = Mock(id='pin', valid=True)
         target = EmacsTarget(NotifyPreview('dictate'), Window(7, True), 'emacs', pinning)

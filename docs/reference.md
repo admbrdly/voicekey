@@ -46,10 +46,14 @@ acknowledgement names the pinned buffer, its major mode and read-only state;
 the daemon logs it, records it with each delivery attempt in the recovery
 journal, and a refusal names the buffer.
 Once pinned, delivery follows point within that buffer and ignores compositor
-focus. Insert state inserts at point; normal state appends after the cursor;
-visual state replaces the selection; terminal buffers receive process input.
-Normal and visual state finish in normal state. Spacing is computed at the
-actual insertion position inside the editor transaction.
+focus. Dictation behaves as typing: pinning a buffer in Evil normal state
+enters insert state as `a` does (the cursor then follows the text), and the
+end of the session returns to normal state as <Esc> does, unless you left
+insert state yourself meanwhile. Neovim does the same with its modes. Insert
+state inserts at point; visual state replaces the selection and finishes in
+normal state; read-only and terminal buffers keep their state, and terminal
+buffers receive process input. Spacing is computed at the actual insertion
+position inside the editor transaction.
 
 The packaged `voicekey/voicekey.el` provides those transactions. It is loaded
 on demand and installs no hooks by default. Emacs uses the same Wayland

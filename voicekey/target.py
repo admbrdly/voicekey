@@ -256,6 +256,7 @@ class EmacsTarget(PinnedEditorTarget):
     def __init__(self, preview, window, app_id, pinning=None, pid=None):
         super().__init__(preview, window, app_id)
         self.pinning = pinning or emacs.PendingPin(pid)
+        self._unpinned = False
 
     def before(self, wait=0.0):
         return self.pinning.before(wait)
@@ -288,7 +289,19 @@ class EmacsTarget(PinnedEditorTarget):
             return Landing(Outcome.UNKNOWN, str(exc))
         return Landing(Outcome.CONFIRMED)
 
+    def clear(self):
+        # A single dictation ends here whatever its outcome (including no speech
+        # or refusal); unpinning returns the buffer to the Evil state it had.
+        super().clear()
+        self.unpin()
+
     def unpin(self):
+        if self._unpinned:
+            return
+        self._unpinned = True
+        # A pin request still in flight could otherwise land after this unpin
+        # and leave its buffer in insert state.
+        self.pinning.before(emacs.PIN_TIMEOUT + 0.25)
         try:
             emacs.unpin(self.pinning.id)
         except emacs.EmacsError:

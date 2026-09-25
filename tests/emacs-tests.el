@@ -359,6 +359,83 @@
     (should (eq evil-state 'insert))
     (should (equal (buffer-string) "old next"))))
 
+;; Dictation behaves as typing: normal state enters insert state as `a' does
+;; for the session, and the session's end returns to normal state like <Esc>.
+(ert-deftest voicekey-evil-normal-dictates-in-insert-state-then-restores-normal ()
+  (skip-unless (require 'evil nil t))
+  (voicekey-test-buffer "a b"
+    (evil-local-mode 1)
+    (evil-normal-state)
+    (goto-char 3)
+    (should (equal (voicekey-test-before) "b"))
+    (should (eq evil-state 'insert))
+    (should (= (point) 4))
+    (should (equal (voicekey--insert "pin" "op" (voicekey-test-expiry) "next" "" nil t) "ok"))
+    (should (equal (buffer-string) "a b next"))
+    (should (eq evil-state 'insert))
+    (should (= (point) 9))
+    (voicekey--unpin "pin")
+    (should (eq evil-state 'normal))
+    (should (= (point) 8))))
+
+(ert-deftest voicekey-evil-normal-draft-cursor-follows-then-restores-normal ()
+  (skip-unless (require 'evil nil t))
+  (voicekey-test-buffer "a b"
+    (evil-local-mode 1)
+    (evil-normal-state)
+    (goto-char 1)
+    (voicekey-test-pin)
+    (should (eq evil-state 'insert))
+    (should (= (point) 2))
+    (should (equal (voicekey--draft "pin" (voicekey-test-expiry) "draft") "ok"))
+    (should (equal (buffer-string) "a b"))
+    (should (equal (voicekey--insert "pin" "op" (voicekey-test-expiry) "draft" "" nil t) "ok"))
+    (should (equal (buffer-string) "a draft b"))
+    (should (= (point) 8))
+    (voicekey--unpin "pin")
+    (should (eq evil-state 'normal))))
+
+(ert-deftest voicekey-evil-state-chosen-by-the-user-is-kept ()
+  (skip-unless (require 'evil nil t))
+  (voicekey-test-buffer "a b"
+    (evil-local-mode 1)
+    (evil-normal-state)
+    (voicekey-test-pin)
+    (should (eq evil-state 'insert))
+    (evil-normal-state)                 ; the user pressed <Esc>
+    (goto-char 1)
+    (voicekey--unpin "pin")
+    (should (eq evil-state 'normal))
+    (should (= (point) 1))
+    (evil-insert-state)                 ; already inserting: nothing to restore
+    (voicekey-test-pin)
+    (voicekey--unpin "pin")
+    (should (eq evil-state 'insert))))
+
+(ert-deftest voicekey-evicted-or-abandoned-pins-do-not-change-evil-state ()
+  (skip-unless (require 'evil nil t))
+  (voicekey-test-buffer "a b"
+    (evil-local-mode 1)
+    (evil-normal-state)
+    (voicekey--pin "old" (voicekey-test-expiry))
+    (voicekey--draft "old" (voicekey-test-expiry) "abandoned")
+    (should (eq evil-state 'insert))
+    (voicekey--pin "new" (voicekey-test-expiry))
+    (voicekey--draft "new" (voicekey-test-expiry) "fresh")
+    (should-not (assoc "old" voicekey--pins))
+    (should (eq evil-state 'insert))))
+
+(ert-deftest voicekey-read-only-and-terminal-buffers-keep-normal-state ()
+  (skip-unless (require 'evil nil t))
+  (voicekey-test-buffer "a b"
+    (evil-local-mode 1)
+    (evil-normal-state)
+    (setq buffer-read-only t)
+    (voicekey-test-pin)
+    (should (eq evil-state 'normal))
+    (voicekey--unpin "pin")
+    (should (eq evil-state 'normal))))
+
 (ert-deftest voicekey-evil-visual-replaces-selection-and-restores-normal ()
   (skip-unless (require 'evil nil t))
   (voicekey-test-buffer "old text"
@@ -367,6 +444,7 @@
     (evil-visual-select 1 4 evil-visual-char)
     (should (eq (evil-visual-type) evil-visual-char))
     (voicekey-test-pin)
+    (should (eq evil-state 'visual))    ; a selection is not replaced before speech
     (should (equal (voicekey-test-insert "new") "ok"))
     (should (equal (buffer-string) "new text"))
     (should (eq evil-state 'normal))))

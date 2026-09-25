@@ -288,6 +288,31 @@ local function now()
 end
 local function refused(reason) return { status = "refused", reason = reason } end
 
+-- Dictation behaves as typing: from normal mode, enter insert mode as `a` does.
+-- The switch takes effect when this request returns to the main loop.
+local function enter_insert(pin)
+  if api.nvim_get_mode().mode ~= "n" then return end
+  local row, col = insertion_point()
+  if col >= #api.nvim_get_current_line() then
+    vim.cmd("startinsert!")
+  else
+    api.nvim_win_set_cursor(0, { row + 1, col })
+    vim.cmd("startinsert")
+  end
+  pin.restore_normal = true
+end
+
+-- Return to normal mode (like <Esc>) if this pin entered insert mode, it is
+-- still active, and no other live pin also relies on it.
+local function leave_insert(pin)
+  if not (pin and pin.restore_normal) then return end
+  pin.restore_normal = nil
+  for _, other in pairs(pins) do
+    if other ~= pin and other.restore_normal then return end
+  end
+  if api.nvim_get_mode().mode:find("^i") then vim.cmd("stopinsert") end
+end
+
 local function dispatch(request)
   local method, args = request.method, request.args
   if type(request.expires) ~= "number" or now() >= request.expires then
@@ -317,6 +342,7 @@ local function dispatch(request)
       local pin = { buf = buf, used = now(), label = "[voicekey: listening]" }
       place(pin, insertion_point())
       pins[args.id] = pin
+      enter_insert(pin)
     end
     local pin = pins[args.id]
     local pos, reason = position(pin)
@@ -324,6 +350,7 @@ local function dispatch(request)
     local line = api.nvim_buf_get_lines(buf, pos[1], pos[1] + 1, false)[1]
     return { status = "ok", before = line:sub(1, pos[2]), buffer = api.nvim_buf_get_name(buf) }
   elseif method == "unpin" then
+    leave_insert(pins[args.id])
     remove(pins[args.id]); pins[args.id] = nil
     return { status = "ok" }
   end
@@ -355,7 +382,7 @@ local function dispatch(request)
     if not ran then why, ok, uncertain = tostring(ok), false, true end
     local reply = ok and { status = "ok" } or { status = uncertain and "unknown" or "refused", reason = why }
     operations[args.operation] = { reply = reply, expires = request.expires }
-    if not args.keep_pin then remove(pin); pins[args.id] = nil end
+    if not args.keep_pin then leave_insert(pin); remove(pin); pins[args.id] = nil end
     return reply
   end
   return refused("unknown Neovim method")

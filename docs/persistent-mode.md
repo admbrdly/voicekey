@@ -86,10 +86,8 @@ delivery wait for the result.
 - `fix_environment` picks the Wayland socket with a glob that also matches
   `wayland-1.lock`; harmless today, wrong after a compositor crash leaves a
   stale lock file. Filter the suffix.
-- Design question, not a bug: inserting in evil normal state runs
-  `evil-append` and leaves the buffer in insert state. A person typing `a`
-  and the text would press Escape afterwards. Decide whether to restore the
-  state.
+- Resolved 2026-09-25: dictation now enters insert state at pin time (as
+  `a` does) and restores normal state when the session ends.
 - The two service crashes on 2026-08-29 were a development bug that no
   longer exists in the code.
 - Verified not a bug: Emacs escapes newlines in `emacsclient` results, so

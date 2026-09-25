@@ -5,8 +5,10 @@
 (require 'seq)
 (require 'subr-x)
 
-(defconst voicekey--protocol-version 6)
+(defconst voicekey--protocol-version 7)
 (defvar voicekey--pins nil)
+(defvar voicekey--restore-normal nil
+  "Pin IDs whose buffer voicekey moved from Evil normal to insert state.")
 (defvar voicekey--operations nil)
 (defvar voicekey--user-buffer nil)
 (defvar voicekey--user-marker nil)
@@ -62,11 +64,13 @@ A successful pin answers with a JSON description of the bound buffer."
                       voicekey--user-buffer
                     (window-buffer (selected-window)))))
       (dolist (old (nthcdr 15 (seq-remove (lambda (item) (equal (car item) id)) voicekey--pins)))
-        (voicekey--unpin (car old)))
-      (voicekey--unpin id)
+        (voicekey--forget (car old)))
+      (voicekey--drop-pin id)
       (setq voicekey--pins
             (cons (list id buffer)
                   (seq-take (assoc-delete-all id voicekey--pins) 15)))
+      (unless (assoc id voicekey--restore-normal)
+        (voicekey--enter-insert id buffer))
       (with-current-buffer buffer
         (let ((pos (voicekey--insertion-position)))
           (json-encode
@@ -86,11 +90,46 @@ A successful pin answers with a JSON description of the bound buffer."
       text
     (concat " " text)))
 
-(defun voicekey--unpin (id)
+(defun voicekey--enter-insert (id buffer)
+  "Dictate as if typing: from Evil normal state, enter insert state as `a' does.
+Only in an editable, non-terminal BUFFER shown in a window; visual and other
+states are left alone. `voicekey--unpin' returns ID's buffer to normal state."
+  (let ((window (get-buffer-window buffer t)))
+    (when (and window
+               (with-current-buffer buffer
+                 (and (eq (voicekey--state) 'normal) (not buffer-read-only) (not (minibufferp))
+                      (not (memq major-mode '(term-mode vterm-mode))))))
+      (with-selected-window window (evil-append 1))
+      (push (cons id buffer) voicekey--restore-normal))))
+
+(defun voicekey--leave-insert (id)
+  "Return ID's buffer to normal state if voicekey entered insert and it remains."
+  (let ((buffer (cdr (assoc id voicekey--restore-normal))))
+    (setq voicekey--restore-normal (assoc-delete-all id voicekey--restore-normal))
+    (when (and (buffer-live-p buffer)
+               (eq (with-current-buffer buffer (voicekey--state)) 'insert)
+               ;; Another live session may have entered insert in this buffer.
+               (not (rassq buffer voicekey--restore-normal)))
+      (let ((window (get-buffer-window buffer t)))
+        (if window
+            (with-selected-window window (evil-normal-state))
+          (with-current-buffer buffer (evil-normal-state)))))))
+
+(defun voicekey--drop-pin (id)
   (let ((pin (assoc id voicekey--pins)))
     (when (markerp (nth 2 pin)) (set-marker (nth 2 pin) nil))
     (when (overlayp (nth 3 pin)) (delete-overlay (nth 3 pin))))
-  (setq voicekey--pins (assoc-delete-all id voicekey--pins))
+  (setq voicekey--pins (assoc-delete-all id voicekey--pins)))
+
+(defun voicekey--forget (id)
+  "Discard a stale or evicted pin without touching its buffer's state."
+  (setq voicekey--restore-normal (assoc-delete-all id voicekey--restore-normal))
+  (voicekey--drop-pin id))
+
+(defun voicekey--unpin (id)
+  "End ID's session: remove its preview and restore normal state if entered."
+  (voicekey--leave-insert id)
+  (voicekey--drop-pin id)
   "ok")
 
 (defun voicekey--draft (id expires text)
@@ -114,7 +153,7 @@ A successful pin answers with a JSON description of the bound buffer."
             ;; by a crashed daemon without installing a timer or editor hook.
             (dolist (old voicekey--pins)
               (when (and (not (equal (car old) id)) (overlayp (nth 3 old)))
-                (voicekey--unpin (car old))))
+                (voicekey--forget (car old))))
             (let* ((pos (voicekey--insertion-position))
                    (overlay (make-overlay pos pos buffer nil t)))
               (setcdr (cdr pin) (list (copy-marker pos t) overlay))))

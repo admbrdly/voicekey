@@ -109,6 +109,44 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(self.land(target).outcome, Outcome.CONFIRMED)
         self.assertEqual(self.editor.text(), ['Hello'])
 
+    def mode(self):
+        return self.editor.lua('vim.api.nvim_get_mode().mode')
+
+    def cursor(self):
+        return json.loads(self.editor.lua('vim.json.encode(vim.api.nvim_win_get_cursor(0))'))
+
+    def test_normal_mode_dictates_in_insert_mode_then_returns_to_normal(self):
+        self.editor.lua('vim.api.nvim_buf_set_lines(0,0,-1,false,{"a b"})')
+        self.editor.lua('vim.api.nvim_win_set_cursor(0,{1,0})')
+        target = self.bind()
+        self.assertEqual(self.mode(), 'i')
+        self.assertEqual(self.cursor(), [1, 1])  # after "a", as `a` does
+        landing = target.insert_pinned('next', time.monotonic() + 1, 'op', '', None, threading.Event())
+        self.assertEqual(landing.outcome, Outcome.CONFIRMED)
+        self.assertEqual(self.editor.text(), ['a next b'])
+        self.assertEqual(self.cursor(), [1, 6])
+        target.clear()
+        self.assertEqual(self.mode(), 'n')
+        self.assertEqual(self.cursor(), [1, 5])  # on the last inserted character, like <Esc>
+
+    def test_normal_mode_at_line_end_and_single_dictation_restore_normal(self):
+        self.editor.lua('vim.api.nvim_buf_set_lines(0,0,-1,false,{"a b"})')
+        self.editor.lua('vim.api.nvim_win_set_cursor(0,{1,2})')
+        target = self.bind()
+        self.assertEqual(self.mode(), 'i')
+        self.assertEqual(self.cursor(), [1, 3])
+        self.assertEqual(self.land(target, 'next').outcome, Outcome.CONFIRMED)
+        self.assertEqual(self.editor.text(), ['a b next'])
+        self.assertEqual(self.mode(), 'n')
+
+    def test_mode_chosen_by_the_user_is_kept(self):
+        target = self.bind()
+        self.assertEqual(self.mode(), 'i')
+        self.editor.lua('vim.cmd("stopinsert")')  # the user pressed <Esc>
+        self.assertEqual(self.mode(), 'n')
+        target.clear()
+        self.assertEqual(self.mode(), 'n')
+
     def test_multiline_draft_is_virtual_and_inserts_once_at_original_anchor(self):
         self.editor.lua('vim.api.nvim_buf_set_lines(0,0,-1,false,{"first", "second"})')
         self.editor.lua('vim.api.nvim_win_set_cursor(0,{1,4})')

@@ -38,6 +38,10 @@ recording. `:VoiceKey start`, `stop` and `toggle` are also available.
 - The transcript lands where the cursor was when recording started: after
   the cursor character in normal mode, like `a`, and at the cursor in insert
   mode. You can move or edit elsewhere while speaking.
+- Daemon dictation (the voicekey hotkey, not `:VoiceKey`) behaves as typing:
+  from normal mode it enters insert mode as `a` does, so the cursor follows
+  the text, and returns to normal mode as `<Esc>` does when the session ends,
+  unless you left insert mode yourself.
 - Your words appear at that point as you speak, as dimmed virtual text
   (highlight `VoiceKeyPreview`, linked to `Comment`). This is a live draft
   from the daemon's streaming recognizer: it revises itself as you talk, and
