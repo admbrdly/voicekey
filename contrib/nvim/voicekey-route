@@ -1,47 +1,98 @@
 #!/bin/sh
 # voicekey-route — one dictation keybinding for Niri, safe in terminals.
 #
-#   Daemon listening        -> stop it, wherever focus is.
-#   Terminal focused        -> toggle :VoiceKey in the Neovim that has focus
-#                              there (buffer text, never keystrokes); refuse
-#                              when no Neovim has focus, e.g. at a shell prompt.
-#   Anything else           -> start the daemon (input-method delivery).
+#   Something is listening  -> finish it, wherever focus is.
+#   Terminal focused:
+#     Neovim has focus      -> toggle :VoiceKey there (buffer text).
+#     bash at its prompt    -> start the daemon; bash stops it on Enter
+#                              before the command runs (contrib/bash).
+#     Claude Code           -> start the daemon unless a dialog is open; its
+#                              hooks stop it on submit and before dialogs
+#                              (contrib/claude-code).
+#     Codex, idle           -> start the daemon; press again before submitting.
+#     anything else         -> refuse: letters could be commands.
+#   Other applications      -> start the daemon (input-method delivery).
 #
-# Bind it in Niri:  Mod+Shift+D { spawn "/path/to/voicekey-route"; }
+# Bind it in Niri:  F12 repeat=false { spawn "/path/to/voicekey-route"; }
 # Neovim needs plugin/voicekey.lua loaded at startup for focus tracking.
 set -u
 
 py="${VOICEKEY_PYTHON:-$HOME/.local/share/voicekey/venv/bin/python}"
 terminals="${VOICEKEY_TERMINALS:-com.mitchellh.ghostty foot kitty Alacritty org.wezfurlong.wezterm}"
-focus_file="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/voicekey/nvim-focus"
+mark="${VOICEKEY_PROMPT_MARK:-❯ }"
+state="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/voicekey"
+focus_file="$state/nvim-focus"
+shell_session="$state/shell-session"  # daemon started at a bash prompt
+tui_session="$state/tui-session"      # daemon started in Claude Code/Codex
+
+notify() {
+    notify-send -a voicekey "voicekey" "$1"
+}
 
 refuse() {
-    notify-send -a voicekey "voicekey" "$1"
+    notify "$1"
     exit 1
 }
 
 # The daemon replies with a reason when it refuses (for example while the last
-# dictation is still finishing); no reply means it is not running.
+# dictation is still finishing); no reply means it is not running. $1, if
+# given, is a session flag to remove when the start fails.
 start_daemon() {
     reply=$("$py" -m voicekey --control start 2>&1) && return 0
+    [ -n "${1:-}" ] && rm -f "$1"
     reason=$(printf '%s\n' "$reply" | jq -r '.error // empty' 2>/dev/null)
     refuse "Voicekey could not start dictation: ${reason:-is voicekey.service running?}"
 }
 
+# Fields are separated by US (0x1f): unlike tabs, read never merges them.
+us=$(printf '\037')
+focused() {
+    niri msg --json focused-window 2>/dev/null |
+        jq -r '[.id // "", .app_id // "", .title // ""] | map(tostring | gsub("\u001f"; "")) | join("\u001f")' 2>/dev/null
+}
+
 if "$py" -m voicekey --control status 2>/dev/null | grep -q '"listening": true'; then
+    rm -f "$shell_session" "$tui_session"
     exec "$py" -m voicekey --control stop
 fi
 
-app=$(niri msg --json focused-window 2>/dev/null | jq -r '.app_id // empty' 2>/dev/null)
-[ -n "$app" ] || refuse "Cannot read the focused window; not dictating."
+IFS=$us read -r window app title <<EOF
+$(focused)
+EOF
+[ -n "${app:-}" ] || refuse "Cannot read the focused window; not dictating."
 
 for terminal in $terminals; do
     [ "$app" = "$terminal" ] || continue
     server=$(cat "$focus_file" 2>/dev/null)
-    [ -n "$server" ] && [ -S "$server" ] ||
-        refuse "No focused Neovim in this terminal; not dictating."
-    nvim --server "$server" --remote-expr 'execute("VoiceKey")' >/dev/null 2>&1 ||
-        refuse "Neovim did not accept :VoiceKey; not dictating."
+    if [ -n "$server" ] && [ -S "$server" ]; then
+        nvim --server "$server" --remote-expr 'execute("VoiceKey")' >/dev/null 2>&1 ||
+            refuse "Neovim did not accept :VoiceKey; not dictating."
+        exit 0
+    fi
+    # Titles: "❯ dir" from contrib/bash at the prompt; Claude Code shows "✳ "
+    # when idle and a spinner while working (permission dialogs come then).
+    case "$title" in
+        "$mark"*) session=$shell_session ;;
+        # Claude Code: "✳ " idle, a rotating half-circle while working. Its
+        # hooks (contrib/claude-code) stop dictation before any dialog and
+        # mark open dialogs; refuse while one is open in any session.
+        "✳ "* | "◐ "* | "◓ "* | "◑ "* | "◒ "*)
+            if [ -n "$(ls -A "$state/claude-dialog" 2>/dev/null)" ]; then
+                refuse "Claude Code is waiting for an answer; not dictating."
+            fi
+            session=$tui_session ;;
+        # Codex with tui.terminal_title = ["app-name", "spinner", "project"]
+        # shows "codex | <project>" only when idle; working it shows
+        # "codex <spinner> <project>". Anything else (startup, a trust or
+        # approval prompt) is refused.
+        "codex | "*" | "*) refuse "Codex is not idle; not dictating." ;;
+        "codex | "*) session=$tui_session ;;
+        *) refuse "No Neovim, shell prompt, Claude Code or idle Codex has focus in this terminal; not dictating." ;;
+    esac
+    # Written first, so an Enter pressed at once still stops the daemon.
+    mkdir -p -m 700 "$state"
+    echo "$window" > "$session"
+    start_daemon "$session"
     exit 0
 done
 

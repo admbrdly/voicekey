@@ -150,6 +150,12 @@ bindings. It still toggles the single-shot `:VoiceKey` client and uses the older
 It is not required or called by the daemon. Remove an old routing binding if you
 want to use only the normal daemon keys; do not bind the same key to both paths.
 
+In this fork the router also covers other terminal programs: a bash prompt
+([contrib/bash](../bash/README.md)), Claude Code and Codex
+([contrib/claude-code](../claude-code/README.md)), and it refuses everything else
+in a terminal. It is the activation path when the daemon runs with
+`evdev = false`, since the daemon's own keys need evdev.
+
 ## Options
 
 ```lua

@@ -1,0 +1,56 @@
+#!/bin/sh
+# Claude Code hook for voicekey-route dictation. Register it for every event
+# below; it reads the event from the hook input on stdin.
+#
+#   UserPromptSubmit                      stop dictation before the prompt runs
+#   PermissionRequest, PreToolUse of      mark a dialog open for this session,
+#     AskUserQuestion/ExitPlanMode        then stop dictation before it shows
+#   PreToolUse (other tools), PostToolUse,
+#     PostToolUseFailure, PermissionDenied,
+#     Stop, SessionEnd                    mark the dialog closed
+#
+# Stopping waits for pending speech, so nothing dictated reaches a dialog;
+# late text lands in the input box as a draft. voicekey-route refuses to start
+# dictation in Claude Code while any session has a dialog open. Only dictation
+# started in a terminal program (the tui-session flag) is stopped. The hook
+# never changes Claude Code's decisions: it prints nothing and exits 0.
+state="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/voicekey"
+py="${VOICEKEY_PYTHON:-$HOME/.local/share/voicekey/venv/bin/python}"
+
+input=$(cat)
+field() {
+    printf '%s' "$input" | jq -r --arg k "$1" '.[$k] // empty' 2>/dev/null
+}
+event=$(field hook_event_name)
+session=$(field session_id | tr -cd 'A-Za-z0-9_-')
+dialog="$state/claude-dialog/${session:-unknown}"
+
+[ -f "$state/claude-hook.log" ] && echo "$(date +%T) $event $(field tool_name)" >> "$state/claude-hook.log"
+
+open_dialog() {
+    mkdir -p -m 700 "$state/claude-dialog" && : > "$dialog"
+}
+
+stop_dictation() {
+    [ -f "$state/tui-session" ] || return 0
+    rm -f "$state/tui-session"
+    "$py" -m voicekey --control stop >/dev/null 2>&1 || return 0
+    waited=0
+    while [ "$waited" -lt 50 ] &&
+        "$py" -m voicekey --control status 2>/dev/null | grep -q '"state": "\(listening\|finishing\)"'; do
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+}
+
+case "$event" in
+    UserPromptSubmit) rm -f "$dialog"; stop_dictation ;;
+    PermissionRequest) open_dialog; stop_dictation ;;
+    PreToolUse)
+        case "$(field tool_name)" in
+            AskUserQuestion | ExitPlanMode) open_dialog; stop_dictation ;;
+            *) rm -f "$dialog" ;;
+        esac ;;
+    PostToolUse | PostToolUseFailure | PermissionDenied | Stop | SessionEnd) rm -f "$dialog" ;;
+esac
+exit 0
