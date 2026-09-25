@@ -24,7 +24,7 @@ from pathlib import Path
 log = logging.getLogger("voicekey.emacs")
 TIMEOUT = 5.0
 PIN_TIMEOUT = 0.25
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 6
 LIBRARY = str(Path(__file__).with_name("voicekey.el"))
 
 
@@ -180,3 +180,10 @@ def insert(text: str, pin_id: str, timeout: float = TIMEOUT, *,
 
 def unpin(pin_id: str) -> None:
     _eval(_form(f'(voicekey--unpin {_lisp_string(pin_id)})'), 0.25)
+
+
+def draft(pin_id: str, text: str, *, timeout=.25) -> None:
+    expires = time.time() + max(0, timeout)
+    value = _eval(_form(f'(voicekey--draft {_lisp_string(pin_id)} {expires!r} {_lisp_string(text)})'), timeout)
+    if value != "ok":
+        raise EmacsError("Emacs did not confirm the draft preview")

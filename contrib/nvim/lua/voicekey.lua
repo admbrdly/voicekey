@@ -62,11 +62,47 @@ define_highlights()
 
 local spaced
 
+-- Drafts occupy virtual lines below their anchor, wrapping without buffer edits.
+local function draft_lines(buf, text)
+  local wins = vim.fn.win_findbuf(buf)
+  local width = math.max(20, (#wins > 0 and api.nvim_win_get_width(wins[1]) or 80) - 4)
+  local lines = {}
+  for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
+    local part, columns = "", 0
+    for word in line:gmatch("%s*%S+") do
+      if columns + vim.fn.strdisplaywidth(word, columns) > width and part ~= "" then
+        table.insert(lines, { { part, "VoiceKeyPreview" } })
+        part, columns = "", 0
+        word = word:gsub("^%s+", "")
+      end
+      -- Only a word longer than a whole row needs character-level wrapping.
+      for _, char in ipairs(vim.fn.split(word, "\\zs")) do
+        local size = vim.fn.strdisplaywidth(char, columns)
+        if columns + size > width and part ~= "" then
+          table.insert(lines, { { part, "VoiceKeyPreview" } })
+          part, columns = "", 0
+          size = vim.fn.strdisplaywidth(char)
+        end
+        part, columns = part .. char, columns + size
+      end
+    end
+    table.insert(lines, { { part, "VoiceKeyPreview" } })
+  end
+  return lines
+end
+
 -- The one renderer for :VoiceKey captures and daemon pins. `preview` is only
 -- ever draft transcript text; `label` is a pin's status (a capture's status
 -- comes from its state).
 local function place(capture, row, col)
   local opts = { id = capture.mark, right_gravity = true }
+  if capture.draft then
+    opts.virt_text = { { " [voicekey: draft]", "Comment" } }
+    opts.virt_text_pos = "inline"
+    opts.virt_lines = draft_lines(capture.buf, capture.preview or "")
+    capture.mark = api.nvim_buf_set_extmark(capture.buf, ns, row, col, opts)
+    return
+  end
   local text, hl = capture.preview, "VoiceKeyPreview"
   if text then
     -- A draft of the text to come, spaced like the final insertion; line
@@ -203,6 +239,7 @@ local function put(capture, text, keep_pin)
   local end_row = row + #lines - 1
   local end_col = (#lines == 1 and col or 0) + #lines[#lines]
   if keep_pin then
+    capture.draft = nil
     capture.preview, capture.label = nil, nil
     place(capture, end_row, end_col)
   else
@@ -296,6 +333,17 @@ local function dispatch(request)
   if not pos then return refused(reason) end
   pin.used = now()
   if method == "check" then return { status = "ok" } end
+  if method == "draft" then
+    if vim.bo[pin.buf].buftype ~= "" then return refused("drafts require an editable text buffer") end
+    if not pin.draft then
+      for id, old in pairs(pins) do
+        if id ~= args.id and old.draft then remove(old); pins[id] = nil end
+      end
+    end
+    pin.draft = true
+    set_preview(pin, args.text or "")
+    return { status = "ok" }
+  end
   if method == "preview" then
     set_preview(pin, args.text or "")
     return { status = "ok" }

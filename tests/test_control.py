@@ -9,9 +9,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from evdev import ecodes
+
 from voicekey.control import ControlServer, request
 from voicekey.config import Config
 from voicekey.daemon import Daemon
+from voicekey.listener import KeyboardListener
 from voicekey.recovery import Journal
 from tests.test_pipeline import wait_for
 
@@ -114,6 +117,21 @@ class ControlTests(unittest.TestCase):
             pass
         self.assertEqual(reply, {'type': 'reply', 'id': 'capture-a', 'error': None, 'capture_id': 'abc'})
 
+    def test_draft_toggle_commands_are_advertised_and_update_socket_status(self):
+        daemon = Daemon(Config(), journal=Journal(self.tmp.name + '/sessions'))
+        self.addCleanup(daemon.close)
+        client, stream = self.connect()
+        self.assertIn('draft-toggle', request('status', self.path)['capabilities'])
+        for command, enabled in (('draft-on', True), ('draft-off', False)):
+            client.sendall((json.dumps({'command': command, 'id': command}) + '\n').encode())
+            wait_for(lambda: not self.server.commands.empty())
+            self.server.drain(daemon.command)
+            while (reply := json.loads(stream.readline()))['type'] != 'reply':
+                pass
+            self.assertIsNone(reply['error'])
+            self.server.publish(daemon.status())
+            self.assertEqual(request('status', self.path)['draft_enabled'], enabled)
+
 
 class DaemonControlTests(unittest.TestCase):
     def setUp(self):
@@ -123,6 +141,73 @@ class DaemonControlTests(unittest.TestCase):
         self.addCleanup(self.daemon.close)
         self.daemon.backend = Mock()
         self.daemon.vad = Mock()
+
+    def test_draft_toggle_updates_idle_daemon_without_starting_capture(self):
+        d = self.daemon
+        original = dict(d.actions)
+        d.cfg.persistent.destination_policy = 'follow'
+        for command, enabled in (('draft-on', True), ('draft-on', True),
+                                 ('draft-off', False), ('draft-off', False)):
+            d.command(command)
+            self.assertEqual(d.status()['draft_enabled'], enabled)
+            self.assertEqual(d.cfg.persistent.destination_policy, 'follow')
+            self.assertFalse(d.status()['listening'])
+            self.assertIsNone(d.persistent)
+        self.assertEqual(d.actions, original)
+        d.model_state = 'unloaded'
+        d.command('draft-on')
+        self.assertEqual(d.model_state, 'unloaded')
+
+    def test_draft_toggle_is_refused_during_capture_review_and_pending_work(self):
+        d = self.daemon
+        for attribute in ('persistent', 'session', 'client_capture'):
+            setattr(d, attribute, Mock())
+            try:
+                for command in ('draft-on', 'draft-off'):
+                    with self.assertRaises(ValueError):
+                        d.command(command)
+                self.assertFalse(d.cfg.persistent.draft)
+            finally:
+                setattr(d, attribute, None)
+        identity = d.pipeline.ledger.admit(1)
+        try:
+            with self.assertRaises(ValueError):
+                d.command('draft-on')
+        finally:
+            d.pipeline.ledger.complete(identity, 'dropped')
+
+    def test_listener_started_with_drafts_off_can_cancel_after_enabling(self):
+        d = self.daemon
+        self.assertFalse(d.cfg.persistent.draft)
+        listener = KeyboardListener(d._listened_keys, d._on_key, Mock(), Mock(), Mock())
+        def escape():
+            listener.dispatch('test', [Mock(type=ecodes.EV_KEY, code=ecodes.KEY_ESC, value=value)
+                                       for value in (1, 0)])
+        with patch.object(d, '_on_activity') as activity:
+            escape()
+            activity.assert_called_once()
+        d.command('draft-on')
+        d.persistent = Mock(draft=True)
+        try:
+            escape()
+            d.persistent.request_draft_key.assert_called_once_with('cancel')
+        finally:
+            d.persistent = None
+        d.command('draft-off')
+        with patch.object(d, '_on_activity') as activity:
+            escape()
+            activity.assert_called_once()
+        self.assertEqual(d.pressed['test'], set())
+
+    def test_enabling_drafts_never_overwrites_an_existing_key_binding(self):
+        d = self.daemon
+        chord = d._draft_cancel_chord
+        d.actions[chord] = ('agent', 'hold')
+        with self.assertRaisesRegex(ValueError, 'conflicts'):
+            d.command('draft-on')
+        self.assertFalse(d.cfg.persistent.draft)
+        d.command('draft-off')
+        self.assertEqual(d.actions[chord], ('agent', 'hold'))
 
     def test_policy_changes_are_idle_only_and_do_not_touch_app_styles(self):
         d = self.daemon

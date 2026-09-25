@@ -64,8 +64,11 @@ class KeyboardListener:
     """
 
     def __init__(self, keycodes: set[int], on_key, on_device_lost, on_tick,
-                 on_no_access, on_activity=None) -> None:
+                 on_no_access, on_activity=None, *, required_keycodes=None) -> None:
         self.keycodes = keycodes
+        # Optional observed keys (e.g. draft cancellation) must not hide a
+        # missing/inaccessible device that provides the dictation hotkey.
+        self.required_keycodes = keycodes if required_keycodes is None else required_keycodes
         self.on_key = on_key
         self.on_device_lost = on_device_lost
         self.on_tick = on_tick
@@ -104,7 +107,7 @@ class KeyboardListener:
         voice_devices = []
         for dev in list(self.devices.values()):
             try:
-                if _supports_any_key(dev, self.keycodes):
+                if _supports_any_key(dev, self.required_keycodes):
                     voice_devices.append(dev)
             except OSError:
                 self._drop(dev.path)

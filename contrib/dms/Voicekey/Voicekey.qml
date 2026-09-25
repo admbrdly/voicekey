@@ -28,6 +28,8 @@ PluginComponent {
     readonly property bool online: control.linkUp && status.state !== "offline"
     readonly property bool listening: online && status.listening === true
     readonly property bool idle: online && (status.state === "idle" || status.state === "paused")
+    readonly property bool canToggleDraft: online && Array.isArray(status.capabilities)
+        && status.capabilities.indexOf("draft-toggle") !== -1
     readonly property bool muted: AudioService.source?.audio?.muted ?? false
     readonly property bool noMicrophone: !AudioService.source
     readonly property string stateText: {
@@ -39,6 +41,8 @@ PluginComponent {
         if (listening && muted) return "Listening · microphone muted";
         if (listening && status.models === "loading") return "Listening · loading models";
         if (listening && status.binding === true) return "Listening…";
+        if (listening && status.draft_mode) return "Draft → " + (status.destination_name || "editor");
+        if (status.draft_waiting) return "Draft ready · microphone off";
         if (listening) return status.destination_name
             ? "Listening → " + status.destination_name : "Listening…";
         if (status.state === "finishing") return "Finishing dictation";
@@ -183,7 +187,7 @@ PluginComponent {
                 anchors.verticalCenter: parent.verticalCenter
             }
             StyledText {
-                visible: root.listening || root.status.state === "paused"
+                visible: root.listening || root.status.draft_waiting || root.status.state === "paused"
                 text: root.stateText
                 width: Math.min(implicitWidth, 240)
                 elide: Text.ElideRight
@@ -215,10 +219,14 @@ PluginComponent {
                 StyledText {
                     width: parent.width
                     text: root.disabled ? "VoiceKey is stopped. Enable it here to use dictation again."
+                        : root.status.draft_waiting ? "Accept the draft to insert it into its original buffer, or discard it."
+                        : root.status.binding ? "Binding destination…"
+                        : root.status.draft_mode ? "Press the dictation key to accept the draft. Accept/cancel hotkeys act only in the original window."
                         : root.status.allow_typing ? "Simulated typing enabled for this session. Switching windows stops listening."
                         : root.status.state === "paused" ? "Microphone off. Focus a text field and tap to start again."
                         : root.status.tracking_notice ? root.status.tracking_notice
-                        : root.listening ? root.status.destination_name || "Waiting for a text field."
+                        : root.listening ? "Ordinary dictation → " + (root.status.destination_name || "Waiting for a text field.")
+                        : root.status.draft_enabled ? "Use drafts where supported; elsewhere, tap to keep listening or hold to talk."
                         : "Tap the dictation key to keep listening; hold to talk."
                     wrapMode: Text.Wrap
                     font.pixelSize: Theme.fontSizeSmall
@@ -226,11 +234,11 @@ PluginComponent {
                 }
                 DankButton {
                     width: parent.width
-                    text: root.listening ? "Stop listening" : "Start listening"
-                    iconName: root.listening ? "stop" : "mic"
-                    enabled: !root.controlsBusy && (root.listening || root.canStart)
+                    text: root.status.draft_mode ? "Accept draft" : root.listening ? "Stop listening" : "Start listening"
+                    iconName: root.status.draft_mode ? "check" : root.listening ? "stop" : "mic"
+                    enabled: !root.controlsBusy && (root.listening || root.canStart || root.status.draft_waiting)
                     onClicked: {
-                        if (root.listening) root.send("stop");
+                        if (root.listening || root.status.draft_waiting) root.send("stop");
                         else {
                             // Restore application focus before the daemon binds it.
                             panel.closePopout();
@@ -239,7 +247,16 @@ PluginComponent {
                         }
                     }
                 }
+                DankButton {
+                    width: parent.width
+                    visible: root.status.draft_mode === true
+                    text: "Discard draft"
+                    iconName: "close"
+                    enabled: !root.controlsBusy
+                    onClicked: root.send("cancel")
+                }
                 Repeater {
+                    // This policy applies to ordinary sessions, including draft fallback.
                     model: [
                         {policy: "pause", label: "Pause on window switch", command: "pause-on-switch"},
                         {policy: "follow", label: "Follow focused window", command: "follow-focus"},
@@ -249,7 +266,7 @@ PluginComponent {
                         required property var modelData
                         width: parent.width
                         text: modelData.label
-                        iconName: root.status.destination_policy === modelData.policy
+                        iconName: (root.status.draft_mode || root.status.allow_typing ? "pause" : root.status.destination_policy) === modelData.policy
                             ? "radio_button_checked" : "radio_button_unchecked"
                         enabled: root.canStart && !root.controlsBusy
                             && (modelData.policy !== "follow" || root.status.can_follow === true)
@@ -258,7 +275,25 @@ PluginComponent {
                 }
                 StyledText {
                     width: parent.width
-                    text: "Destination choices last until restart. Background dictation requires a supported destination, such as Emacs."
+                    text: root.status.draft_mode
+                        ? "Drafts stay in one Emacs or Neovim buffer. Window switches pause recording until you accept or discard."
+                        : "Destination choices last until restart. Background dictation requires a supported destination, such as Emacs."
+                    wrapMode: Text.Wrap
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
+                }
+                DankButton {
+                    width: parent.width
+                    visible: root.canToggleDraft
+                    text: root.status.draft_enabled ? "Draft mode: on" : "Draft mode: off"
+                    iconName: root.status.draft_enabled ? "toggle_on" : "toggle_off"
+                    enabled: root.canStart && !root.controlsBusy
+                    onClicked: root.send(root.status.draft_enabled ? "draft-off" : "draft-on")
+                }
+                StyledText {
+                    width: parent.width
+                    visible: root.canToggleDraft
+                    text: "Use drafts in supported Emacs and Neovim buffers; ordinary dictation elsewhere. This choice lasts until restart."
                     wrapMode: Text.Wrap
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText

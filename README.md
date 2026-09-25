@@ -108,6 +108,16 @@ These choices last until restart. Set `[persistent] destination_policy` to
 `follow_focus = true/false` settings still load as `"follow"`/`"pin"`.
 Listening stops after **60 seconds of silence** by default (`silence_seconds`).
 
+Experimental [draft mode](docs/draft-mode.md) keeps the
+whole session as a preview in supported Emacs and Neovim buffers until you accept it.
+Other destinations use ordinary dictation with its existing safeguards. Toggle **Draft mode** in the
+widget while idle, or set `[persistent] draft = true` as the startup default:
+press the dictation key to start, press again to accept, or Escape to discard
+(configurable with `draft_cancel_key`; a discarded draft stays recoverable with
+`--copy-last`). Each utterance is cleaned once, as in ordinary dictation.
+Automatic stops retain the draft for an explicit decision.
+The default remains incremental insertion.
+
 Persistent dictation requires a verified input-method field or Emacs buffer.
 If none is detected, it pauses and preserves pending speech for recovery.
 For unsupported fields, the panel offers **Use simulated typing this session**:

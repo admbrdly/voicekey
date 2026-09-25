@@ -21,7 +21,7 @@ def nvim_supported():
 class NeovimTests(unittest.TestCase):
     def test_buffer_insertion(self):
         root = Path(__file__).resolve().parents[1]
-        command = ['nvim', '--headless', '-u', 'NONE', '-i', 'NONE', '-l', str(root / 'tests/nvim-tests.lua')]
+        command = ['nvim', '--headless', '-n', '-u', 'NONE', '-i', 'NONE', '-l', str(root / 'tests/nvim-tests.lua')]
         run = subprocess.run(command, capture_output=True, text=True, timeout=60)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 
@@ -66,7 +66,7 @@ class RouteTests(unittest.TestCase):
     def editor(self):
         """A Neovim server whose :VoiceKey only records that it ran."""
         socket = self.tmp / 'nvim.sock'
-        process = subprocess.Popen(['nvim', '--headless', '-u', 'NONE', '-i', 'NONE', '--listen', str(socket),
+        process = subprocess.Popen(['nvim', '--headless', '-n', '-u', 'NONE', '-i', 'NONE', '--listen', str(socket),
                                     '-c', 'command VoiceKey let g:dictated = get(g:, "dictated", 0) + 1'],
                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.addCleanup(process.wait, 5)

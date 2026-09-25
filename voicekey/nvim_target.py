@@ -96,6 +96,9 @@ class NeovimTarget(PinnedEditorTarget):
     def show_tail(self, text, deadline):
         self.preview.show(text, timeout=min(.1, max(0, deadline - time.monotonic())))
 
+    def show_draft(self, text, *, timeout=.25):
+        nvim.call(self.pinning.server, 'draft', {'id': self.pinning.id, 'text': text}, timeout=timeout)
+
     def availability_issue(self, deadline=None):
         if not self.pin_valid:
             return self.pin_reason

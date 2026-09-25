@@ -15,11 +15,13 @@ def latest(journal: Journal) -> dict:
         merged = {}
         for record in records:
             merged.update(record)
-        if (merged.get("action", "dictate") != "dictate"
+        if (merged.get("draft_part") or merged.get("action", "dictate") != "dictate"
                 or any(r["event"] == "agent-attempt" for r in records)
                 or not isinstance(merged.get("final"), str) or not merged["final"].strip()):
             continue
         captured = next((r.get("time", 0) for r in records if r["event"] == "captured"), 0)
+        if merged.get('draft'):
+            captured = max((r.get('time', 0) for r in records if r['event'] in ('draft-update', 'final')), default=0)
         candidate = {**merged, "captured": captured, "path": str(path), "damaged": damaged}
         if found is None or captured > found["captured"]:
             found = candidate

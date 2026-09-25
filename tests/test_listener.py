@@ -13,6 +13,22 @@ def _event(code, value, type_=ecodes.EV_KEY):
 
 
 class RescanTests(unittest.TestCase):
+    def test_optional_cancel_key_does_not_hide_an_inaccessible_dictation_device(self):
+        keyboard = Mock(path='/dev/input/event1', name='typing keyboard')
+        keyboard.capabilities.return_value = {ecodes.EV_KEY: [ecodes.KEY_A, ecodes.KEY_ESC]}
+        def open_device(path):
+            if path == '/dev/input/event1':
+                return keyboard
+            raise PermissionError(path)
+        warning = Mock()
+        listener = KeyboardListener({ecodes.KEY_F9, ecodes.KEY_ESC}, Mock(), Mock(), Mock(), warning,
+                                    required_keycodes={ecodes.KEY_F9})
+        with patch('voicekey.listener.all_event_devices', return_value={'/dev/input/event1', '/dev/input/event2'}), \
+                patch('voicekey.listener.InputDevice', side_effect=open_device):
+            listener._rescan()
+        self.assertIn('/dev/input/event1', listener.devices)
+        warning.assert_called_once()
+
     def test_a_readable_activity_keyboard_does_not_hide_a_denied_voice_key_device(self):
         keyboard = Mock(path="/dev/input/event1", name="typing keyboard")
         keyboard.capabilities.return_value = {ecodes.EV_KEY: [ecodes.KEY_A, ecodes.KEY_ENTER]}

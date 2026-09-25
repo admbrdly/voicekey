@@ -64,6 +64,8 @@ class StreamingConfig:
 @dataclass
 class PersistentConfig:
     destination_policy: str = "pause"  # pause on window switch, follow, or pin
+    draft: bool = False  # editor-only draft; insert once on explicit acceptance
+    draft_cancel_key: str = "KEY_ESC"
     key: str = ""  # optional additional dictation toggle chord
     vad_model: str = f"{MODELS_DIR}/silero_vad.onnx"
     pause_seconds: float = 1.2
@@ -277,6 +279,9 @@ def _validate(cfg: Config) -> None:
         "agent_toggle_key", cfg.agent_toggle_key, allow_empty=True
     )
     cfg.persistent.key = _string("persistent.key", cfg.persistent.key, allow_empty=True)
+    cfg.persistent.draft = _boolean("persistent.draft", cfg.persistent.draft)
+    cfg.persistent.draft_cancel_key = _string("persistent.draft_cancel_key", cfg.persistent.draft_cancel_key)
+    key_chord_names(cfg.persistent.draft_cancel_key)
     cfg.language = _string("language", cfg.language, allow_empty=True)
     cfg.tap_seconds = _number("tap_seconds", cfg.tap_seconds, minimum=0.01)
     cfg.min_seconds = _number("min_seconds", cfg.min_seconds)
@@ -292,6 +297,7 @@ def _validate(cfg: Config) -> None:
             cfg.dictate_toggle_key,
             cfg.agent_toggle_key,
             cfg.persistent.key,
+            cfg.persistent.draft_cancel_key if cfg.persistent.draft else "",
         )
         if key
     ]

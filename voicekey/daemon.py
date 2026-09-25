@@ -27,7 +27,7 @@ from .capture import Session
 from .config import Config, ConfigError, key_chord_names
 from .gate import Gate
 from .ime import ImeUnavailable, InputMethod
-from .listener import KeyboardListener
+from .listener import KeyboardListener, MODIFIERS
 from .notify import notify
 from .pipeline import Pipeline
 from .persistent import PersistentSession
@@ -75,6 +75,13 @@ class Daemon:
                 self.actions[_key_chord(chord)] = (action, TOGGLE)
         if cfg.persistent.key:
             self.actions[_key_chord(cfg.persistent.key)] = ("persistent", TOGGLE)
+        self._dictation_keys = set().union(*self.actions)
+        self._draft_cancel_chord = _key_chord(cfg.persistent.draft_cancel_key)
+        if cfg.persistent.draft:
+            self.actions[self._draft_cancel_chord] = ("draft-cancel", HOLD)
+        # Listen from startup so enabling drafts through the panel needs no
+        # listener restart. When disabled these keys remain ordinary activity.
+        self._listened_keys = set().union(*self.actions, self._draft_cancel_chord)
         self.recorder_factory = recorder_factory
         self.recorder = recorder_factory()
         self.session = None
@@ -184,7 +191,7 @@ class Daemon:
         # the recorder's bounded buffer while waiting, including a released hold.
         deadline = time.monotonic() + self.cfg.pipeline.transcription_seconds
         while not self._models_ready.wait(.05):
-            if self._stopping or time.monotonic() >= min(deadline, session.deadline):
+            if self._stopping or time.monotonic() >= min(deadline, session._drain_deadline):
                 raise RuntimeError("Model loading interrupted or timed out; audio preserved")
         if self.vad is None or self.backend is None:
             raise RuntimeError(self.backend_error or "Speech models unavailable; audio preserved")
@@ -213,10 +220,13 @@ class Daemon:
     def _unload_when_idle(self):
         if not self._unload_requested or self.model_state in ("loading", "unloading"):
             return
-        if self.client_capture is not None or self.persistent is not None or self.session is not None or self.pipeline.ledger.busy:
+        if (self.client_capture is not None or self.session is not None or self.pipeline.ledger.busy
+                or self.persistent is not None and not self.persistent.draft_waiting.is_set()):
             return
         # Ledger completion does not imply a timed-out native call has exited.
         if (self._vad_slot.busy or any(slot.busy for slot in self.pipeline._slots.values())
+                or self.persistent is not None and self.persistent.last_live is not None
+                    and self.persistent.last_live.stuck
                 or self._live_session is not None and self._live_session.stuck):
             self.model_error = "Waiting for a background operation before freeing memory"
             return
@@ -279,10 +289,11 @@ class Daemon:
         self.load()
         self.start_workers()
         listener = KeyboardListener(
-            keycodes=set().union(*self.actions), on_key=self._on_key,
+            keycodes=self._listened_keys, on_key=self._on_key,
             on_device_lost=self._on_device_lost, on_tick=self._on_tick,
             on_no_access=lambda message: notify("voicekey: no keyboard access", message, error=True),
             on_activity=self._on_activity,
+            required_keycodes=self._dictation_keys,
         )
         log.info("listening: %s", ", ".join(self.bindings()))
         try:
@@ -321,11 +332,7 @@ class Daemon:
                 if device == persistent.device and code in persistent.chord:
                     self._gesture = None
                     if persistent is self.persistent and not persistent.stopping.is_set():
-                        if time.monotonic() - started >= self.cfg.tap_seconds:
-                            persistent.request_stop("key released")
-                        else:
-                            persistent.stop_instruction = "press a dictation key to stop"
-                            persistent.status()
+                        persistent.starting_key_released(time.monotonic() - started >= self.cfg.tap_seconds)
             if (session is not None and session.behavior == HOLD
                     and session.device == device and code in session.chord):
                 self._finish()
@@ -337,6 +344,8 @@ class Daemon:
         matches = [(chord, action) for chord, action in self.actions.items()
                    if code in chord and chord <= pressed]
         if not matches:
+            if code in self._draft_cancel_chord and code not in MODIFIERS:
+                self._on_activity()
             return
         longest = max(len(chord) for chord, _ in matches)
         matches = [item for item in matches if len(item[0]) == longest]
@@ -344,6 +353,12 @@ class Daemon:
             log.warning("ambiguous dictation chord")
             return
         chord, (action, behavior) = matches[0]
+        if action == "draft-cancel":
+            if self.persistent is not None and self.persistent.draft:
+                self.persistent.request_draft_key("cancel")
+            else:
+                self._on_activity()
+            return
         if self.client_capture is not None:
             if action in ("persistent", "dictate"):
                 if self.client_capture.submitted:
@@ -358,7 +373,10 @@ class Daemon:
                 self._retire_persistent()
             else:
                 if action == "persistent":
-                    self.persistent.request_stop()
+                    if self.persistent.draft is True:
+                        self.persistent.request_draft_key("accept")
+                    else:
+                        self.persistent.request_stop()
                 else:
                     notify("voicekey: busy", "stop persistent dictation before using another dictation key", attention=True, ms=3000)
                 return
@@ -399,7 +417,7 @@ class Daemon:
         if self.pipeline.ledger.busy or self._live_session is not None and self._live_session.stuck:
             notify("voicekey: busy", "let pending dictation finish before starting persistent mode", attention=True, ms=3000)
             return
-        track_windows = allow_typing or self.cfg.persistent.destination_policy != "pin"
+        track_windows = allow_typing or self.cfg.persistent.draft or self.cfg.persistent.destination_policy != "pin"
         watch_factory = (NiriFocusWatch if track_windows and focus.compositor() == "niri"
                          and device != "replay" else None)
         activation_wait = 1.0 if device == "panel" else target_mod.ACTIVATION_WAIT
@@ -510,7 +528,10 @@ class Daemon:
                      or self.session is not None)
         busy = client_capture is not None or persistent is not None or self.pipeline.ledger.busy
         pause_reason = persistent.reason if persistent is not None and persistent.paused else self._pause_reason
-        state = ("listening" if listening else "finishing" if busy else
+        draft_mode = (persistent is not None and persistent.draft is True
+                      and persistent.mode_resolved.is_set() and persistent.ready.is_set())
+        draft_waiting = bool(draft_mode and persistent.draft_waiting.is_set())
+        state = ("draft" if draft_waiting else "listening" if listening else "finishing" if busy else
                  "unloading" if self._unload_requested else
                  self.model_state if self.model_state in ("loading", "unloading", "unloaded") else
                  "unavailable" if self.backend is None or self.vad is None else
@@ -519,6 +540,8 @@ class Daemon:
                        persistent.target.target if persistent is not None else
                        self.session.target if self.session is not None else None)
         return {"state": state, "listening": listening, "client_capture": client_capture is not None,
+                "draft_mode": draft_mode, "draft_enabled": self.cfg.persistent.draft,
+                "draft_waiting": draft_waiting,
                 "binding": persistent is not None and not persistent.ready.is_set(),
                 "models": self.model_state, "unload_pending": self._unload_requested,
                 "destination_policy": self.cfg.persistent.destination_policy,
@@ -587,6 +610,8 @@ class Daemon:
             self._unload_requested = True
             if self.client_capture is not None:
                 self.client_capture.finish()
+            elif self.persistent is not None and self.persistent.draft:
+                self.persistent.request_stop("Free memory; draft awaiting a decision")
             else:
                 self.command("stop")
             self._unload_when_idle()
@@ -597,15 +622,35 @@ class Daemon:
             if self.client_capture is not None:
                 self.client_capture.finish()
             if self.persistent is not None:
-                self.persistent.request_stop("stopped from panel")
+                if self.persistent.draft is True:
+                    self.persistent.accept("stopped from panel")
+                else:
+                    self.persistent.request_stop("stopped from panel")
             if self.session is not None:
                 self._finish()
+        elif command == "cancel":
+            if self.persistent is None or not self.persistent.draft:
+                raise ValueError("No persistent draft to cancel")
+            self._gesture = None
+            self.persistent.cancel_draft()
         elif command in ("start", "start-typing"):
             if self.persistent is not None or self.session is not None or self.pipeline.ledger.busy:
                 raise ValueError("Finish the current dictation before starting another")
             self._start_persistent("panel", frozenset(), allow_typing=command == "start-typing")
             if self.persistent is None:
                 raise ValueError("Could not start dictation; check Voicekey notifications")
+        elif command in ("draft-on", "draft-off"):
+            if self.persistent is not None or self.session is not None or self.pipeline.ledger.busy:
+                raise ValueError("Finish or discard the current dictation before changing draft mode")
+            enabled = command == "draft-on"
+            existing = self.actions.get(self._draft_cancel_chord)
+            if enabled:
+                if existing is not None and existing != ("draft-cancel", HOLD):
+                    raise ValueError("Draft cancel key conflicts with a dictation or agent key; change persistent.draft_cancel_key")
+                self.actions[self._draft_cancel_chord] = ("draft-cancel", HOLD)
+            elif existing == ("draft-cancel", HOLD):
+                self.actions.pop(self._draft_cancel_chord)
+            self.cfg.persistent.draft = enabled
         elif command in ("pause-on-switch", "follow-focus", "pin"):
             if self.persistent is not None or self.session is not None or self.pipeline.ledger.busy:
                 raise ValueError("Stop dictation before changing destination policy")

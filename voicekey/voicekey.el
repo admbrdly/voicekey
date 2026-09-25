@@ -5,7 +5,7 @@
 (require 'seq)
 (require 'subr-x)
 
-(defconst voicekey--protocol-version 4)
+(defconst voicekey--protocol-version 6)
 (defvar voicekey--pins nil)
 (defvar voicekey--operations nil)
 (defvar voicekey--user-buffer nil)
@@ -61,6 +61,9 @@ A successful pin answers with a JSON description of the bound buffer."
                            (buffer-live-p voicekey--user-buffer))
                       voicekey--user-buffer
                     (window-buffer (selected-window)))))
+      (dolist (old (nthcdr 15 (seq-remove (lambda (item) (equal (car item) id)) voicekey--pins)))
+        (voicekey--unpin (car old)))
+      (voicekey--unpin id)
       (setq voicekey--pins
             (cons (list id buffer)
                   (seq-take (assoc-delete-all id voicekey--pins) 15)))
@@ -84,8 +87,45 @@ A successful pin answers with a JSON description of the bound buffer."
     (concat " " text)))
 
 (defun voicekey--unpin (id)
+  (let ((pin (assoc id voicekey--pins)))
+    (when (markerp (nth 2 pin)) (set-marker (nth 2 pin) nil))
+    (when (overlayp (nth 3 pin)) (delete-overlay (nth 3 pin))))
   (setq voicekey--pins (assoc-delete-all id voicekey--pins))
   "ok")
+
+(defun voicekey--draft (id expires text)
+  "Show TEXT without modifying the pinned buffer; anchor acceptance here."
+  (let* ((pin (assoc id voicekey--pins))
+         (buffer (cadr pin)))
+    (cond
+     ((> (float-time) expires) "refused: draft preview expired")
+     ((not (buffer-live-p buffer)) "refused: the pinned buffer is gone")
+     (t
+      (with-current-buffer buffer
+        (cond
+         ((or buffer-read-only (minibufferp) (memq major-mode '(term-mode vterm-mode)))
+          "refused: drafts require an editable text buffer")
+         ((and (not (nth 2 pin)) (memq (voicekey--state) '(visual operator)))
+          "refused: selection or operator pending")
+         (t
+          (setq text (voicekey--prepare-text text nil))
+          (unless (nth 2 pin)
+            ;; Only one daemon draft can be active. Clear a preview abandoned
+            ;; by a crashed daemon without installing a timer or editor hook.
+            (dolist (old voicekey--pins)
+              (when (and (not (equal (car old) id)) (overlayp (nth 3 old)))
+                (voicekey--unpin (car old))))
+            (let* ((pos (voicekey--insertion-position))
+                   (overlay (make-overlay pos pos buffer nil t)))
+              (setcdr (cdr pin) (list (copy-marker pos t) overlay))))
+          (let ((pos (marker-position (nth 2 pin)))
+                (overlay (nth 3 pin)))
+            (move-overlay overlay pos pos buffer)
+            (overlay-put overlay 'after-string
+                         (propertize (if (string-empty-p text) " [voicekey: draft]"
+                                       (voicekey--spaced text pos))
+                                     'face 'shadow)))
+          "ok")))))))
 
 (defun voicekey--prepare-text (text terminal)
   "Preserve buffer formatting, flatten terminal input, refuse other controls.
@@ -113,7 +153,8 @@ are grouped atomically; terminal writes cannot be rolled back."
      ((> (float-time) expires) "refused: insertion expired")
      ((and permit (not (file-exists-p permit))) "refused: insertion cancelled")
      (t
-      (let* ((buffer (cadr (assoc id voicekey--pins)))
+      (let* ((pin (assoc id voicekey--pins))
+             (buffer (cadr pin))
              (started nil)
              (answer
               (catch 'answer
@@ -123,13 +164,17 @@ are grouped atomically; terminal writes cannot be rolled back."
                       (with-current-buffer buffer
                         (let* ((state (voicekey--state))
                                (terminal (memq major-mode '(vterm-mode term-mode)))
-                               (pos (voicekey--insertion-position)))
+                               (draft-marker (nth 2 pin))
+                               (pos (if draft-marker (marker-position draft-marker)
+                                      (voicekey--insertion-position))))
+                          (when (and draft-marker terminal)
+                            (throw 'answer "refused: draft buffer became a terminal"))
                           (when (and buffer-read-only (not terminal))
                             (throw 'answer (format "refused: buffer is read-only: %s"
                                                    (voicekey--identity))))
-                          (when (eq state 'operator)
+                          (when (and (not draft-marker) (eq state 'operator))
                             (throw 'answer "refused: an operator is pending"))
-                          (when (and (eq state 'visual) (eq (evil-visual-type) 'block))
+                          (when (and (not draft-marker) (eq state 'visual) (eq (evil-visual-type) 'block))
                             (throw 'answer "refused: blockwise selection"))
                           (when (or (> (float-time) expires)
                                     (and permit (not (file-exists-p permit))))
@@ -145,6 +190,11 @@ are grouped atomically; terminal writes cannot be rolled back."
                             (undo-boundary)
                             (atomic-change-group
                               (cond
+                               (draft-marker
+                                (if (= (point) pos)
+                                    (insert text)
+                                  (save-excursion (goto-char pos) (insert text)))
+                                (delete-overlay (nth 3 pin)))
                                ((eq state 'visual)
                                 (evil-change evil-visual-beginning evil-visual-end (evil-visual-type))
                                 (insert text)

@@ -31,6 +31,7 @@ class Outcome(StrEnum):
     COPIED = "copied"
     SAVED = "saved"
     DROPPED = "dropped"
+    DRAFT = "draft"
 
 
 @dataclass(frozen=True)
@@ -244,6 +245,9 @@ class PinnedEditorTarget(Target):
     def unpin(self):
         raise NotImplementedError
 
+    def show_draft(self, text, *, timeout=.25):
+        raise NotImplementedError("This editor does not support drafts")
+
 
 class EmacsTarget(PinnedEditorTarget):
     kind = "emacs"
@@ -289,6 +293,9 @@ class EmacsTarget(PinnedEditorTarget):
             emacs.unpin(self.pinning.id)
         except emacs.EmacsError:
             pass
+
+    def show_draft(self, text, *, timeout=.25):
+        emacs.draft(self.pinning.id, text, timeout=timeout)
 
     def insert_pinned(self, text, deadline, operation, prefix, permit, cancelled):
         self.pinning.before(max(0, deadline - time.monotonic()))

@@ -22,6 +22,11 @@ def ack(**fields):
 
 
 class ProtocolTests(unittest.TestCase):
+    @patch('voicekey.emacs.subprocess.run', return_value=result('"refused: buffer is read-only: paper.org"'))
+    def test_draft_preview_preserves_the_specific_refusal_reason(self, run):
+        with self.assertRaisesRegex(emacs.EmacsRefused, 'buffer is read-only: paper.org'):
+            emacs.draft('pin', 'words')
+
     @patch('voicekey.emacs.subprocess.run')
     def test_pin_acknowledgement_parses_spacing_and_uses_fresh_id(self, run):
         run.return_value = ack(before='\n')

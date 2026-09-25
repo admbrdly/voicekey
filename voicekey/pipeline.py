@@ -319,6 +319,11 @@ class Pipeline:
     def _polish(self, job):
         if self._discard_client(job, "polish"):
             return
+        if hasattr(job.target, 'prepare_draft'):
+            job.target.prepare_draft(job, self)
+            if not self._discard_client(job, "polish"):
+                self._complete(job, Outcome.DRAFT, job.failure, "polish")
+            return
         final = job.raw
         polisher = self.polisher()
         deadline = min(job.polish_deadline, self._deadline(job))

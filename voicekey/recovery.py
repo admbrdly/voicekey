@@ -166,6 +166,8 @@ class Journal:
             parts = []
             manifest = self.path(identity, ".jsonl")
             entries, damaged = self._recovery_records(manifest) if manifest.exists() else ([], False)
+            if any(r.get('draft') for r in entries):
+                return self._close_draft(identity, entries, damaged)
             if damaged:
                 parts.append((-1, f"[Incomplete session journal; inspect {manifest} before pasting.]"))
             utterances = {r["utterance_id"]: r["sequence"] for r in entries if r["event"] == "utterance"}
@@ -205,6 +207,66 @@ class Journal:
                 self.available -= len(text.encode())
             self._append(identity, "session-closed", recovery=str(destination) if destination else "")
             return str(destination) if destination else None
+
+    def _close_draft(self, identity, entries, damaged):
+        """A draft snapshot replaces covered chunks; never concatenate revisions."""
+        self.revoke(identity)
+        snapshot = next((r for r in reversed(entries) if r['event'] == 'draft-update'), {})
+        final = next((r.get('final', '') for r in reversed(entries) if 'final' in r), '')
+        outcome = next((r.get('outcome') for r in reversed(entries) if r['event'] == 'outcome'), None)
+        attempt = next((r for r in reversed(entries) if r['event'] == 'delivery-attempt'), None)
+        result = next((r for r in reversed(entries) if r['event'] == 'delivery-result'
+                       and attempt is not None and r.get('attempt') == attempt.get('attempt')), None)
+        if outcome is None and result is not None and result.get('outcome') in self.SUCCESS:
+            outcome = result['outcome']
+        settled = outcome in self.SUCCESS
+        closing = next((r for r in reversed(entries) if r['event'] == 'outcome'), {})
+        if outcome == 'dropped' and final and closing.get('cancelled'):
+            # A discarded draft is not unresolved work, but an accidental
+            # Escape must be easy to undo: keep it where recovery points.
+            self._write_recovery(self.directory.parent / 'last-recovery.txt', final + '\n')
+        uncertain = outcome == 'unknown' or (outcome is None and attempt is not None
+                                            and (result is None or result.get('outcome') == 'unknown'))
+        parts = [(-1, final)] if final and not settled else []
+        if damaged:
+            parts.insert(0, (-2, '[Incomplete draft journal; inspect the journal before pasting.]'))
+        for entry in entries:
+            if entry['event'] != 'utterance':
+                continue
+            uid = entry['utterance_id']
+            self.revoke(uid)
+            path = self.path(uid, '.jsonl')
+            if not path.exists():
+                continue
+            records, broken = self._recovery_records(path)
+            if settled and not damaged:
+                needed = any(r.get('recovery_needed') for r in records)
+                self._append(uid, 'outcome', outcome=outcome, recovery_needed=needed)
+                continue
+            if not broken and entry['sequence'] <= snapshot.get('through', -1):
+                continue
+            last = next((r.get('outcome') for r in reversed(records) if r['event'] == 'outcome'), None)
+            if last == 'dropped':
+                continue
+            text = ''
+            for key in ('raw', 'final', 'live'):
+                text = next((r[key] for r in reversed(records) if r.get(key)), '')
+                if text:
+                    break
+            if broken:
+                text = f'[Incomplete chunk journal: {path}]\n' + text
+            parts.append((entry['sequence'], text or f'[Audio awaiting recovery: {path.with_suffix(".wav")}]'))
+        destination = None
+        if parts:
+            text = '\n\n'.join(value for _, value in sorted(parts)) + '\n'
+            if uncertain:
+                text = '[Delivery uncertain; check the destination before pasting.]\n' + text
+            destination = self.path(identity, '.recovery.txt')
+            self._write_recovery(destination, text)
+            self._write_recovery(self.directory.parent / 'last-recovery.txt', text)
+            self.available -= len(text.encode())
+        self._append(identity, 'session-closed', recovery=str(destination) if destination else '')
+        return str(destination) if destination else None
 
     @staticmethod
     def _recovery_records(path):

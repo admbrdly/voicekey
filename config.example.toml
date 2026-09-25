@@ -25,6 +25,13 @@ model_dir = "~/.local/share/voicekey/sherpa-onnx-nemo-parakeet-unified-en-0.6b-i
 model_dir = "~/.local/share/voicekey/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25"
 
 [persistent]
+draft = false             # experimental: use drafts where supported; ordinary dictation elsewhere
+# The DMS Draft mode toggle overrides this default until daemon restart.
+draft_cancel_key = "KEY_ESC" # only cancels draft sessions; configurable chord, e.g. "KEY_LEFTCTRL+KEY_ESC"
+# An actual draft makes the dictation key a toggle: start, then accept. It always
+# pauses on window switches, retaining the original buffer. Silence/free-memory
+# stops also await accept/cancel. The cancel key still reaches the application.
+# Draft accept/cancel hotkeys require the original window; widget controls do not.
 destination_policy = "pause" # "pause" on window switch (default), "follow" (Niri), or "pin"
 key = ""                  # optional extra toggle, e.g. "KEY_F11"; the dictation hotkey already uses this engine
 vad_model = "~/.local/share/voicekey/silero_vad.onnx" # --download fetches it for dictation

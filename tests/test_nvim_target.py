@@ -24,7 +24,7 @@ class Editor:
     def __init__(self, case, runtime, number=1):
         self.socket = str(Path(runtime) / f'nvim-{number}.sock')
         env = dict(os.environ, XDG_RUNTIME_DIR=str(runtime), NVIM_LOG_FILE=str(Path(runtime)/'nvim.log'))
-        self.process = subprocess.Popen(['nvim', '--headless', '-u', 'NONE', '-i', 'NONE',
+        self.process = subprocess.Popen(['nvim', '--headless', '-n', '-u', 'NONE', '-i', 'NONE',
             '--listen', self.socket, '--cmd', f'set rtp+={ROOT}/contrib/nvim',
             '-c', 'runtime plugin/voicekey.lua'], env=env,
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -93,6 +93,64 @@ class TargetTests(unittest.TestCase):
         self.focus.return_value = Focus(9, 'emacs', 102)
         with patch('voicekey.target.emacs.PendingPin'):
             self.assertIsInstance(self.bind(), EmacsTarget)
+
+    def test_refused_draft_keeps_ordinary_preview_and_original_pin(self):
+        from voicekey.draft import DraftTarget, DraftUnsupported
+        target = self.bind()
+        # A valid ordinary pin can outlive a buffer becoming a special buffer.
+        self.editor.lua('vim.api.nvim_set_option_value("buftype", "nofile", {buf=0})')
+        draft = DraftTarget('session', target, Mock())
+        with self.assertRaises(DraftUnsupported):
+            draft.initialize()
+        self.assertFalse(target.preview.closed)
+        target.preview.show('ordinary preview')
+        marks = self.editor.lua('vim.inspect(vim.api.nvim_buf_get_extmarks(0, vim.api.nvim_get_namespaces().voicekey, 0, -1, {details=true}))')
+        self.assertIn('ordinary preview', marks)
+        self.assertEqual(self.land(target).outcome, Outcome.CONFIRMED)
+        self.assertEqual(self.editor.text(), ['Hello'])
+
+    def test_multiline_draft_is_virtual_and_inserts_once_at_original_anchor(self):
+        self.editor.lua('vim.api.nvim_buf_set_lines(0,0,-1,false,{"first", "second"})')
+        self.editor.lua('vim.api.nvim_win_set_cursor(0,{1,4})')
+        target = self.bind()
+        target.show_draft('a draft\n' + 'long passage ' * 25)
+        self.assertEqual(self.editor.text(), ['first', 'second'])
+        marks = json.loads(self.editor.lua('vim.json.encode(vim.api.nvim_buf_get_extmarks(0,-1,0,-1,{details=true}))'))
+        self.assertGreater(len(marks[0][3]['virt_lines']), 2)
+        self.editor.lua('vim.api.nvim_buf_set_text(0,0,0,0,0,{"Before "})')
+        self.editor.lua('vim.api.nvim_win_set_cursor(0,{2,0})')
+        target.show_draft('revised')
+        self.assertEqual(self.land(target, 'accepted').outcome, Outcome.CONFIRMED)
+        self.assertEqual(self.editor.text(), ['Before first accepted', 'second'])
+        self.assertEqual(self.editor.lua('vim.fn.line(".")'), '2')
+
+    def test_cancelling_draft_removes_virtual_lines_without_editing(self):
+        target = self.bind()
+        target.show_draft('discard me\nand this')
+        target.clear()
+        self.assertEqual(self.editor.text(), [''])
+        self.assertEqual(self.editor.lua('#vim.api.nvim_buf_get_extmarks(0,-1,0,-1,{})'), '0')
+
+    def test_draft_preview_wraps_at_word_boundaries(self):
+        target = self.bind()
+        target.show_draft('alpha beta ' * 40)
+        marks = json.loads(self.editor.lua('vim.json.encode(vim.api.nvim_buf_get_extmarks(0,-1,0,-1,{details=true}))'))
+        lines = [line[0][0] for line in marks[0][3]['virt_lines']]
+        self.assertGreater(len(lines), 1)
+        words = [word for line in lines for word in line.split()]
+        self.assertEqual(words, ['alpha', 'beta'] * 40)
+        target.clear()
+
+    def test_new_draft_clears_a_preview_abandoned_by_a_crashed_daemon(self):
+        first = self.bind()
+        first.show_draft('abandoned')
+        second = self.bind()
+        second.show_draft('fresh')
+        marks = json.loads(self.editor.lua('vim.json.encode(vim.api.nvim_buf_get_extmarks(0,-1,0,-1,{details=true}))'))
+        self.assertEqual(len(marks), 1)
+        self.assertIn('fresh', str(marks))
+        second.clear()
+        self.assertEqual(self.editor.text(), [''])
 
     def titled(self, title):
         self.focus.return_value = Focus(7, 'com.mitchellh.ghostty', 100, title)
@@ -440,11 +498,16 @@ class PersistentTests(unittest.TestCase):
         self.session.target.render()
         def preview():
             return self.editor.lua('vim.json.encode(vim.api.nvim_buf_get_extmarks(0,vim.api.nvim_get_namespaces().voicekey,0,-1,{details=true}))')
-        self.assertIn('Live words', preview())
+        def rendered(text):
+            # Rendering can yield its lock to the capture worker. Observe the
+            # asynchronous preview instead of requiring this call to win it.
+            self.session.target.render()
+            return text in preview()
+        wait_for(lambda: rendered('Live words'))
         self.recorder.push(np.zeros(5120,dtype=np.float32))
         self.assertTrue(entered.wait(2))
         self.session.target.render()
-        self.assertIn('Words.', preview())
+        wait_for(lambda: rendered('Words.'))
         release.set()
         wait_for(lambda: self.editor.text() == ['Final.'])
         self.finish()

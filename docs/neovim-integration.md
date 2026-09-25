@@ -42,7 +42,8 @@ acknowledged editor pin. Right Win, Copilot/F23, toggle and agent-key handling
 use the existing controller.
 
 `PinnedEditorTarget` supplies acknowledgement, validity, description, repeated
-insertion and release. Emacs keeps protocol v4 and its follow-point behavior.
+insertion and release. Emacs protocol v6 retains follow-point behavior for
+ordinary sessions and adds an anchored, virtual preview for optional drafts.
 Neovim uses an advancing extmark: edits elsewhere move it with the buffer, but
 moving the cursor or selecting another buffer does not retarget dictation.
 Normal-mode pins start after the cursor character; insert-mode pins start at it.

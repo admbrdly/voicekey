@@ -647,9 +647,15 @@ desktop destination-policy fields. Status never contains transcript text or
 capture IDs. Ignore extra fields and unrelated status messages for forward
 compatibility; reject an unsupported protocol version.
 
+Optional persistent drafts expose `draft_enabled` (runtime preference, initialized from configuration), `draft_mode`
+(active session), and `draft_waiting` (prepared draft, microphone off). The latter
+uses `state: "draft"`. See [draft mode](draft-mode.md) for supported buffers, ordinary fallback,
+rolling cleanup, and acceptance/cancellation behavior.
+
 `capabilities` lists optional protocol extensions (treat an absent field as an
 empty list). `capture-client-name` permits `capture-start.args.client_name`;
-`capture-preview` permits `capture-start.args.preview`.
+`capture-preview` permits `capture-start.args.preview`. `draft-toggle` advertises
+the idle-only `draft-on` and `draft-off` commands.
 For an active client capture, `destination_name` is that supplied label, or
 `Client` when unnamed; `destination` describes the socket client. Desktop
 captures retain their actual window destination, such as Ghostty. A client label
@@ -659,11 +665,20 @@ Requests have `command`, optional `id` (string or integer, echoed in replies),
 and optional `args` (object, default `{}`). Use distinct IDs for outstanding
 requests. Replies are `{"type":"reply","id":ID,"error":null,...}` on success,
 or have a human-readable `error` string on refusal. The existing commands are
-`status`, `start`, `start-typing`, `stop`, `pause-on-switch`, `follow-focus`, `pin`
+`status`, `start`, `start-typing`, `stop`, `cancel`, `draft-on`, `draft-off`,
+`pause-on-switch`, `follow-focus`, `pin`
 and `free-memory`; they take no arguments. `status` replies include current
 status fields. `start` addresses desktop dictation. `stop` finishes the active
 recording, including a client capture, and is available from any connection
 without a capture ID. A client capture's result still goes to its original owner.
+For persistent drafts, `stop` explicitly accepts the draft, while `cancel`
+discards it. `cancel` refuses other capture types; connection-owned client
+captures continue to use `capture-cancel`. `free-memory` pauses a draft without
+accepting it and can unload models while the prepared draft awaits a decision.
+`draft-on` and `draft-off` change the live default for subsequent persistent
+sessions until daemon restart. They refuse active captures, pending processing,
+and drafts awaiting a decision. Enabling drafts also enables the configured
+cancellation shortcut immediately; disabling restores ordinary key handling.
 
 A complete capture exchange looks like this (angle brackets mark example IDs):
 

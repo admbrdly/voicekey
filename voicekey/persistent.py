@@ -14,11 +14,12 @@ import numpy as np
 
 from . import focus
 from .capture import Session
+from .draft import DraftTarget, DraftUnsupported
 from .notify import notify
 from .recorder import AudioBuffer, CutRecording, RecordingError, SAMPLE_RATE
 from .segment import Boundary, Segmenter, WINDOW
 from .session_target import SessionTarget
-from .target import ClipboardTarget, PinnedEditorTarget, NotifyPreview, Window, WtypeTarget
+from .target import ClipboardTarget, PinnedEditorTarget, NotifyPreview, Window, WtypeTarget, Outcome
 from .spacing import owed
 
 log = logging.getLogger("voicekey.persistent")
@@ -35,8 +36,21 @@ class PersistentSession:
         self.prepare_models = prepare_models
         self.id = uuid.uuid4().hex
         self.cfg, self.pipeline, self.recorder = cfg, pipeline, recorder
+        self.draft = cfg.persistent.draft
+        self.mode_resolved = threading.Event()
+        if not self.draft:
+            self.mode_resolved.set()
+        self._starting_release = None
+        self._cancel_during_binding = False
+        self.draft_waiting = threading.Event()
+        self._draft_decision = threading.Event()
+        self._draft_action = ""
+        self._decision_lock = threading.Lock()
+        self._hotkey_lock = threading.Lock()
+        self._hotkey_action = ""
+        self._hotkey_thread = None
         # The compatibility escape hatch is local to one window and one session.
-        self.policy = "pause" if allow_typing else cfg.persistent.destination_policy
+        self.policy = "pause" if allow_typing or self.draft else cfg.persistent.destination_policy
         self.allow_typing = allow_typing
         self.device, self.chord = device, chord
         self._bind = target if callable(target) else lambda: target
@@ -59,6 +73,7 @@ class PersistentSession:
         self._stop_lock = threading.Lock()
         self._stop_attention = False
         self.deadline = float("inf")
+        self._drain_deadline = float("inf")
         self.reason = ""
         self.stop_instruction = "press a dictation key to stop"
         self.paused = False
@@ -78,8 +93,102 @@ class PersistentSession:
         self.tracking_notice = ""
 
     def _new_target(self, target):
-        return SessionTarget(self.id, target, self.pipeline.ledger, scoped=True,
-                             allow_typing=self.allow_typing)
+        cls = DraftTarget if self.draft else SessionTarget
+        return cls(self.id, target, self.pipeline.ledger, scoped=True, allow_typing=self.allow_typing)
+
+    def _resolve_mode(self, draft):
+        with self._stop_lock, self._decision_lock:
+            if self.draft and not draft:
+                old = self.target
+                self.draft = False
+                self.policy = "pause" if self.allow_typing else self.cfg.persistent.destination_policy
+                self.target = self._new_target(old.target)
+                # Transfer ownership without closing the preview or editor pin.
+                self.targets[self.targets.index(old)] = self.target
+                if old.cancelled.is_set() or self._cancel_during_binding:
+                    self.target.failed.set()
+                if self.stopping.is_set():
+                    self._drain_deadline = self.deadline
+                    self.pipeline.stop_session(self.id, self._drain_deadline)
+            self.current.target = self.target.attempt(self.current.id)
+            self.mode_resolved.set()
+            release = self._starting_release
+        if release is not None:
+            self.starting_key_released(release)
+
+    def starting_key_released(self, held):
+        """Retain releases during binding, then apply the actual session mode."""
+        with self._stop_lock:
+            self._starting_release = held
+            if not self.mode_resolved.is_set() or self.draft or self.stopping.is_set():
+                return
+        if held:
+            self.request_stop("key released")
+        else:
+            self.stop_instruction = "press a dictation key to stop"
+            if self.ready.is_set():
+                self.status()
+
+    def accept(self, reason="accepted by key"):
+        if self.draft:
+            with self._decision_lock:
+                if not self._draft_action:
+                    self._draft_action = "accept"
+                    self._draft_decision.set()
+            # Remaining speech is still transcribed; queued cleanup shares one
+            # budget, after which chunks join the draft raw.
+            if hasattr(self.target, "hurry"):
+                self.target.hurry(self.cfg.polish.max_wait_seconds)
+        self.request_stop(reason)
+
+    def cancel_draft(self):
+        with self._decision_lock:
+            if not self.draft:
+                raise ValueError("Only draft sessions can be cancelled as a whole")
+            self.target.cancelled.set()
+            self._draft_action = "cancel"
+            self._draft_decision.set()
+        self.request_stop("Draft cancelled")
+
+    def request_draft_key(self, action):
+        """Check current focus off the key thread; retain only the latest request."""
+        with self._decision_lock:
+            if action == "cancel" and not self.mode_resolved.is_set():
+                # Block ordinary delivery before publishing a downgrade; the
+                # focus worker may not be scheduled before audio processing.
+                self._cancel_during_binding = True
+        with self._hotkey_lock:
+            self._hotkey_action = action
+            if self._hotkey_thread is not None and self._hotkey_thread.is_alive():
+                return
+            def check():
+                self.mode_resolved.wait()
+                allowed = self.target.hotkey_focused() if self.draft else True
+                with self._hotkey_lock:
+                    requested, self._hotkey_action = self._hotkey_action, ""
+                    try:
+                        if self.done.is_set() or not requested:
+                            return
+                        if allowed is None:
+                            notify("Draft focus could not be verified", "Retry in the original window, "
+                                   "or use Accept draft / Discard draft in the widget.",
+                                   channel="persistent", attention=True)
+                        elif not allowed:
+                            notify("Draft still pending", "Return to its original window to use the dictation/cancel keys, "
+                                   "or use Accept draft / Discard draft in the widget.",
+                                   channel="persistent", attention=True)
+                        elif requested == "cancel":
+                            if self.draft:
+                                self.cancel_draft()
+                            else:
+                                self.target.failed.set()
+                                self.request_stop("Cancelled during destination binding")
+                        else:
+                            self.accept("accepted by key")
+                    finally:
+                        self._hotkey_thread = None
+            self._hotkey_thread = threading.Thread(target=check, name="draft-key-focus", daemon=True)
+            self._hotkey_thread.start()
 
     def focus_changed(self, destination, *, force=False, expected=None):
         """Called by the event reader; no desktop I/O on this thread."""
@@ -272,16 +381,27 @@ class PersistentSession:
         destination = self.target.target.application_name
         detail = self.tracking_notice or self.stop_instruction
         summary = f"● Listening → {destination}" if destination else "● Listening · no destination"
+        if self.draft:
+            summary = f"● Draft → {destination}"
+            detail = f"press the dictation key to accept; {self.cfg.persistent.draft_cancel_key} cancels"
         notify(summary, detail, ms=0, channel="persistent")
 
     def request_stop(self, reason="stopped by key", *, paused=False, attention=None):
         with self._stop_lock:
+            if self.draft and self._draft_action in ("cancel", "preserve"):
+                self._drain_deadline = min(self._drain_deadline,
+                    time.monotonic() + self.cfg.pipeline.shutdown_seconds)
+                self.pipeline.stop_session(self.id, self._drain_deadline)
             if self.stopping.is_set():
                 return
             self.reason, self.paused = reason, paused
             self._stop_attention = paused if attention is None else attention
             self.deadline = time.monotonic() + self.cfg.pipeline.shutdown_seconds
-            self.pipeline.stop_session(self.id, self.deadline)
+            if not self.draft:
+                self._drain_deadline = self.deadline
+            # Draft preparation has bounded per-stage operations but must not
+            # lose a healthy backlog merely because recording has stopped.
+            self.pipeline.stop_session(self.id, self._drain_deadline)
             self.stopping.set()
         self.recorder.request_stop()
         self.wake.set()
@@ -296,7 +416,10 @@ class PersistentSession:
                 self.request_stop("recovery storage unavailable", paused=True)
             elif self.ready.is_set() and time.monotonic() - self._last_status >= 30:
                 self.status()
-        self.target.render()
+        # Draft rendering uses editor RPC. The capture worker renders during
+        # speech, draining, and before review; never bind/render on the key thread.
+        if self.mode_resolved.is_set() and not self.draft:
+            self.target.render()
 
     def _begin(self, event, speech):
         self.active = True
@@ -380,14 +503,14 @@ class PersistentSession:
         try:
             self.target.target = self._bind()
             bound = True  # A refused destination still owns its captured audio for recovery.
+            # Always attach the bound destination, including on early refusal.
+            self.current.target = self.target.attempt(self.current.id)
+            if self.draft and (self.allow_typing
+                               or not isinstance(self.target.target, PinnedEditorTarget)
+                               or self.target.target.window_id is None):
+                self._resolve_mode(False)
             if not isinstance(self.target.target, PinnedEditorTarget):
                 self.target.target.window.verify = True
-            if issue := self.target.field_issue():
-                # Capture already started. Preserve opening speech for recovery,
-                # but the same guard in delivery prevents it becoming keystrokes.
-                self.typing_fallback = isinstance(self.target.target, WtypeTarget) and not self.allow_typing
-                self.request_stop(issue, paused=True)
-                return
             before = self.target.target.before(getattr(self.target.target, "pin_timeout", 0.25))
             if isinstance(self.target.target, PinnedEditorTarget) and not self.target.target.pin_valid:
                 # A late acknowledgement cannot authorize a session already refused.
@@ -395,19 +518,32 @@ class PersistentSession:
                 self.request_stop(self.target.target.pin_reason
                                   or f"{self.target.target.application_name} did not acknowledge the session buffer", paused=True)
                 return
+            if issue := self.target.field_issue():
+                # Capture already started. Preserve opening speech for recovery,
+                # but the same guard in delivery prevents it becoming keystrokes.
+                self.typing_fallback = isinstance(self.target.target, WtypeTarget) and not self.allow_typing
+                self.request_stop(issue, paused=True)
+                return
             self.target.target.prefix = owed(before,
                 self.pipeline.spacing.prefix(self.target.target.window_id))
-            self.current.target = self.target.attempt(self.current.id)
+            if self.draft:
+                try:
+                    self.target.initialize()
+                except DraftUnsupported:
+                    self._resolve_mode(False)
+            if not self.mode_resolved.is_set():
+                self._resolve_mode(self.draft)
             self.focused = focus.Focus(self.target.target.window_id, self.target.target.app_id,
                                        self.target.target.window.pid)
             if (self.policy == "pause" and self.target.target.window_id is None
                     and isinstance(self.target.target, PinnedEditorTarget)):
                 self.tracking_notice = "Window tracking unavailable; dictating to the original buffer"
-            if self.watch_factory is not None:
+            if self.watch_factory is not None and self.policy != "pin":
                 self.watcher = self.watch_factory(self.focus_changed,
                     lambda reason: self.request_stop("focus tracking lost: " + reason, paused=True))
             self.pipeline._save("session", lambda: self.pipeline.journal.append(
                 self.id, "session-start", target=self.target.target.kind,
+                draft=self.draft,
                 destination_policy=self.policy, allow_typing=self.allow_typing,
                 pause_seconds=self.cfg.persistent.pause_seconds,
                 silence_seconds=self.cfg.persistent.silence_seconds))
@@ -463,6 +599,7 @@ class PersistentSession:
             failure = str(exc) if isinstance(exc, DetectionError) else f"{phase} failed: {exc}"
             log.exception("continuous capture failed")
         finally:
+            self.mode_resolved.set()  # release queued hotkeys even on binding failure
             try:
                 if self.watcher is not None:
                     self.watcher.close()
@@ -477,6 +614,8 @@ class PersistentSession:
                     failure = failure or f"capture cleanup failed: {exc}"
                 self.request_stop(failure or "audio source ended", paused=bool(failure),
                                   attention=self.device != "replay")
+                if self.draft and self.device == "replay":
+                    self.accept("replay ended")
                 if failure:
                     # A stop requested earlier must not hide a microphone error
                     # discovered when collecting its exit status and stderr.
@@ -495,11 +634,13 @@ class PersistentSession:
                         self.id, "session-rejected", reason=self.reason, failure=failure,
                         discarded_startup_samples=buffer.end))
                     buffer.discard_before(buffer.end)
-                while self._pending() and time.monotonic() < self.deadline:
+                while self._pending() and time.monotonic() < self._drain_deadline:
                     self.target.render()
                     time.sleep(0.02)
                 if self._pending():
                     self.pipeline.expire_session(self.id)
+                if self.draft:
+                    self._finish_draft(failure)
                 recovery_path = self.pipeline._save("session", lambda: self.pipeline.journal.close_session(self.id))
             except Exception as exc:
                 log.exception("persistent shutdown failed")
@@ -519,6 +660,56 @@ class PersistentSession:
                 notify("■ Dictation stopped" if self.paused else "■ Persistent dictation off",
                        detail, channel="persistent", attention=self._stop_attention,
                        error=bool(failure or recovery_path))
+
+    def _finish_draft(self, failure):
+        target = self.target
+        issue = failure or target.field_issue() or ("Draft processing failed" if target.failed.is_set() else "")
+        outcome, reason = None, ""
+        action = self._draft_action
+        while not issue and target.text and not target.cancelled.is_set():
+            target.render()
+            # A prepared draft needs its editor pin and text, but no model pages.
+            self.streaming = self.vad = None
+            # Automatic stops pause here with the microphone off. A decision
+            # made while recording/processing is already set and skips waiting.
+            self.draft_waiting.set()
+            if not self._draft_decision.is_set():
+                notify("Draft ready", "Press the dictation key to accept; "
+                       f"{self.cfg.persistent.draft_cancel_key} cancels", channel="persistent", attention=True)
+            while not self._draft_decision.wait(.2):
+                target.render()
+            with self._decision_lock:
+                action = self._draft_action
+                if action == "accept":
+                    self._draft_action = ""
+                    self._draft_decision.clear()
+            self.draft_waiting.clear()
+            if action != "accept" or target.cancelled.is_set():
+                break
+            landing = target.commit(self.pipeline)
+            if landing.outcome != Outcome.REFUSED:
+                outcome, reason = landing.outcome, landing.reason
+                break
+            notify("Draft not inserted", landing.reason + "; fix the destination and accept again, "
+                   "or discard the draft", channel="persistent", attention=True)
+        if outcome is None:
+            if target.cancelled.is_set():
+                outcome, reason = Outcome.DROPPED, "Draft discarded"
+                if target.text:
+                    reason += ("; restore it with python -m voicekey --copy-last "
+                               "(also in ~/.local/state/voicekey/last-recovery.txt)")
+                    self._stop_attention = True
+            elif not issue and not target.text:
+                outcome, reason = Outcome.DROPPED, "No speech"
+            else:
+                outcome, reason = Outcome.SAVED, issue or "Draft preserved without insertion"
+        self.reason = reason or ("Draft accepted" if outcome == Outcome.CONFIRMED else "Draft finished")
+        if target.warning and outcome != Outcome.DROPPED:
+            self.reason += "; " + target.warning
+            self._stop_attention = True
+        cancelled = target.cancelled.is_set()
+        self.pipeline._save('session', lambda: self.pipeline.journal.append(self.id, 'outcome',
+            draft=True, outcome=str(outcome), reason=self.reason, cancelled=cancelled))
 
     def _pending(self):
         return any(u.session_id == self.id for u in self.pipeline.ledger.snapshots())
@@ -564,6 +755,14 @@ class PersistentSession:
         buffer.discard_before(buffer.end)
 
     def close(self):
+        if self.draft:
+            with self._decision_lock:
+                if self._draft_action != "cancel":
+                    self._draft_action = "preserve"
+                self._draft_decision.set()
         self.request_stop("daemon stopping")
+        thread = self._hotkey_thread
+        if thread is not None:
+            thread.join(.5)
         if self.thread is not None:
-            self.thread.join(max(0, self.deadline - time.monotonic()) + 2 * self.cfg.pipeline.journal_seconds + 5)
+            self.thread.join(max(0, self._drain_deadline - time.monotonic()) + 2 * self.cfg.pipeline.journal_seconds + 5)

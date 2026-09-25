@@ -241,6 +241,22 @@ class PipelineConfigTests(unittest.TestCase):
 
 
 class TapConfigTests(unittest.TestCase):
+    def test_draft_is_opt_in_with_configurable_cancel_chord(self):
+        from voicekey.config import Config, ConfigError, _validate
+        cfg = Config()
+        self.assertFalse(cfg.persistent.draft)
+        self.assertEqual(cfg.persistent.draft_cancel_key, 'KEY_ESC')
+        cfg.persistent.draft = True
+        cfg.persistent.draft_cancel_key = 'KEY_LEFTCTRL+KEY_ESC'
+        _validate(cfg)
+        cfg.persistent.draft_cancel_key = cfg.dictate_key
+        with self.assertRaisesRegex(ConfigError, 'chords must differ'):
+            _validate(cfg)
+        cfg.persistent.draft_cancel_key = 'KEY_ESC'
+        cfg.persistent.draft = 'yes'
+        with self.assertRaisesRegex(ConfigError, 'persistent.draft'):
+            _validate(cfg)
+
     def test_tap_threshold_and_batch_reservation_are_always_validated(self):
         from voicekey.config import Config, ConfigError, _validate
         for value in (0, -1, True, float('nan'), 'fast'):
