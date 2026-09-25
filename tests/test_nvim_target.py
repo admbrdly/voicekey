@@ -129,6 +129,34 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(self.mode(), 'n')
         self.assertEqual(self.cursor(), [1, 5])  # on the last inserted character, like <Esc>
 
+    def test_overlapping_pins_restore_normal_only_after_the_last_closes(self):
+        for order in ((0, 1), (1, 0)):
+            with self.subTest(order=order):
+                self.editor.lua('vim.api.nvim_buf_set_lines(0,0,-1,false,{"a b"})')
+                self.editor.lua('vim.api.nvim_win_set_cursor(0,{1,0})')
+                targets = [self.bind(), self.bind()]
+                self.assertEqual(self.cursor(), [1, 1])
+                targets[order[0]].clear()
+                self.assertEqual(self.mode(), 'i')
+                self.assertEqual(self.cursor(), [1, 1])
+                targets[order[1]].clear()
+                self.assertEqual(self.mode(), 'n')
+
+    def test_overlapping_pins_do_not_own_user_insert_mode(self):
+        for reenter in (False, True):
+            with self.subTest(reenter=reenter):
+                self.editor.lua('vim.cmd("stopinsert")')
+                if not reenter:
+                    self.editor.lua('vim.cmd("startinsert")')
+                targets = [self.bind(), self.bind()]
+                if reenter:
+                    self.editor.lua('vim.cmd("stopinsert")')
+                    self.editor.lua('vim.cmd("startinsert")')
+                targets.append(self.bind())
+                for target in targets:
+                    target.clear()
+                    self.assertEqual(self.mode(), 'i')
+
     def test_normal_mode_at_line_end_and_single_dictation_restore_normal(self):
         self.editor.lua('vim.api.nvim_buf_set_lines(0,0,-1,false,{"a b"})')
         self.editor.lua('vim.api.nvim_win_set_cursor(0,{1,2})')
@@ -155,7 +183,10 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(self.mode(), 'i')
         self.editor.lua('vim.api.nvim_set_current_buf(vim.api.nvim_create_buf(true, false))')
         self.assertEqual(self.mode(), 'i')  # the user now inserts in buffer B
+        other = self.bind()  # binding B must not inherit A's insert-mode ownership
         target.clear()
+        self.assertEqual(self.mode(), 'i')
+        other.clear()
         self.assertEqual(self.mode(), 'i')
 
     def test_mode_chosen_by_the_user_is_kept(self):

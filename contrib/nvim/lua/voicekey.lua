@@ -291,7 +291,19 @@ local function refused(reason) return { status = "refused", reason = reason } en
 -- Dictation behaves as typing: from normal mode, enter insert mode as `a` does.
 -- The switch takes effect when this request returns to the main loop.
 local function enter_insert(pin)
-  if api.nvim_get_mode().mode ~= "n" then return end
+  local mode = api.nvim_get_mode().mode
+  if mode:find("^i") or mode:find("^ni") then
+    -- A new binding in the same buffer shares the insert session we entered.
+    -- Insert mode chosen by the user has no owner and must remain theirs.
+    for _, other in pairs(pins) do
+      if other ~= pin and other.buf == pin.buf and other.restore_normal then
+        pin.restore_normal = true
+        break
+      end
+    end
+    return
+  end
+  if mode ~= "n" then return end
   local row, col = insertion_point()
   if col >= #api.nvim_get_current_line() then
     vim.cmd("startinsert!")
@@ -302,14 +314,14 @@ local function enter_insert(pin)
   pin.restore_normal = true
 end
 
--- Return to normal mode (like <Esc>) if this pin entered insert mode and the
+-- Return to normal mode (like <Esc>) if this pin owns the insert session and the
 -- user has not left it since (see the ModeChanged autocmd), its buffer is
 -- still the current one, and no other live pin also relies on it.
 local function leave_insert(pin)
   if not (pin and pin.restore_normal) then return end
   pin.restore_normal = nil
   for _, other in pairs(pins) do
-    if other ~= pin and other.restore_normal then return end
+    if other ~= pin and other.buf == pin.buf and other.restore_normal then return end
   end
   if api.nvim_get_current_buf() == pin.buf and api.nvim_get_mode().mode:find("^i") then
     vim.cmd("stopinsert")

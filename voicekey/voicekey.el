@@ -5,10 +5,10 @@
 (require 'seq)
 (require 'subr-x)
 
-(defconst voicekey--protocol-version 9)
+(defconst voicekey--protocol-version 10)
 (defvar voicekey--pins nil)
 (defvar voicekey--restore-normal nil
-  "Pin IDs whose buffer voicekey moved from Evil normal to insert state.")
+  "Pin IDs sharing the Evil insert state voicekey entered in their buffer.")
 (defvar voicekey--operations nil)
 (defvar voicekey--user-buffer nil)
 (defvar voicekey--user-marker nil)
@@ -93,16 +93,21 @@ A successful pin answers with a JSON description of the bound buffer."
 (defun voicekey--enter-insert (id buffer)
   "Dictate as if typing: from Evil normal state, enter insert state as `a' does.
 Only in an editable, non-terminal BUFFER shown in a window; visual and other
-states are left alone. `voicekey--unpin' returns ID's buffer to normal state."
+states are left alone. Overlapping pins share ownership of that insert state
+until the last one closes, unless the user leaves it first."
   (let ((window (get-buffer-window buffer t)))
-    (when (and window
-               (with-current-buffer buffer
-                 (and (eq (voicekey--state) 'normal) (not buffer-read-only) (not (minibufferp))
-                      (not (memq major-mode '(term-mode vterm-mode))))))
+    (cond
+     ((and (eq (with-current-buffer buffer (voicekey--state)) 'insert)
+           (rassq buffer voicekey--restore-normal))
+      (push (cons id buffer) voicekey--restore-normal))
+     ((and window
+           (with-current-buffer buffer
+             (and (eq (voicekey--state) 'normal) (not buffer-read-only) (not (minibufferp))
+                  (not (memq major-mode '(term-mode vterm-mode))))))
       (with-selected-window window (evil-append 1))
       (push (cons id buffer) voicekey--restore-normal)
       (with-current-buffer buffer
-        (add-hook 'evil-insert-state-exit-hook #'voicekey--insert-exited nil t)))))
+        (add-hook 'evil-insert-state-exit-hook #'voicekey--insert-exited nil t))))))
 
 (defun voicekey--insert-exited ()
   "Leaving the insert state dictation entered hands the state back to the user.
@@ -112,13 +117,13 @@ A later session end must not override a state they chose since."
   (remove-hook 'evil-insert-state-exit-hook #'voicekey--insert-exited t))
 
 (defun voicekey--leave-insert (id)
-  "Return ID's buffer to normal state if voicekey entered insert state and the
-user has not left it since (`voicekey--insert-exited' forgets the entry)."
+  "Return ID's buffer to normal state when its last owning pin closes.
+Leaving insert state first revokes ownership via `voicekey--insert-exited'."
   (let ((buffer (cdr (assoc id voicekey--restore-normal))))
     (setq voicekey--restore-normal (assoc-delete-all id voicekey--restore-normal))
     (when (and (buffer-live-p buffer)
                (eq (with-current-buffer buffer (voicekey--state)) 'insert)
-               ;; Another live session may have entered insert in this buffer.
+               ;; Every overlapping pin shares the insert state we entered.
                (not (rassq buffer voicekey--restore-normal)))
       (let ((window (get-buffer-window buffer t)))
         (if window
