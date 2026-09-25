@@ -498,6 +498,24 @@ class DraftTests(unittest.TestCase):
         self.d.command('stop')
         self.finished()
 
+    def test_sentence_split_by_a_pause_is_rejoined_in_the_draft(self):
+        class Model:
+            last_ending = None
+            calls = []
+            def polish(self, text, wait, *, app_id=None, context='', revise_end=False):
+                self.calls.append((text, context, revise_end))
+                self.last_ending = '' if context else None
+                return text
+        self.d.polisher = Model()
+        self.start()
+        self.speak('We should pop into insert mode.')
+        self.speak("when we're dictating.")
+        self.assertEqual(Model.calls[-1], ("when we're dictating.", 'We should pop into insert mode.', True))
+        self.assertEqual(self.s.target.text, "We should pop into insert mode when we're dictating.")
+        self.d.command('stop')
+        self.finished()
+        self.assertEqual(self.editor.inserted, ["We should pop into insert mode when we're dictating."])
+
     def test_model_failure_appends_the_new_chunk_raw(self):
         self.d.polisher = Mock(polish=Mock(side_effect=['First.', RuntimeError('unavailable')]))
         self.start()

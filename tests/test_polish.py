@@ -83,6 +83,26 @@ class ContextTests(unittest.TestCase):
         p = self.polisher("I'd like to go shopping.")
         self.assertIsNone(p.polish('Go shopping.', 1, context="I'd like to."))
 
+    def test_draft_may_rejoin_a_sentence_by_changing_only_the_contexts_final_mark(self):
+        context = "It's possible we should pop into insert mode."
+        for reply, ending in ((context[:-1] + " when we're doing dictation.", ''),
+                              (context[:-1] + ", when we're doing dictation.", ',')):
+            p = self.polisher(reply)
+            self.assertEqual(p.polish("when we're doing dictation.", 1, context=context, revise_end=True),
+                             "when we're doing dictation.")
+            self.assertEqual(p.last_ending, ending)
+            # Ordinary dictation's context is already in the buffer: read-only.
+            self.assertIsNone(p.polish("when we're doing dictation.", 1, context=context))
+        for reply in ("It's possible we should pop into normal mode when dictating.",
+                      context[:-1] + "! when dictating.", context[:-1] + "when dictating.",
+                      context[:-1]):
+            p = self.polisher(reply)
+            self.assertIsNone(p.polish('when dictating.', 1, context=context, revise_end=True))
+            self.assertIn('context', p.last_reason)
+        p = self.polisher(context + ' When dictating.')
+        self.assertEqual(p.polish('When dictating.', 1, context=context, revise_end=True), 'When dictating.')
+        self.assertIsNone(p.last_ending)
+
     def test_words_copied_from_context_into_suffix_are_rejected(self):
         p = self.polisher('Send it to Ethan. Tomorrow Ethan.')
         self.assertIsNone(p.polish('Tomorrow.', 1, context='Send it to Ethan.'))

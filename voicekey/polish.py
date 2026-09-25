@@ -199,20 +199,33 @@ def context_tail(text: str) -> str:
     return text[start:].strip()
 
 
-def current_reply(reply: Reply, context: str, raw: str) -> Reply:
-    """Enforce a read-only prefix; only the new suffix can reach insertion."""
+def current_reply(reply: Reply, context: str, raw: str, *, revise_end: bool = False) -> tuple[Reply, str | None]:
+    """Enforce a read-only prefix; only the new suffix can reach insertion.
+
+    With REVISE_END (drafts, whose context is not yet in the buffer), the one
+    permitted change to the context is joining a sentence that a pause split:
+    its final . ! or ? may become nothing or , ; : —. The second value is that
+    replacement, or None when the context was kept verbatim.
+    """
     output = reply.text.strip()
-    if not output.startswith(context):
+    ending = None
+    if output.startswith(context):
+        suffix = output[len(context):]
+        if not suffix or not suffix[0].isspace():
+            raise PolishError("previous context boundary changed")
+    elif revise_end and context[-1:] in ".!?" and output.startswith(context[:-1]):
+        joined = re.match(r"([,;:—]?)(\s+\S.*)", output[len(context) - 1:], re.S)
+        if joined is None:
+            raise PolishError("previous context changed")
+        ending, suffix = joined.group(1), joined.group(2)
+    else:
         raise PolishError("previous context changed")
-    suffix = output[len(context):]
-    if not suffix or not suffix[0].isspace():
-        raise PolishError("previous context boundary changed")
     allowed = set(words(raw))
     for word in list(allowed):
         allowed.update(EXPANSIONS.get(word, "").split())
     if set(words(suffix)) & (set(words(context)) - allowed):
         raise PolishError("previous context leaked into new text")
-    return Reply(suffix.strip(), reply.complete)
+    return Reply(suffix.strip(), reply.complete), ending
 
 
 def load_prompt(path: str) -> str:
@@ -305,9 +318,15 @@ class Polisher:
         self.app_styles = dict(app_styles or {})
         self._slot = Slot("polish-request")
         self.last_reason = "not run"
+        self.last_ending = None  # see current_reply(revise_end=True)
 
-    def polish(self, text: str, wait: float, *, app_id: str | None = None, context: str = "") -> str | None:
-        """Cleaned text or None for raw fallback, within the caller's wait."""
+    def polish(self, text: str, wait: float, *, app_id: str | None = None, context: str = "",
+               revise_end: bool = False) -> str | None:
+        """Cleaned text or None for raw fallback, within the caller's wait.
+
+        After a success, ``last_ending`` is the replacement for the context's
+        final punctuation when REVISE_END allowed the model to change it."""
+        self.last_ending = None
         style = self.app_styles.get(app_id)
         context = context_tail(context)
         combined = context + " " + text if context else text
@@ -319,8 +338,9 @@ class Polisher:
                 lambda: self.backend.chat(system, user, max_tokens_for(combined), timeout),
                 started + timeout,
             )
+            ending = None
             if context:
-                reply = current_reply(reply, context, text)
+                reply, ending = current_reply(reply, context, text, revise_end=revise_end)
         except (WorkBusy, WorkTimeout):
             self.last_reason = "request busy or deadline expired"
             log.warning("polish skipped: request busy or deadline expired")
@@ -340,6 +360,7 @@ class Polisher:
             return None
         cleaned = reply.text.strip()
         self.last_reason = "applied"
+        self.last_ending = ending
         log.info("polished %d -> %d chars in %.2fs", len(text), len(cleaned),
                  time.monotonic() - started)
         return cleaned

@@ -147,10 +147,15 @@ class DraftTarget(SessionTarget):
                     try:
                         cleaned = pipeline._slots['polish'].call(
                             lambda: model.polish(job.raw, max(0, deadline - time.monotonic()), app_id=job.target.app_id,
-                                                 **({"context": context} if context else {})),
+                                                 **({"context": context, "revise_end": True} if context else {})),
                             deadline)
                         if isinstance(cleaned, str) and cleaned.strip() and len(cleaned.encode()) <= MAX_DRAFT_BYTES:
                             chunk, reason = cleaned, "applied"
+                            # Nothing is inserted yet, so a sentence split by a
+                            # pause may be rejoined: only its final mark changes.
+                            ending = getattr(model, "last_ending", None)
+                            if isinstance(ending, str) and text[-1:] in ".!?":
+                                text, reason = text[:-1] + ending, "applied; rejoined the previous sentence"
                         else:
                             last = getattr(model, "last_reason", None)
                             reason = f"raw fallback: {last if isinstance(last, str) else 'model unavailable or output rejected'}"
