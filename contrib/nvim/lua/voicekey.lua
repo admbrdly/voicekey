@@ -19,12 +19,16 @@ local voicekey_python = vim.fn.expand("~/.local/share/voicekey/venv/bin/python")
 
 local config = {
   -- Client of the running daemon: prints "Recording;" on stderr once the
-  -- microphone is live, "Transcribing;" when it stops, finishes on SIGINT,
-  -- cancels on SIGTERM, and writes
-  -- the transcript to stdout. The daemon's configuration applies.
-  cmd = { voicekey_python, "-m", "voicekey", "--capture-to-stdout", "--client-name", "Neovim" },
+  -- microphone is live, "Transcribing;" when it stops, and with --preview
+  -- `Preview; "<json string>"` for each live revision. It finishes on SIGINT,
+  -- cancels on SIGTERM, and writes the final transcript to stdout. The
+  -- daemon's configuration applies.
+  cmd = { voicekey_python, "-m", "voicekey", "--capture-to-stdout", "--client-name", "Neovim", "--preview" },
   -- Show the recording state as inline virtual text at the insertion point.
   marker = true,
+  -- Show the live transcript there as you speak (virtual text, not buffer
+  -- text); the final transcript replaces it.
+  preview = true,
   -- Add a space between the transcript and adjacent words.
   spacing = true,
   notify = true,
@@ -51,17 +55,31 @@ local function notify(msg, level)
   end
 end
 
+local function define_highlights()
+  api.nvim_set_hl(0, "VoiceKeyPreview", { link = "Comment", default = true })
+end
+define_highlights()
+
+local spaced
+
 local function place(capture, row, col)
   local opts = { id = capture.mark, right_gravity = true }
-  if config.marker then
+  if config.preview and capture.preview then
+    -- The final text is inserted as lines; the preview stays on this line.
+    local text = spaced(capture.buf, row, col, capture.preview:gsub("%s*\n%s*", " "))
+    if capture.state == "transcribing" then
+      text = text .. " …"
+    end
+    opts.virt_text = { { text, "VoiceKeyPreview" } }
+    opts.virt_text_pos = "inline"
+  elseif config.marker then
     opts.virt_text = { { labels[capture.state], "Comment" } }
     opts.virt_text_pos = "inline"
   end
   capture.mark = api.nvim_buf_set_extmark(capture.buf, ns, row, col, opts)
 end
 
-local function set_state(capture, state)
-  capture.state = state
+local function redraw(capture)
   if not api.nvim_buf_is_valid(capture.buf) then
     return
   end
@@ -69,7 +87,42 @@ local function set_state(capture, state)
   if #pos > 0 then
     place(capture, pos[1], pos[2])
   end
+end
+
+local function set_state(capture, state)
+  capture.state = state
+  redraw(capture)
   vim.cmd.redrawstatus()
+end
+
+local function set_preview(capture, text)
+  if type(text) ~= "string" then
+    return
+  end
+  text = vim.trim((text:gsub("[%z\1-\8\11-\31\127]", "")))
+  if text ~= "" and text ~= capture.preview then
+    capture.preview = text
+    redraw(capture)
+  end
+end
+
+-- One stderr line from the capture command, on the main loop.
+local function progress(capture, line)
+  if active ~= capture then
+    return
+  end
+  if line:find("^Preview; ") then
+    local ok, text = pcall(vim.json.decode, line:sub(10))
+    if ok then
+      set_preview(capture, text)
+    end
+  elseif line:find("Transcribing;", 1, true) then
+    if capture.state ~= "transcribing" then
+      set_state(capture, "transcribing")
+    end
+  elseif line:find("Recording;", 1, true) and capture.state == "loading" then
+    set_state(capture, "recording")
+  end
 end
 
 -- Normal mode inserts after the cursor character, like `a`; insert mode at the cursor.
@@ -90,7 +143,7 @@ local function prepare(text)
   return text
 end
 
-local function spaced(buf, row, col, text)
+function spaced(buf, row, col, text)
   if not config.spacing then
     return text
   end
@@ -175,24 +228,28 @@ function M.start()
     notify("buffer is not modifiable", vim.log.levels.WARN)
     return
   end
-  local capture = { buf = buf, state = "loading", stderr = "" }
+  -- stderr keeps non-preview lines for failure warnings; partial holds an unfinished line.
+  local capture = { buf = buf, state = "loading", stderr = "", partial = "" }
   place(capture, insertion_point())
   active = capture
   local ok, proc = pcall(vim.system, config.cmd, {
     text = true,
-    -- A stderr callback means vim.system does not collect stderr itself:
-    -- Keep it for failure warnings and progress markers, including markers
-    -- split across reads or an external stop followed by slow transcription.
+    -- A stderr callback means vim.system does not collect stderr itself.
+    -- Handle whole lines, since markers can be split across reads; keep all
+    -- but previews for failure warnings.
     stderr = function(_, data)
-      capture.stderr = capture.stderr .. (data or "")
-      local transcribing = capture.stderr:find("Transcribing;", 1, true)
-      if transcribing or capture.stderr:find("Recording;", 1, true) then
+      local chunk = capture.partial .. (data or "\n")
+      local lines = vim.split(chunk, "\n", { plain = true })
+      capture.partial = table.remove(lines)
+      for _, line in ipairs(lines) do
+        if not line:find("^Preview; ") then
+          capture.stderr = capture.stderr .. line .. "\n"
+        end
+      end
+      if #lines > 0 then
         vim.schedule(function()
-          if active ~= capture then return end
-          if transcribing and capture.state ~= "transcribing" then
-            set_state(capture, "transcribing")
-          elseif capture.state == "loading" then
-            set_state(capture, "recording")
+          for _, line in ipairs(lines) do
+            progress(capture, line)
           end
         end)
       end
@@ -252,9 +309,12 @@ function M.setup(opts)
   end
 end
 
+local group = api.nvim_create_augroup("voicekey", { clear = true })
+api.nvim_create_autocmd("ColorScheme", { group = group, callback = define_highlights })
+
 -- Never leave the microphone recording after Neovim exits.
 api.nvim_create_autocmd("VimLeavePre", {
-  group = api.nvim_create_augroup("voicekey", { clear = true }),
+  group = group,
   callback = function()
     if active then
       active.cancelled = true

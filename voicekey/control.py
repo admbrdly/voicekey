@@ -16,7 +16,7 @@ import threading
 import time
 
 PROTOCOL_VERSION = 1
-CAPABILITIES = ['capture-client-name']
+CAPABILITIES = ['capture-client-name', 'capture-preview']
 CAPTURE_COMMANDS = ('capture-start', 'capture-finish', 'capture-cancel')
 COMMANDS = ('status', 'start', 'start-typing', 'stop', 'pause-on-switch', 'follow-focus', 'pin', 'free-memory') + CAPTURE_COMMANDS
 

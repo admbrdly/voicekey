@@ -16,17 +16,20 @@ class ClientTarget(Target):
     kind = "client"
     clipboard_fallback = False
 
-    def __init__(self, control, client, request_id, capture_id, client_name=""):
+    def __init__(self, control, client, request_id, capture_id, client_name="", preview=False):
         super().__init__(None, Window(None, False), None)
         self.control, self.client = control, client
         self.request_id, self.capture_id = request_id, capture_id
         self.client_name = client_name
+        self.preview_requested = preview
         self._result_lock = threading.Lock()
         self.terminal = False
         self.discarded = False
 
     def show(self, text):
-        pass
+        # Live and raw transcripts, for clients that asked; the result is still final.
+        if self.preview_requested and not self.cancelled.is_set():
+            self.progress('preview', text=text)
 
     def clear(self):
         pass
@@ -85,7 +88,7 @@ class ClientTarget(Target):
 class ClientCapture:
     @staticmethod
     def arguments(args, cfg):
-        if set(args) - {'seconds', 'wav', 'client_name'}:
+        if set(args) - {'seconds', 'wav', 'client_name', 'preview'}:
             raise ValueError("Unknown capture-start argument")
         seconds = args.get('seconds', cfg.max_seconds)
         if (isinstance(seconds, bool) or not isinstance(seconds, (int, float))
@@ -98,13 +101,17 @@ class ClientCapture:
         if 'client_name' in args and (not isinstance(client_name, str) or not client_name
                 or len(client_name) > 80 or not client_name.isprintable() or client_name != client_name.strip()):
             raise ValueError("client_name must be 1–80 printable characters without surrounding whitespace")
-        return min(seconds, cfg.max_seconds), wav, client_name
+        preview = args.get('preview', False)
+        if not isinstance(preview, bool):
+            raise ValueError("preview must be a boolean")
+        return min(seconds, cfg.max_seconds), wav, client_name, preview
 
-    def __init__(self, daemon, client, request_id, identity, seconds, wav, client_name=""):
+    def __init__(self, daemon, client, request_id, identity, seconds, wav, client_name="", preview=False):
         self.daemon = daemon
         self.id, self.client, self.seconds = identity, client, seconds
         self.session = Session('dictate', 'client', frozenset(), 'client', identity=identity)
-        self.session.target = self.target = ClientTarget(daemon.control, client, request_id, identity, client_name)
+        self.session.target = self.target = ClientTarget(
+            daemon.control, client, request_id, identity, client_name, preview)
         # A client has no ageing window binding. Include finalization and text
         # processing in addition to the configured recognition budget.
         self.session.processing_seconds = (daemon.cfg.pipeline.transcription_seconds
@@ -139,6 +146,17 @@ class ClientCapture:
         self.target.fail('no_speech' if outcome == 'dropped' else 'capture_failed',
                          reason or ('No speech recognized' if outcome == 'dropped' else str(outcome)))
 
+    def _attach_live_decoder(self):
+        # Same rule as desktop dictation: never share a decoder that is still running.
+        # Models still loading means no streaming recognizer yet, so no preview.
+        daemon = self.daemon
+        if not self.target.preview_requested or daemon.streaming is None:
+            return
+        if daemon._live_session is not None and daemon._live_session.stuck:
+            return
+        self.session.attach(daemon.streaming.session)
+        daemon._live_session = self.session
+
     def tick(self):
         if not self.started and not self.session.discard:
             self.started = True
@@ -146,6 +164,7 @@ class ClientCapture:
                 if self.daemon.model_state == 'loading':
                     self.target.progress('loading')
                 self.recorder.max_samples = int(self.seconds * 16000)
+                self._attach_live_decoder()
                 self.recorder.start(self.session.feed)
                 self.target.progress('recording', models=self.daemon.model_state)
             except Exception as exc:

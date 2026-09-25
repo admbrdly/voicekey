@@ -48,11 +48,21 @@ recording. `:VoiceKey start`, `stop` and `toggle` are also available.
 - The transcript lands where the cursor was when recording started: after
   the cursor character in normal mode, like `a`, and at the cursor in insert
   mode. You can move or edit elsewhere while speaking.
-- An inline marker shows `loading`, `recording`, then `transcribing` at that
-  point. Wait for `recording` before speaking: after **Free memory** the
-  daemon reloads its models in the background, and recording can begin while
-  they load. The marker also switches to `transcribing` after an external stop
-  or the recording limit, before the transcript arrives.
+- Your words appear at that point as you speak, as dimmed virtual text
+  (highlight `VoiceKeyPreview`, linked to `Comment`). This is a live draft
+  from the daemon's streaming recognizer: it revises itself as you talk, and
+  a trailing `…` means recording stopped and the final text is being prepared.
+  The buffer is not touched until the final transcript arrives and replaces the
+  draft, so there is one undo step and no churn for LSP or autocommands. The
+  final text is recognized again from the whole recording and polished, so it
+  can differ from the draft.
+- Before the first words (and with `preview = false`) an inline marker shows
+  `loading`, `recording`, then `transcribing`. Wait for `recording` before
+  speaking: after **Free memory** the daemon reloads its models in the
+  background, and recording can begin while they load. A capture that starts
+  while models are loading has no live draft, only the final text. The marker
+  also switches to `transcribing` after an external stop or the recording
+  limit, before the transcript arrives.
 - A space is added next to adjacent words. Paragraph breaks become lines;
   other control characters are removed.
 - Recording stops by itself after the daemon's `max_seconds` (90 s by
@@ -70,8 +80,9 @@ recording. `:VoiceKey start`, `stop` and `toggle` are also available.
 ```
 
 The default command labels its destination **Neovim** in the DMS widget.
-Restart the daemon after upgrading to enable client labels; older daemons with
-capture support still work, with a generic status label. This is a display name,
+Restart the daemon after upgrading to enable client labels and live drafts;
+older daemons with capture support still work, with a generic status label and
+only the final text. This is a display name,
 not a change to the daemon's default polish style.
 
 ## One keybinding for Neovim and everything else
@@ -118,9 +129,11 @@ key finishes that capture instead of starting desktop dictation.
 ```lua
 require("voicekey").setup({
   -- A client that records until SIGINT, cancels on SIGTERM, prints the
-  -- transcript to stdout and "Recording;" / "Transcribing;" on stderr. The daemon's
-  -- configuration applies; --config is not accepted.
-  cmd = { vim.fn.expand("~/.local/share/voicekey/venv/bin/python"), "-m", "voicekey", "--capture-to-stdout", "--client-name", "Neovim" },
+  -- transcript to stdout and "Recording;" / "Transcribing;" / `Preview; "<json>"`
+  -- on stderr. The daemon's configuration applies; --config is not accepted.
+  cmd = { vim.fn.expand("~/.local/share/voicekey/venv/bin/python"), "-m", "voicekey",
+          "--capture-to-stdout", "--client-name", "Neovim", "--preview" },
+  preview = true,  -- live draft at the insertion point while you speak
   marker = true,   -- inline status at the insertion point
   spacing = true,  -- separate the transcript from adjacent words
   notify = true,   -- informational messages; warnings always show

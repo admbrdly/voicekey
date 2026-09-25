@@ -10,6 +10,9 @@ import threading
 import unittest
 import wave
 from unittest.mock import patch
+import unittest.mock
+
+import numpy as np
 
 from voicekey import stdout
 from tests.test_client_capture import CaptureHarness
@@ -113,6 +116,45 @@ class StdoutTests(CaptureHarness):
             self.assertEqual(stdout.capture(seconds=.1, path=self.path, client_name='Neovim'), 0)
             start = next(call for call in command.call_args_list if call.args[0] == 'capture-start')
             self.assertNotIn('client_name', start.kwargs['args'])
+
+    def test_preview_lines_go_to_stderr_and_stdout_keeps_only_the_final_text(self):
+        class Stream:
+            def feed(self, frame):
+                return 'Hello\nfrom "live"'
+            def finish(self):
+                return 'Hello\nfrom "live"'
+        self.daemon.streaming = unittest.mock.Mock(session=Stream)
+        original = self.daemon.command
+        def command(name, **kwargs):
+            result = original(name, **kwargs)
+            if name == 'capture-start':
+                self.daemon.client_capture.tick()
+                self.daemon.client_capture.recorder.on_frame(np.zeros(512, dtype=np.float32))
+            return result
+        output, errors = io.StringIO(), io.StringIO()
+        with patch.object(self.daemon, 'command', side_effect=command), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            self.controller()
+            self.assertEqual(stdout.capture(seconds=.1, path=self.path, preview=True), 0)
+        self.assertEqual(output.getvalue(), 'Hello from the daemon.')
+        previews = [line for line in errors.getvalue().splitlines() if line.startswith('Preview; ')]
+        self.assertTrue(previews, errors.getvalue())
+        self.assertEqual(json.loads(previews[0][len('Preview; '):]), 'Hello\nfrom "live"')
+
+    def test_preview_is_not_requested_from_daemons_without_the_capability(self):
+        with patch('voicekey.control.CAPABILITIES', ['capture-client-name']), \
+                patch.object(self.daemon, 'command', wraps=self.daemon.command) as command, \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.controller()
+            self.assertEqual(stdout.capture(seconds=.1, path=self.path, preview=True), 0)
+            start = next(call for call in command.call_args_list if call.args[0] == 'capture-start')
+            self.assertNotIn('preview', start.kwargs['args'])
+
+    def test_preview_flag_requires_capture_to_stdout(self):
+        result = subprocess.run([sys.executable, '-m', 'voicekey', '--preview', '--last'],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('--preview requires --capture-to-stdout', result.stderr)
 
     def test_cli_no_models_imported_and_no_config_required(self):
         self.controller()

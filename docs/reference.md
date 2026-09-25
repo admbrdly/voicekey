@@ -335,6 +335,15 @@ in daemon status and the DMS widget. This is display metadata only: it does not
 select a window or change polish styles. The CLI sends the name only when the
 daemon advertises support, so older version-1 daemons remain usable until restart.
 
+`--preview` adds the daemon's live transcript on stderr while you speak, one
+flushed line per revision: `Preview; "<JSON string>"`. Each line replaces the
+previous one. After recording stops, a last line may carry the full raw
+transcript while the polisher runs. Previews are drafts: stdout still receives
+only the final prepared text, which can differ. Previews need the daemon's
+streaming recognizer; while models are still loading, or while an earlier live
+decoder is still running, the capture runs without them. As with
+`--client-name`, the option is sent only to daemons that advertise it.
+
 Transcripts use the daemon's normal `~/.local/state/voicekey/sessions` journal
 (respecting `XDG_STATE_HOME`), so `--last` and `--copy-last` recover undelivered
 client text. Disconnecting finishes and preserves the recording. Explicit
@@ -617,7 +626,8 @@ capture IDs. Ignore extra fields and unrelated status messages for forward
 compatibility; reject an unsupported protocol version.
 
 `capabilities` lists optional protocol extensions (treat an absent field as an
-empty list). `capture-client-name` permits `capture-start.args.client_name`.
+empty list). `capture-client-name` permits `capture-start.args.client_name`;
+`capture-preview` permits `capture-start.args.preview`.
 For an active client capture, `destination_name` is that supplied label, or
 `Client` when unnamed; `destination` describes the socket client. Desktop
 captures retain their actual window destination, such as Ghostty. A client label
@@ -651,6 +661,11 @@ A complete capture exchange looks like this (angle brackets mark example IDs):
   When `capture-client-name` is advertised, optional `client_name` supplies a
   display label of 1–80 printable characters, with no surrounding whitespace.
   It does not set the polish app ID or alter microphone arbitration/delivery.
+  When `capture-preview` is advertised, `preview: true` attaches the live
+  decoder and emits `{"type":"capture-progress",...,"state":"preview","text":"..."}`
+  for each revision of the live transcript, and for the raw transcript before
+  polishing. Previews are best effort and never terminal; only
+  `capture-result.text` is the prepared result.
   Unknown arguments are refused. The reply admits the capture and assigns its
   opaque `capture_id`; recording starts immediately afterward. A failure to open
   the recorder is a final error event. Only one capture is admitted at a time.

@@ -543,7 +543,7 @@ class Daemon:
             if client is None or self.control is None:
                 raise ValueError("Capture commands require a persistent control connection")
             if command == "capture-start":
-                seconds, wav, client_name = ClientCapture.arguments(args, self.cfg)
+                seconds, wav, client_name, preview = ClientCapture.arguments(args, self.cfg)
                 if self.client_capture is not None or self.persistent is not None or self.session is not None:
                     raise ValueError("Microphone busy: finish the current capture first")
                 if self.pipeline.ledger.busy:
@@ -552,7 +552,8 @@ class Daemon:
                 identity = self.pipeline.admit(audio_seconds=seconds, gated=False)
                 if identity is None:
                     raise ValueError("Capture unavailable: pending work or recovery storage is full")
-                self.client_capture = ClientCapture(self, client, request_id, identity, seconds, wav, client_name)
+                self.client_capture = ClientCapture(self, client, request_id, identity, seconds, wav,
+                                                   client_name, preview)
                 return {"capture_id": identity}
             capture = self.client_capture
             if set(args) != {'capture_id'} or not isinstance(args['capture_id'], str):
