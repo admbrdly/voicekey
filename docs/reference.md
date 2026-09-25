@@ -597,6 +597,8 @@ never resume without another start. Muted or missing microphones show a warning.
 start/stop controls and the three destination choices; keyboard gestures stay unchanged.
 Policy choices are available while idle or paused and last until the daemon restarts.
 For a permanent default, set `[persistent] destination_policy` in your Voicekey config.
+Window policies do not distinguish tabs or panes inside one window; losing an
+input-method field activation also pauses dictation.
 
 `./install.sh` links the widget when DMS is installed and enables it if DMS is
 running. Rerun it after upgrading to add the widget to an existing installation.
