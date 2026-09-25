@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from evdev import ecodes
+import numpy as np
 
 from voicekey.control import ControlServer
 from voicekey.config import Config
@@ -131,7 +132,8 @@ class ClientCaptureTests(CaptureHarness):
         for args in ({'seconds': 0}, {'seconds': True}, {'seconds': float('inf')},
                      {'seconds': '10'}, {'wav': 'relative.wav'}, {'unknown': 1},
                      {'client_name': ''}, {'client_name': None}, {'client_name': 42},
-                     {'client_name': 'a' * 81}, {'client_name': 'bad\nlabel'}, {'client_name': ' Neovim '}):
+                     {'client_name': 'a' * 81}, {'client_name': 'bad\nlabel'}, {'client_name': ' Neovim '},
+                     {'preview': 1}, {'preview': 'yes'}):
             self.assertIsNotNone(self.send(client, stream, 'capture-start', args)['error'])
             self.assertIsNone(self.daemon.client_capture)
         identity = self.start(client, stream)
@@ -156,6 +158,62 @@ class ClientCaptureTests(CaptureHarness):
         self.assertEqual(self.read(stream, 'capture-result')['text'], 'Hello from the daemon.')
         self.settle()
         self.assertEqual(self.daemon.status()['destination_name'], '')
+
+    def live_stream(self):
+        class Stream:
+            words = iter(['Hello', 'Hello from'])
+            def feed(self, frame):
+                return next(self.words, 'Hello from')
+            def finish(self):
+                return 'Hello from the'
+        self.daemon.streaming = Mock(session=Stream)
+
+    def test_preview_forwards_live_and_raw_text_before_the_final_result(self):
+        self.live_stream()
+        self.daemon.polisher = Mock(polish=Mock(return_value='Hello from the daemon, polished.'))
+        self.daemon.cfg.polish.min_words = 1
+        client, stream = self.connect()
+        identity = self.start(client, stream, preview=True)
+        self.assertEqual(self.read(stream, 'capture-progress')['state'], 'recording')
+        recorder = self.daemon.client_capture.recorder
+        for _ in range(2):
+            recorder.on_frame(np.zeros(512, dtype=np.float32))
+        previews = []
+        while len(previews) < 2:
+            event = self.read(stream, 'capture-progress')
+            if event['state'] == 'preview':
+                previews.append(event['text'])
+        self.assertEqual(previews, ['Hello', 'Hello from'])
+        self.send(client, stream, 'capture-finish', {'capture_id': identity})
+        result = self.read(stream, 'capture-result')
+        tail = [e.get('text') for e in self.events if e['type'] == 'capture-progress' and e['state'] == 'preview']
+        self.assertEqual(tail[2:], ['Hello from the', 'Hello from the daemon.'],
+                         'finished live text, then the raw transcript while polishing')
+        self.assertTrue(all(e.get('capture_id') == identity for e in self.events if e['type'] == 'capture-progress'))
+        self.assertEqual(result['text'], 'Hello from the daemon, polished.')
+        self.settle()
+
+    def test_preview_is_opt_in(self):
+        self.live_stream()
+        client, stream = self.connect()
+        identity = self.start(client, stream)
+        self.read(stream, 'capture-progress')
+        self.assertIsNone(self.daemon.client_capture.session.decoder)
+        self.send(client, stream, 'capture-finish', {'capture_id': identity})
+        self.read(stream, 'capture-result')
+        self.assertNotIn('preview', [e.get('state') for e in self.events])
+        self.settle()
+
+    def test_preview_skips_a_live_decoder_that_is_still_running(self):
+        self.live_stream()
+        self.daemon._live_session = Mock(stuck=True)
+        client, stream = self.connect()
+        identity = self.start(client, stream, preview=True)
+        self.read(stream, 'capture-progress')
+        self.assertIsNone(self.daemon.client_capture.session.decoder)
+        self.send(client, stream, 'capture-finish', {'capture_id': identity})
+        self.assertEqual(self.read(stream, 'capture-result')['text'], 'Hello from the daemon.')
+        self.settle()
 
     def test_refused_while_listening_and_desktop_refused_during_client_capture(self):
         client, stream = self.connect()

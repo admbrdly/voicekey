@@ -49,7 +49,9 @@ Normal-mode pins start after the cursor character; insert-mode pins start at it.
 Selections and pending operators are refused when acquiring a pin.
 
 Live and provisional Neovim text appears as inline virtual text at the pin,
-not Wayland preedit. A commit clears that preview and advances the mark; the
+not Wayland preedit. Pins and `:VoiceKey` captures share one renderer: a draft
+is spaced like its final insertion and drawn with `VoiceKeyPreview`, and an
+empty preview clears the draft and the pin's listening label. A commit clears that preview and advances the mark; the
 session renderer then shows any pending tail. Closed, unloaded or unmodifiable
 buffers refuse insertion. No failure of a bound Neovim becomes terminal typing.
 

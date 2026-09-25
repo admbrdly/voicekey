@@ -19,6 +19,8 @@ vim.fn.writefile({
   'trap \'printf "%b" "$VK_TEXT"; exit "${VK_EXIT:-0}"\' INT',
   "trap 'exit 130' TERM",
   'echo "Recording; Ctrl-C finishes, SIGTERM cancels." >&2',
+  -- VK_PREVIEW: live revisions, one JSON string per line, the last split across writes.
+  'if [ -n "$VK_PREVIEW" ]; then printf "%s\\n" "$VK_PREVIEW" >&2; printf "Preview; \\"live wo" >&2; sleep .02; printf "rds\\"\\n" >&2; fi',
   -- VK_STOP_FILE: something else (a global stop) finishes the capture.
   'while :; do if [ -n "$VK_STOP_FILE" ] && [ -e "$VK_STOP_FILE" ]; then',
   -- Split the progress marker across writes, then wait for the test to allow delivery.
@@ -227,6 +229,87 @@ tests["deleted buffer is reported, not an error"] = function()
   assert(messages[#messages]:find(vim.fn.expand("~/.local/share/voicekey/venv/bin/python"), 1, true),
     "recovery uses the installed interpreter")
   assert(messages[#messages]:find(" -m voicekey --last", 1, true), "recovery goes through the daemon journal")
+end
+
+local function marker_text()
+  local marks = api.nvim_buf_get_extmarks(0, -1, 0, -1, { details = true })
+  local chunks = marks[1] and marks[1][4].virt_text or {}
+  return table.concat(vim.tbl_map(function(chunk) return chunk[1] end, chunks))
+end
+
+tests["live preview shows as virtual text and the final transcript replaces it"] = function()
+  buffer({ "Kant argued this." }, 1, 11)
+  vim.env.VK_PREVIEW = 'Preview; "first\\nguess"'
+  local seen = {}
+  local ok, err = pcall(dictate, "famously", { during = function()
+    wait(function()
+      local text = marker_text()
+      if seen[#seen] ~= text then table.insert(seen, text) end
+      return text == "live words "
+    end, "latest preview")
+  end })
+  vim.env.VK_PREVIEW = nil
+  assert(ok, err)
+  assert(vim.tbl_contains(seen, "first ↵ guess "), "multi-line preview is shown on one line: " .. vim.inspect(seen))
+  assert(lines()[1] == "Kant argued famously this.", lines()[1])
+  assert(#api.nvim_buf_get_extmarks(0, -1, 0, -1, {}) == 0, "preview removed")
+end
+
+tests["preview never edits the buffer and cancel leaves nothing"] = function()
+  buffer({ "unchanged" }, 1, 0)
+  vim.env.VK_PREVIEW = 'Preview; "draft"'
+  local ok, err = pcall(dictate, "ignored", { cancel = true, during = function()
+    -- Spaced like the final text: after "u", before "n".
+    wait(function() return marker_text() == " live words " end, "preview")
+    assert(vim.deep_equal(lines(), { "unchanged" }), vim.inspect(lines()))
+  end })
+  vim.env.VK_PREVIEW = nil
+  assert(ok, err)
+  assert(vim.deep_equal(lines(), { "unchanged" }), vim.inspect(lines()))
+  assert(#api.nvim_buf_get_extmarks(0, -1, 0, -1, {}) == 0)
+end
+
+tests["preview can be turned off"] = function()
+  voicekey.setup({ preview = false })
+  buffer({ "" }, 1, 0)
+  vim.env.VK_PREVIEW = 'Preview; "draft"'
+  local ok, err = pcall(dictate, "done", { during = function()
+    vim.wait(100)
+    assert(marker_text() == "[voicekey: recording]", marker_text())
+  end })
+  vim.env.VK_PREVIEW = nil
+  voicekey.setup({ preview = true })
+  assert(ok, err)
+  assert(lines()[1] == "done", lines()[1])
+end
+
+tests["daemon pins and :VoiceKey share one draft renderer"] = function()
+  local function rpc(method, args)
+    return vim.json.decode(voicekey.rpc(vim.json.encode({
+      method = method, args = args, expires = os.time() + 60 })))
+  end
+  buffer({ "Kant argued this." }, 1, 11)
+  vim.g.voicekey_focused = true
+  voicekey.setup({ preview = false })  -- governs :VoiceKey drafts only
+  local ok, err = pcall(function()
+    assert(rpc("pin", { id = "p" }).status == "ok")
+    assert(marker_text() == "[voicekey: listening]", marker_text())
+    assert(rpc("preview", { id = "p", text = "first\nguess" }).status == "ok")
+    assert(marker_text() == "first ↵ guess ", marker_text())
+    assert(rpc("preview", { id = "p", text = "" }).status == "ok")
+    assert(marker_text() == "", "empty preview clears draft and label: " .. marker_text())
+    -- While a pin is open, a :VoiceKey capture keeps its own mark and state.
+    buffer({ "" }, 1, 0)
+    voicekey.start()
+    wait(function() return voicekey.status() == "recording" end, "recording")
+    assert(marker_text() == "[voicekey: recording]", marker_text())
+    voicekey.cancel()
+    wait(function() return voicekey.status() == nil end, "cancel")
+  end)
+  rpc("unpin", { id = "p" })
+  vim.g.voicekey_focused = nil
+  voicekey.setup({ preview = true })
+  assert(ok, err)
 end
 
 tests["unmodifiable buffer is refused before recording"] = function()
