@@ -230,7 +230,8 @@ class ClientCaptureTests(CaptureHarness):
             self.assertIsNotNone(self.send(client, stream, command)['error'])
         with patch.object(self.daemon, '_start_persistent') as persistent, patch.object(self.daemon, '_start') as hold:
             with patch('voicekey.daemon.notify') as notify:
-                self.daemon._on_key('keyboard', ecodes.KEY_F10, 1)
+                self.daemon._on_key('keyboard', ecodes.KEY_RIGHTALT, 1)
+                self.daemon._on_key('keyboard', ecodes.KEY_RIGHTMETA, 1)
                 notify.assert_called_once()
             self.assertTrue(self.daemon.client_capture.listening)
             persistent.assert_not_called()

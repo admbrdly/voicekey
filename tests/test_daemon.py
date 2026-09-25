@@ -126,14 +126,13 @@ class ControllerTests(unittest.TestCase):
         self.done()
 
     def test_chord_dispatch_selects_longest_match(self):
-        self.daemon.actions = {frozenset({ecodes.KEY_F23}): ('dictate', 'hold'),
-                               frozenset({ecodes.KEY_RIGHTALT, ecodes.KEY_F23}): ('agent', 'hold')}
         self.key(1, ecodes.KEY_RIGHTALT)
-        self.key(1, ecodes.KEY_F23)
+        self.key(1, ecodes.KEY_RIGHTMETA)
         self.assertEqual(self.daemon.session.action, 'agent')
         # Exercise only control; never dispatch a real agent in a test.
         self.daemon.pipeline._send_agent = Mock()
         self.key(0, ecodes.KEY_RIGHTALT)
+        self.key(0, ecodes.KEY_RIGHTMETA)
         self.done()
 
     def test_disconnect_and_source_exit_preserve_recordings(self):
@@ -194,7 +193,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(spacing.prefix(7), '')
 
     def test_bindings_describe_configured_keys(self):
-        self.assertEqual(self.daemon.bindings(), ['KEY_RIGHTMETA=dictate(tap/hold)', 'KEY_F10=agent(hold)'])
+        self.assertEqual(self.daemon.bindings(), ['KEY_RIGHTMETA=dictate(tap/hold)', 'KEY_RIGHTALT+KEY_RIGHTMETA=agent(hold)'])
 
     def test_contended_gate_is_retried_during_capture(self):
         import fcntl

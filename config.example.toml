@@ -4,7 +4,7 @@
 # see README "Install".
 
 dictate_key = "KEY_RIGHTMETA" # Right Win/Super: hold to dictate; tap to keep listening; press again to stop
-agent_key   = "KEY_F10"    # hold: speak, release: transcript goes to the agent
+agent_key   = "KEY_RIGHTALT+KEY_RIGHTMETA" # hold Right Alt, then Right Win; release to send to the agent
 dictate_toggle_key = ""    # optional: first press starts, second press stops
 agent_toggle_key   = ""
 language    = "en"

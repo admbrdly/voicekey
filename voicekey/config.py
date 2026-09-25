@@ -160,7 +160,7 @@ class AgentConfig:
 @dataclass
 class Config:
     dictate_key: str = "KEY_RIGHTMETA"
-    agent_key: str = "KEY_F10"
+    agent_key: str = "KEY_RIGHTALT+KEY_RIGHTMETA"
     dictate_toggle_key: str = ""
     agent_toggle_key: str = ""
     language: str = "en"

@@ -1026,9 +1026,11 @@ class PersistentTests(unittest.TestCase):
             daemon._on_key('keyboard',ecodes.KEY_F11,0)
             daemon._on_key('keyboard',ecodes.KEY_ESC,1)
             with patch('voicekey.daemon.notify') as notify:
-                daemon._on_key('keyboard',ecodes.KEY_F10,1)
+                daemon._on_key('keyboard',ecodes.KEY_RIGHTALT,1)
+                daemon._on_key('keyboard',ecodes.KEY_RIGHTMETA,1)
                 self.assertEqual(notify.call_args.args[0], 'voicekey: busy')
-                daemon._on_key('keyboard',ecodes.KEY_F10,0)
+                daemon._on_key('keyboard',ecodes.KEY_RIGHTMETA,0)
+                daemon._on_key('keyboard',ecodes.KEY_RIGHTALT,0)
             self.assertFalse(session.stopping.is_set())
             daemon._on_key('keyboard',ecodes.KEY_F11,1)
             self.assertTrue(session.stopping.is_set())
