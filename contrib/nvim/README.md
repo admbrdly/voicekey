@@ -72,7 +72,7 @@ explicit `nvim --listen /path/to/socket` also works). The plugin registers each
 instance separately under `$XDG_RUNTIME_DIR/voicekey/nvim/<pid>.json`.
 The daemon checks that the socket responds, its PID matches the registration,
 the process belongs to the focused terminal when the compositor supplies a PID,
-and the plugin reports focus. Multiple focused claims are refused.
+and the plugin reports focus. Two focused claims are not trusted.
 
 Focus starts **unconfirmed** until `FocusGained` (or `VimResume`). If the terminal
 does not send an initial event, switch away and back once after opening Neovim.
@@ -84,59 +84,25 @@ waiting for the keyboard listener's next tick. For tmux, enable:
 set -g focus-events on
 ```
 
-Check focus reporting with your actual terminal tabs and tmux panes. A lost
-`FocusLost` can leave one stale true flag and send dictation to the wrong Neovim
-buffer. Ghostty uses one PID across windows/tabs; ancestry cannot distinguish
-them. A detached tmux server, SSH, containers, hidden process information or a
-renamed process can also defeat the ancestry check. Remote Neovim is unsupported.
-
 Terminal policy (Ghostty, foot, kitty, Alacritty, WezTerm; additional app IDs via
 `VOICEKEY_TERMINALS` in the daemon environment):
 
-- A uniquely validated Neovim gets API delivery, even when the title also matches
-  a shell. Ambiguous claims or incomplete/unresponsive probes refuse; titles
-  cannot override them.
-- No focused claim after completed probes, but a Neovim descendant exists: refuse
-  and retain speech/text for recovery. A shell tab beside Neovim in the same
-  Ghostty process is therefore also refused unless its title matches a local
-  foreground Bash prompt (see below).
-- No Neovim descendant: retain ordinary input-method delivery (or the existing
-  configured fallback). This is not proof that a shell or another terminal
-  application is safe for typing.
+- A Neovim confirming focus gets API delivery, whatever the window title says.
+  A failure to pin or insert never falls back to terminal input.
+- No Neovim confirms focus, but the title shows an editor in front (`nvim …`,
+  `vim …`, `… - NVIM`): refused, with speech and text kept for recovery.
+- Anything else: ordinary input-method delivery, as before. A Neovim open in
+  another tab or window never blocks shells or other programs.
 
-For Ghostty with its existing Bash title integration, an absolute directory title
-or `~`/`~/...` can identify a shell prompt. The daemon matches it against the
-working directory of a local foreground Bash under Ghostty, excluding running
-foreground jobs. This check runs only after completed Neovim probes find no
-focused claim. That permits shell dictation while Neovim is open elsewhere,
-without a shell hook or config change. Before delivery it checks the window,
-title and shell processes again; persistent capture polls for changes.
+A Neovim that is in front without confirming focus and without an editor title
+(opened by `git commit` or another program, or after a lost focus event) gets
+ordinary typing, and normal mode may run the words as commands. A stale true
+focus flag can send dictation to the wrong Neovim buffer. A detached tmux server,
+SSH, containers or a renamed process hide Neovim from the ancestry check, so it
+is never selected. Remote Neovim is unsupported. Single-shot capture reports a
+binding refusal immediately and saves/copies definite refused transcripts;
+cancellation and uncertain insertion never copy.
 
-**This deliberately accepts stale-title risk when Neovim focus evidence is
-missing.** A stale directory title, combined with a lost Neovim focus event or
-absent registration, can match a shell in another window. The daemon cannot
-prove which surface owns that title and could choose terminal IME delivery.
-A validated focused Neovim always takes precedence.
-Multiple shells with the same directory are allowed. A quick command and return
-to the same title between observations can go undetected. Custom, shortened or
-remote titles may not match; other terminals retain the conservative policy.
-
-If the compositor supplies no PID, discovery considers all local Neovims and
-therefore refuses more often. There is no narrower reliable tab/pane identity in
-this integration. A socket failure, dead/unloaded/unmodifiable buffer or pin
-failure never falls back to terminal input. Single-shot capture reports a known
-binding refusal immediately and saves/copies definite refused transcripts when
-possible; cancellation and uncertain insertion never trigger that copy fallback.
-Persistent recovery remains grouped rather than overwriting the clipboard.
-Timeouts after submission are
-uncertain: inspect the buffer and journal before manually recovering text.
-
-## Persistent sessions
-
-The daemon's tap-to-listen and hold-to-talk behavior is unchanged. A session pins
-one buffer position and inserts each utterance in order, advancing the extmark.
-Edits elsewhere move the mark with the buffer. Moving the cursor does **not**
-retarget it: this deliberately differs from Emacs's follow-point behavior.
 Normal-mode pins start after the cursor character; insert-mode pins start at it.
 Selections and pending operators are refused at pin acquisition.
 
@@ -144,7 +110,7 @@ Selections and pending operators are refused at pin acquisition.
   already-recorded speech still finishes through the original pin.
 - **follow**: a focus event cuts the audio, then the same daemon resolver chooses
   the next destination. Old editor pins remain until earlier speech drains, then
-  are released. An unverified shell/terminal destination pauses with recovery.
+  are released. A refused destination pauses with recovery.
 - **pin**: capture and insertion may continue into the original buffer in the
   background. Editor/socket loss stops capture and preserves undelivered speech.
 

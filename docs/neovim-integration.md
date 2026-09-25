@@ -6,33 +6,26 @@ Neither `voicekey-route` nor `--capture-to-stdout` is used by that resolver.
 
 ## Destination selection
 
-Emacs uses its existing acknowledged buffer adapter. Known terminals use this
-order, before the ordinary IME/wtype/clipboard path:
+Emacs uses its existing acknowledged buffer adapter. In a known terminal:
 
-1. Probe registered Neovim instances. A uniquely validated focused instance wins,
-   even if the window title also looks like a shell prompt.
-2. Refuse ambiguous focused claims or an incomplete/unresponsive probe. A title
-   cannot override that uncertainty. Failure to pin a selected Neovim also refuses;
-   it never falls through to terminal delivery.
-3. Only when the probes complete without a focused claim, consider Ghostty's
-   existing Bash prompt title. It must be an absolute or home-relative directory
-   matching a local foreground Bash under Ghostty's PID.
-4. Without a matching prompt, a Neovim descendant of the terminal causes refusal.
-   If there is no such descendant, retain ordinary terminal delivery.
+1. Probe the registered Neovim instances under the terminal's PID. Exactly one
+   confirming focus wins, whatever the window title says. Failure to pin it
+   refuses; it never falls through to terminal typing.
+2. Otherwise, if the window title shows an editor in front (Ghostty's command
+   title `nvim …`, `vim …`, `vi …`, or Neovim's own `… - NVIM` title), refuse
+   rather than type into it.
+3. Otherwise use ordinary terminal delivery, exactly as before this integration.
+
+Neovim running elsewhere never blocks typing. Ghostty runs every window and tab
+in one process, so its PID cannot say which surface is in front, and treating
+any Neovim under it as a reason to refuse would disable dictation into shells
+and Claude Code whenever an editor is open somewhere.
 
 Registrations are private per-instance JSON files under
 `$XDG_RUNTIME_DIR/voicekey/nvim/`. Validation checks a responding socket, matching
 Neovim PID/server address, ancestry under the terminal PID when available, and a
-true plugin focus flag. Multiple instances cannot overwrite each other's records.
+true plugin focus flag. Two claims of focus are not trusted (one must be stale).
 The compositor is checked again after editor binding.
-
-Ghostty's Bash exception checks the shell's cwd, process start time, controlling
-tty and foreground process group. Suspended shells and descendants sharing the
-shell's foreground group are excluded. Delivery rechecks the exact window/title
-and original matching shell identities. Persistent capture also polls that
-evidence; a detected title or foreground-job change pauses with recovery.
-Ordinary title changes are not compositor window identity changes, so changing
-an Emacs buffer's title does not pause dictation.
 
 ## Capture, preview and insertion
 
@@ -108,26 +101,17 @@ may leave a cosmetic preview until cleanup or editor restart.
 
 ## Limits of focus evidence
 
-- Ghostty's shared PID cannot identify a window, tab or pane. A stale true
-  Neovim focus flag can select the wrong buffer; two true flags cause refusal.
-- A shell-looking title never overrides a validated Neovim claim. However, a
-  stale directory title **combined with missing Neovim focus evidence**, such as
-  a lost focus event or absent registration, can match an idle shell elsewhere
-  and select terminal IME delivery. PID/cwd evidence cannot identify that surface.
-- Multiple shells in the same directory are allowed. Title spoofing, a quick
-  command and return between checks, and a switch between validation and IME
-  submission remain possible. An SSH tab titled `~` can match a local idle shell
-  at home; this is not remote prompt detection.
-- Prompt inference supports local Bash in Ghostty only. Custom titles or shortened
-  `\w` titles (`PROMPT_DIRTRIM`) may not match, retaining refusal when Neovim is
-  present. No shell hook or extra configuration is required for ordinary titles.
-- Detached tmux, SSH, containers, renamed processes and hidden `/proc` data can
-  defeat ancestry. If no Neovim descendant is visible, ordinary terminal delivery
-  can remain enabled even when Neovim is visible. `tmux focus-events on` is
-  necessary for focus reports but does not establish terminal-to-pane ancestry.
-- Without a compositor PID, discovery considers all local Neovims, which can
-  refuse unrelated shells or accept the only stale claim. Unknown terminal app
-  IDs retain generic routing unless added through `VOICEKEY_TERMINALS`.
+- A Neovim in front that has not confirmed focus gets ordinary terminal typing
+  unless its title gives it away. This covers a Neovim started by another
+  program (`git commit`, Claude Code's Ctrl-G editor), whose title is the parent
+  command, and a lost focus event. Typed words then act as Neovim commands in
+  normal mode, as they did before this integration.
+- A stale true focus flag can select the wrong Neovim buffer. Ghostty's shared
+  PID cannot identify a window, tab or pane.
+- Detached tmux, SSH, containers and renamed processes defeat ancestry, so such
+  a Neovim is never selected; tmux also needs `focus-events on`.
+- Unknown terminal app IDs retain generic routing unless added through
+  `VOICEKEY_TERMINALS`.
 - Focus and pin acquisition are asynchronous observations, not atomic key-down
   snapshots. Buffer switches inside Neovim retain the original insertion pin.
 
@@ -147,8 +131,8 @@ nor F12. Keep the daemon's keyboard listener enabled for tap/hold and agent keys
 ## Verification
 
 Run `python -m unittest` using an environment with the project dependencies.
-Neovim tests require version 0.10 or newer; private editor/control sockets and a
-private Bash PTY require local socket/PTY access. Tests use temporary runtime
+Neovim tests require version 0.10 or newer and local socket access for private
+editor and control sockets. Tests use temporary runtime
 folders, synthetic audio, stubbed recognizers and mocked compositor/process
 information; they do not contact live editor servers or microphones.
 
@@ -156,8 +140,8 @@ Coverage includes destination precedence, conflicting/unfocused/unresponsive
 registrations, pin and buffer failures, expired/duplicate/revoked operations,
 key gestures, preview tiers, ordered persistent commits, focus policies, old
 speech after a switch, editor exit, refusal feedback and journal/clipboard recovery.
-Bash tests cover cwd/title matching and real foreground-job transitions in an
-isolated PTY. Existing Emacs, client-capture and legacy-router tests remain in
+Title tests cover editor commands versus prompt directories and TUI titles.
+Existing Emacs, client-capture and legacy-router tests remain in
 the full suite.
 
 Real Ghostty/microphone validation is still required before merging:

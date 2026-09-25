@@ -89,21 +89,12 @@ recovery, and uncertain insertion is never retried automatically.
 
 Registrations are per instance. Focus is unconfirmed until `FocusGained` or
 `VimResume`; switch away and back if no initial focus event arrives. In a known
-terminal, a Neovim descendant with no validated focused registration causes
-refusal. Without such a descendant, ordinary terminal delivery stays unchanged.
-This conservatively refuses a shell beside Neovim in any other Ghostty window
-or tab sharing the process. Ghostty's existing Bash directory title now provides
-a best-effort exception after completed Neovim probes find no focused claim:
-it must match a foreground local Bash's working directory under the terminal
-process. A validated focused Neovim wins over the title; ambiguous or incomplete
-probes refuse. Window, title, PID/start time and foreground state are
-rechecked before delivery. A stale directory title combined with missing Neovim
-focus evidence can still be mistaken for a shell in another window.
-No shell hook or configuration change is required. A quick command and return
-to the same title between observations cannot be detected reliably.
-Conversely, a lost focus event can leave a stale true claim; ancestry cannot
-identify Ghostty tabs. Detached tmux/remote processes can escape that ancestry
-check. See the plugin README for setup and the precise limits.
+terminal, a Neovim confirming focus gets buffer delivery. Otherwise the terminal
+keeps ordinary typing, unless its title shows an editor in front (`nvim …`,
+`… - NVIM`), which is refused. A Neovim open elsewhere never blocks typing into
+other tabs or windows. An unconfirmed Neovim without such a title, for example
+one opened by `git commit`, receives ordinary typing as before. See the plugin
+README for setup and the precise limits.
 
 When a generic field loses focus, applications may keep or discard its
 provisional text without reporting what happened. Voicekey stops the session

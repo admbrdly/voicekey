@@ -97,15 +97,27 @@ def terminal(app_id):
 class Resolution:
     registration: dict | None = None
     reason: str = ''
-    # Only a completed probe with no focused claim permits weaker title evidence.
-    may_use_prompt: bool = False
+
+
+# Ghostty's shell integration titles a surface with the command it runs;
+# Neovim's own 'title' option ends its title with "NVIM".
+EDITOR_COMMANDS = frozenset(('nvim', 'vim', 'vi', 'view', 'nvimdiff', 'vimdiff'))
+
+
+def editor_title(title):
+    words = (title or '').split()
+    if not words or words[0].startswith('~') or (len(words) == 1 and os.path.isdir(words[0])):
+        return False  # a prompt's directory title, e.g. ~/.config/nvim
+    return os.path.basename(words[0]) in EDITOR_COMMANDS or title.rstrip().endswith(('NVIM', ' VIM'))
 
 
 def resolve(destination):
-    """Resolve editor claims before considering weaker shell-title evidence.
+    """A registered Neovim confirming focus gets buffer delivery.
 
-    Multiple focused claims are ambiguous, never last-writer-wins. A single
-    stale true focus flag remains a known limitation of terminal focus evidence.
+    Otherwise a terminal keeps ordinary typing unless its title shows an
+    editor in front, which is refused rather than sent as keystrokes. Neovims
+    elsewhere in the terminal process never block typing: its PID cannot tell
+    which tab or window is in front.
     """
     if not terminal(destination.app_id):
         return Resolution()
@@ -113,36 +125,26 @@ def resolve(destination):
     processes = {pid for pid, (_, name) in tree.items() if name == 'nvim'
                  and (destination.pid is None or descendant(pid, destination.pid, tree))}
     candidates = []
-    incomplete = False
     deadline = time.monotonic() + PIN_TIMEOUT
-    paths = list((runtime_dir() / 'nvim').glob('*.json'))
-    for path in paths:
+    for path in (runtime_dir() / 'nvim').glob('*.json'):
+        if time.monotonic() >= deadline:
+            break
         try:
             record = json.loads(path.read_text())
             pid, server = record['pid'], record['server']
             if type(pid) is not int or pid not in processes or not isinstance(server, str) or not server:
                 continue
-            if time.monotonic() >= deadline:
-                incomplete = True
-                break
-            try:
-                answer = call(server, 'status', timeout=min(PROBE_TIMEOUT, deadline - time.monotonic()))
-            except NvimError:
-                incomplete = True
-                continue
-            if answer.get('pid') != pid or answer.get('server') != server or type(answer.get('focused')) is not bool:
-                incomplete = True
-                continue
-            if answer.get('pid') == pid and answer.get('focused') is True and answer.get('server') == server:
+            answer = call(server, 'status', timeout=min(PROBE_TIMEOUT, deadline - time.monotonic()))
+            if answer.get('pid') == pid and answer.get('server') == server and answer.get('focused') is True:
                 candidates.append(record)
         except (OSError, ValueError, KeyError, TypeError, NvimError):
             continue
-    if len(candidates) == 1 and not incomplete:
+    if len(candidates) == 1:
         return Resolution(registration=candidates[0])
-    if candidates or incomplete:
-        return Resolution(reason='Neovim focus is ambiguous or could not be checked; terminal typing refused')
-    reason = 'Neovim focus is unverified; terminal typing refused' if processes else ''
-    return Resolution(reason=reason, may_use_prompt=True)
+    if editor_title(destination.title):
+        return Resolution(reason='Neovim appears to be in front but has not confirmed focus; '
+                                 'terminal typing refused (switch away and back, then retry)')
+    return Resolution()
 
 
 def event_matches(destination, pid):

@@ -64,8 +64,6 @@ class SessionTarget:
         if isinstance(self.target, PinnedEditorTarget):
             return self.target.availability_issue(deadline)
         if isinstance(self.target, ImeTarget):
-            if issue := self.target.window.availability_issue(deadline):
-                return issue
             return ("" if self.target.ime.activation() == self.target.preview.generation
                     else "Text field is no longer active")
         if isinstance(self.target, WtypeTarget) and self.allow_typing:

@@ -94,10 +94,17 @@ class TargetTests(unittest.TestCase):
         with patch('voicekey.target.emacs.PendingPin'):
             self.assertIsInstance(self.bind(), EmacsTarget)
 
-    def test_unregistered_unfocused_dead_and_wrong_ancestry_refuse(self):
+    def titled(self, title):
+        self.focus.return_value = Focus(7, 'com.mitchellh.ghostty', 100, title)
+
+    def test_unconfirmed_editor_types_unless_title_shows_an_editor(self):
         path = Path(self.tmp.name)/'voicekey/nvim'/f'{self.editor.process.pid}.json'
         self.editor.lua('vim.cmd.doautocmd("FocusLost")')
-        self.assertIsInstance(self.bind(), RefusedTarget)
+        self.assertIsInstance(self.bind(), ImeTarget)
+        self.titled('nvim notes.md')
+        target = self.bind()
+        self.assertIsInstance(target, RefusedTarget)
+        self.assertEqual(self.land(target).outcome, Outcome.REFUSED)
         self.editor.lua('vim.cmd.doautocmd("FocusGained")')
         original = path.read_text()
         for change in ({'pid': self.editor.process.pid, 'server': '/nonexistent'},
@@ -107,15 +114,34 @@ class TargetTests(unittest.TestCase):
             else:
                 path.write_text(json.dumps(change))
             self.tree[8888] = (200, 'nvim')
-            target = self.bind()
-            self.assertIsInstance(target, RefusedTarget)
-            self.assertEqual(self.land(target).outcome, Outcome.REFUSED)
+            self.titled('nvim notes.md')
+            self.assertIsInstance(self.bind(), RefusedTarget)
+            self.titled('✳ Claude Code')
+            self.assertIsInstance(self.bind(), ImeTarget)
         path.write_text(original)
         self.ime.commit.assert_not_called()
 
-    def test_two_instances_require_unique_focused_claim(self):
+    def test_background_editor_never_blocks_other_terminal_surfaces(self):
+        self.editor.lua('vim.cmd.doautocmd("FocusLost")')
+        for title in ('◑ VoiceKey pull request review', '~/src', 'codex | voicekey', ''):
+            self.titled(title)
+            target = self.bind()
+            self.assertIsInstance(target, ImeTarget)
+            self.assertEqual(self.land(target).outcome, Outcome.SUBMITTED)
+        self.assertEqual(self.editor.text(), [''])
+
+    def test_editor_titles(self):
+        for title in ('nvim', 'nvim notes.md', '/usr/bin/nvim -d a b', 'vim x', 'vi', 'view log',
+                      'notes.md (~/src) - NVIM'):
+            self.assertTrue(nvim.editor_title(title), title)
+        for title in ('', '~/src/nvim', '~/.config/nvim', '/tmp', '✳ Claude Code', 'git commit', 'bash', 'nvimrc edits', 'less vim.txt'):
+            self.assertFalse(nvim.editor_title(title), title)
+
+    def test_two_focused_claims_are_not_trusted(self):
         other = Editor(self, self.tmp.name, 2)
         self.tree[other.process.pid] = (100, 'nvim')
+        self.assertIsInstance(self.bind(), ImeTarget)
+        self.titled('nvim notes.md')
         self.assertIsInstance(self.bind(), RefusedTarget)
         self.editor.lua('vim.cmd.doautocmd("FocusLost")')
         target = self.bind()
@@ -125,54 +151,27 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(other.text(), ['Hello'])
         self.assertEqual(self.editor.text(), [''])
 
-    def test_focused_editor_beats_matching_shell_title(self):
-        self.focus.return_value = Focus(7, 'com.mitchellh.ghostty', 100, '/work')
-        with patch('voicekey.shell_prompt.candidates', return_value={200:12345}) as shells:
-            target = self.bind()
-            self.assertIsInstance(target, NeovimTarget)
-            shells.assert_not_called()
-            self.assertEqual(self.land(target).outcome, Outcome.CONFIRMED)
+    def test_focused_editor_wins_whatever_the_title(self):
+        self.titled('◑ VoiceKey pull request review')
+        target = self.bind()
+        self.assertIsInstance(target, NeovimTarget)
+        self.assertEqual(self.land(target).outcome, Outcome.CONFIRMED)
         self.assertEqual(self.editor.text(), ['Hello'])
         self.ime.commit.assert_not_called()
         self.ime.claim_preview.assert_not_called()
 
-    def test_failed_editor_pin_never_falls_back_to_matching_shell_title(self):
-        self.focus.return_value = Focus(7, 'com.mitchellh.ghostty', 100, '/work')
+    def test_failed_editor_pin_never_falls_back_to_typing(self):
         self.editor.lua('vim.api.nvim_set_option_value("modifiable",false,{buf=0})')
-        with patch('voicekey.shell_prompt.candidates', return_value={200:12345}) as shells:
-            target = self.bind()
-            self.assertIsInstance(target, NeovimTarget)
-            self.assertEqual(self.land(target).outcome, Outcome.REFUSED)
-            shells.assert_not_called()
+        target = self.bind()
+        self.assertIsInstance(target, NeovimTarget)
+        self.assertEqual(self.land(target).outcome, Outcome.REFUSED)
         self.ime.commit.assert_not_called()
 
-    def test_ambiguous_editor_claims_cannot_be_overridden_by_shell_title(self):
-        other = Editor(self, self.tmp.name, 2)
-        self.tree[other.process.pid] = (100, 'nvim')
-        self.focus.return_value = Focus(7, 'com.mitchellh.ghostty', 100, '/work')
-        with patch('voicekey.shell_prompt.candidates', return_value={200:12345}) as shells:
+    def test_unresponsive_editor_probe_types_unless_title_shows_an_editor(self):
+        with patch('voicekey.nvim.call', side_effect=nvim.NvimError('probe timeout')):
+            self.assertIsInstance(self.bind(), ImeTarget)
+            self.titled('nvim notes.md')
             self.assertIsInstance(self.bind(), RefusedTarget)
-            shells.assert_not_called()
-        self.ime.commit.assert_not_called()
-
-    def test_unfocused_editor_allows_matching_shell_title_after_probe(self):
-        self.focus.return_value = Focus(7, 'com.mitchellh.ghostty', 100, '/work')
-        self.editor.lua('vim.cmd.doautocmd("FocusLost")')
-        with patch('voicekey.nvim.call', wraps=nvim.call) as rpc, \
-                patch('voicekey.shell_prompt.candidates', return_value={200:12345}) as shells:
-            target = self.bind()
-            self.assertIsInstance(target, ImeTarget)
-            self.assertEqual(rpc.call_args.args[1], 'status')
-            shells.assert_called()
-            self.assertEqual(self.land(target).outcome, Outcome.SUBMITTED)
-        self.ime.commit.assert_called_once()
-
-    def test_unresponsive_editor_probe_refuses_even_with_matching_shell_title(self):
-        self.focus.return_value = Focus(7, 'com.mitchellh.ghostty', 100, '/work')
-        with patch('voicekey.nvim.call', side_effect=nvim.NvimError('probe timeout')), \
-                patch('voicekey.shell_prompt.candidates', return_value={200:12345}) as shells:
-            self.assertIsInstance(self.bind(), RefusedTarget)
-            shells.assert_not_called()
         self.ime.commit.assert_not_called()
 
     def test_pin_tracks_edits_and_inserts_in_order_in_background(self):
@@ -258,6 +257,7 @@ class TargetTests(unittest.TestCase):
     def test_startup_does_not_claim_focus_without_a_terminal_event(self):
         self.editor.lua('vim.cmd.doautocmd("FocusLost"); vim.cmd.doautocmd("VimEnter")')
         self.assertFalse(nvim.call(self.editor.socket, 'status')['focused'])
+        self.titled('nvim notes.md')
         self.assertIsInstance(self.bind(), RefusedTarget)
 
     def test_late_acknowledgement_cannot_authorize_a_pin(self):
@@ -362,8 +362,9 @@ class PersistentTests(unittest.TestCase):
         self.unpin.assert_called_with('emacs-pin')
         self.type_text.assert_not_called()
 
-    def test_follow_focus_lost_cuts_to_refusal_and_preserves_old_pin(self):
+    def test_follow_focus_lost_under_editor_title_refuses_and_preserves_old_pin(self):
         import numpy as np
+        self.destination = Focus(7, 'com.mitchellh.ghostty', 100, 'nvim notes.md')
         self.start()
         self.recorder.push(np.ones(4096,dtype=np.float32)*.2)
         self.editor.lua('vim.cmd.doautocmd("FocusLost")')
@@ -513,6 +514,7 @@ class KeyTests(unittest.TestCase):
 
     def test_unregistered_editor_refuses_with_journal_recovery(self):
         (Path(self.tmp.name)/'voicekey/nvim'/f'{self.editor.process.pid}.json').unlink()
+        self.focus.return_value = Focus(7, 'com.mitchellh.ghostty', 100, 'nvim notes.md')
         with patch('voicekey.daemon.notify') as notify:
             self.key(1)
             self.assertIsInstance(self.daemon.session.target, RefusedTarget)
